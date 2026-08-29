@@ -143,3 +143,26 @@ JOURNAL_PATH = "state/journal.jsonl"
 DB_PATH = "state/glassbox.db"
 
 SLEEVES = ("core", "crypto", "convex")
+
+
+# --- Event-driven volatility strategy -----------------------------------------
+
+EVENT_MIN_TIER = 2                  # 1 = payrolls only; 2 = every scheduled print
+EVENT_LOOKAHEAD_HOURS = 30          # how far ahead a catalyst counts as actionable
+
+# Buy convexity only when it is cheap. Above this, the underlying is already
+# realising more than the options imply and we are not paid to own gamma.
+MAX_IV_TO_RV_RATIO = Decimal("1.35")
+
+# Strangle rather than straddle: ~45% of the cost for ~2.2x the contracts.
+# Correct shape when the payoff is a step function rather than linear.
+STRANGLE_OTM_PCT = Decimal("0.012")
+
+# The option must still have this many trading days left AT MEASUREMENT, so it
+# marks off a two-sided quote instead of a 0DTE stub in the widest window of
+# the week.
+OPTION_MIN_DTE_AT_MEASUREMENT = 2
+
+# Marketable limit tolerance. Pricing off an indicative feed, so pay up slightly
+# rather than sit unfilled -- but never chase beyond this.
+LIMIT_TOLERANCE = Decimal("0.03")
