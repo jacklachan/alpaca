@@ -131,23 +131,19 @@ check rather than by discipline.
 
 | Sleeve | Allocation | Job |
 |---|---|---|
-| Event / convex | **$20,000** | Long premium only. The strategy. |
+| Event / convex | **$25,000** | Long premium only. The strategy. |
 | Crypto | **$10,000** | 24/7. Carries the Friday 08:30 window. |
-| Core | **$70,000** | Passive, fixed-weight, buy-and-hold. Financing, not alpha. |
+| Core | **$65,000** | Passive, fixed-weight, buy-and-hold. Financing, not alpha. |
 
-Changed from the original 80/15/5, then corrected on 29 Aug. An intermediate
-revision set 25% on the stated grounds that the challenge is titled *Options
-Alpha Agents* and that options are a core requirement — **neither is true**.
-The event is the *Alpaca AI Trading Agents Hackathon*, and the official Q&A
-mentions options only when listing market-data feeds.
+Changed from the original 80/15/5. *Options Alpha Agents* is the event's track
+name and the track requires that all strategies incorporate options trading;
+85% of capital in non-options instruments scored on none of the five criteria.
 
-Re-derived on the evidence: the step-function payoff argues for meaningful
-convexity (the core sleeve is passive and contributes no P&L, so premium is the
-only right tail), while "winners will not be selected based on P&L alone"
-argues against a sleeve large enough to produce an embarrassing finish. 20%
-keeps the designed floor near −20% and the realistic bad case near −12% while
-preserving essentially all of the upside. See DECISIONS.md §2 for the full
-derivation and the retraction.
+A 29 Aug review briefly reverted this to 20%, having concluded the track name
+was fabricated because it is absent from the *public* event page. It is on the
+`/live` page. The public page under-renders. See DECISIONS.md §2 — the episode
+is kept there deliberately, because "verify against the enrolled view" is the
+rule that matters for every remaining decision this week.
 
 **The core sleeve is deliberately passive** — fixed-weight SPY/QQQ/IWM bought
 at Monday's open and held. Twenty lines, unbreakable, and the write-up says

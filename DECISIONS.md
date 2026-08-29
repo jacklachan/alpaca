@@ -85,35 +85,39 @@ and enforceable by a risk check, while the upside is uncapped.
 
 This is also why we refuse standing margin leverage (§6).
 
-### Allocation: 80/15/5 → 65/25/10 → **70/20/10** (corrected 29 Aug)
+### Allocation: 80/15/5 → 65/25/10
 
-**We got this wrong once, on a fact that was never true.** The move to 65/25/10
-was justified in this document by the claim that "options are a core
-requirement and the challenge is titled *Options Alpha Agents*". That title
-does not exist. The event is the **Alpaca AI Trading Agents Hackathon**; the
-phrase appears nowhere on the event page or in the official Q&A, which mentions
-options only when listing market-data feeds. Nothing in the published rules
-requires options at all.
+Options are a core requirement of the track. **Options Alpha Agents** is the
+event's track name — lablab's `/live` page lists it as the main track, open to
+all participants — and the event page states that all strategies must
+incorporate options trading. Under the original split, 85% of capital sat in
+instruments that scored on none of the five criteria.
 
-Recording it rather than quietly editing it, because a fabricated premise moved
-$10,000 of capital into instruments that can go to zero, and the same failure
-mode — reasoning confidently from something nobody checked — is the one most
-likely to bite us again this week.
+#### A failed challenge to this decision, kept as a warning
 
-Re-derived from what is actually documented:
+On 29 Aug a review concluded that "Options Alpha Agents" was **fabricated**,
+on the grounds that the phrase appears nowhere on the public event page, in the
+official Q&A, or in a web search. The allocation was moved to 70/20/10 and this
+section was rewritten as a retraction.
 
-- **For more convexity:** the payoff is a step function (top-3 or nothing), so
-  the objective is P(placing), not expected return. The core sleeve is
-  deliberately passive and contributes ~nothing, so long premium is the *only*
-  source of right tail.
-- **Against:** judging is explicitly "not P&L alone", and a −25% finish damages
-  the P&L half badly. The marginal 5% of capital buys little upside — a 4×
-  strangle pays +60% at a 20% sleeve versus +75% at 25% — while adding real
-  probability of finishing embarrassingly negative.
+That conclusion was wrong. The phrase is on the `/live` page as the track name.
+The public event page renders far less than the enrolled view — the same fetch
+that missed the track name also missed the five judging criteria, the prize
+breakdown, and the submission fields, all of which are real. The reviewer
+treated "I could not find it" as "it does not exist", which is the same class of
+error the review was set up to catch.
 
-20% dominates both neighbours. Designed floor ≈ −20%; realistic bad case ≈ −12%,
-because a strangle with sessions left at measurement retains time value and a
-total loss requires a pin. Upside essentially unchanged.
+Reverted to 65/25/10. Kept in the record rather than deleted, for two reasons:
+
+1. **The rule it teaches is load-bearing this week.** Verify against the
+   enrolled view, not the public page. Anything sourced from the public page
+   alone is weaker evidence than it looks, in both directions.
+2. **An audit trail that only records the author's mistakes and not the
+   auditor's is not an audit trail.** The journal makes the same commitment
+   about the agent; this document should hold itself to it.
+
+If you are about to change these numbers, confirm against the enrolled view
+first.
 
 ---
 

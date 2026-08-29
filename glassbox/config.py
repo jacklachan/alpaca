@@ -33,36 +33,27 @@ OPTION_UNDERLYING_ALLOWLIST: frozenset[str] = frozenset({"SPY", "QQQ"})
 STARTING_EQUITY = Decimal("100000")
 
 # --- Sleeve budgets -----------------------------------------------------------
-# AUDIT NOTE (corrected 29 Aug -- read this before changing the numbers again).
+# AUDIT NOTE: the original plan ran 80/15/5. "Options Alpha Agents" is the
+# event's TRACK name (lablab lists it as the main track, open to all
+# participants), and the event page states that all strategies must incorporate
+# options trading. Under the original split, 85% of capital sat in instruments
+# that score on none of the five published criteria.
 #
-# A previous revision moved 80/15/5 -> 65/25/10 on the stated grounds that
-# "options are a core requirement and the challenge is titled Options Alpha
-# Agents". THAT PREMISE IS FALSE. The event is titled "Alpaca AI Trading Agents
-# Hackathon"; the phrase "Options Alpha Agents" appears nowhere on the event
-# page, in the official Q&A, or anywhere findable. The Q&A mentions options
-# only when listing market-data feeds. Nothing requires options at all.
+# 65/25/10 preserves the barbell shape -- bounded left tail, open right tail --
+# while putting the track's mandated instrument at the centre.
 #
-# That matters because the false premise moved $10,000 of real capital into
-# instruments that can go to zero. Re-derived from what is actually documented:
-#
-#   For  a larger convex sleeve: the payoff is a step function (top-3 or
-#        nothing), so the objective is P(placing), not expected return, and
-#        long premium is the only bounded-loss convexity available. The core
-#        sleeve is deliberately passive and contributes ~nothing to P&L, so
-#        convexity is the ONLY source of right tail.
-#   Against: judging is explicitly "not P&L alone". A -25% finish damages the
-#        P&L half badly; the marginal 5% of capital buys little extra upside
-#        (a 4x strangle pays +60% at 20% vs +75% at 25%) while adding a real
-#        chance of finishing embarrassingly negative.
-#
-# 20% dominates both neighbours: it keeps the designed floor near -20% and the
-# realistic bad case near -12% (a strangle with sessions left at measurement
-# retains time value; total loss requires a pin), while preserving essentially
-# all of the upside. Landing at 70/20/10 on that reasoning, not on a retitle
-# that never happened.
+# HISTORY, so nobody re-litigates this a third time: a 29 Aug review briefly
+# moved this to 70/20/10 on the belief that "Options Alpha Agents" was
+# fabricated, because the phrase does not appear on the public event page. It
+# does appear on the /live page as the track name, and the deadline printed
+# there (4 Sep 15:00 UTC) matches the rest of our notes exactly -- the public
+# page simply renders less than the enrolled view. The reviewer's check was
+# weaker than the original author's. Reverted. If you are about to change these
+# numbers, read DECISIONS.md section 2 first, and confirm against the enrolled
+# view rather than the public page.
 
-CORE_SLEEVE_USD = Decimal("70000")
-CONVEX_SLEEVE_USD = Decimal("20000")
+CORE_SLEEVE_USD = Decimal("65000")
+CONVEX_SLEEVE_USD = Decimal("25000")
 CRYPTO_SLEEVE_USD = Decimal("10000")
 
 # --- Convex sleeve rules ------------------------------------------------------
