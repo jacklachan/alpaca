@@ -1,30 +1,17 @@
-"""The thesis layer. The only place a model appears.
+"""Bounded AI selection and read-only daily review.
 
-Scope is deliberately narrow. The model is handed a computed feature table,
-the macro calendar, the current book and the remaining risk budget, and asked
-to do the one thing it is genuinely good at: synthesise unstructured context
-into a structured hypothesis. It is never asked to predict a price.
-
-Three hard rules:
-
-  1. Output is validated against the TradePlan schema. If it does not validate,
-     it is discarded. No repair, no retry loop that could drift.
-  2. Whatever it returns goes through the kernel like anything else. There is
-     no path from here to the broker.
-  3. It is optional. If the API is down, hung, or returns nonsense, the
-     deterministic sleeves keep trading and the failure is journalled. Verify
-     this by running with a deliberately invalid key.
-
-Rule 3 is why the timeout matters. The original plan handled a *failed* call
-but not a *hung* one, and a hung call blocks the tick loop.
+The model cannot create a trade. Deterministic code supplies fully priced
+option candidates and the model may return one existing candidate ID or
+abstain. A valid ID retrieves the exact original object, which must still pass
+through the deterministic risk kernel and executor.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import os
-from decimal import Decimal
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from . import config as C
 from . import env
@@ -33,23 +20,22 @@ from .schema import TradePlan
 
 log = logging.getLogger("glassbox.thesis")
 
-SYSTEM = """You are the research analyst for an autonomous options trading agent.
+SYSTEM = """You are a bounded selector for an options trading agent.
 
-You propose. You never execute. Every plan you emit is checked against a
-deterministic risk kernel that will refuse anything unsafe, so propose what you
-actually believe rather than what you think will pass.
+Deterministic code has already selected the contracts, quantities, sides,
+limit prices, maximum loss, exits, and evidence. You may choose exactly one
+candidate_id from the supplied list or abstain with null. You must not invent,
+alter, or return any trade field. Prefer abstention when the evidence is not
+compelling. Return only the requested JSON object."""
 
-Rules:
-- Only these underlyings: SPY, QQQ for options; the equity and crypto
-  allowlists otherwise. Anything else is refused.
-- Long option premium only. Never propose selling an option.
-- Every plan needs a bounded, stated maximum loss.
-- Cite evidence ONLY from the feature table and calendar you are given. Do not
-  invent a number. If you cannot ground a claim, do not make it.
-- Returning an empty list is a good answer when nothing is compelling.
 
-You are not asked to predict prices. You are asked to notice when the
-information set and the option market disagree."""
+class Selection(BaseModel):
+    """The model's entire authority surface."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    candidate_id: str | None
+    rationale: str = Field(min_length=1, max_length=400)
 
 
 class ThesisLayer:
@@ -70,36 +56,67 @@ class ThesisLayer:
             self._client = anthropic.Anthropic(api_key=key, timeout=self.timeout)
         return self._client
 
-    # -- proposals -------------------------------------------------------------
+    # -- bounded candidate selection -----------------------------------------
 
-    def propose(self, state, features: dict, journal=None) -> list[TradePlan]:
-        """Returns validated plans, or an empty list. Never raises."""
+    def select(self, candidates: list[TradePlan], state, journal=None) -> TradePlan | None:
+        """Return an exact supplied option candidate, or safely abstain.
+
+        This method never constructs a ``TradePlan`` from model output and
+        never raises on model or validation failures.
+        """
+        option_candidates = [c for c in candidates if c.instrument == "option"]
+        if not option_candidates:
+            self._record(journal, "CANDIDATE_ABSTAINED", {
+                "reason": "no option candidates", "offered": 0})
+            return None
+
+        by_id = {candidate.plan_id: candidate for candidate in option_candidates}
+        if len(by_id) != len(option_candidates):
+            self._record(journal, "CANDIDATE_SELECTION_INVALID", {
+                "error": "duplicate candidate IDs", "offered": len(option_candidates)})
+            return None
+
         try:
-            payload = self._context(state, features)
-            raw = self._ask(payload)
+            raw = self._ask_selection(self._selection_context(option_candidates, state))
+            selection = Selection.model_validate(raw)
+        except ValidationError as exc:
+            log.warning("invalid candidate selection: %s", exc)
+            self._record(journal, "CANDIDATE_SELECTION_INVALID", {
+                "error": str(exc), "offered": len(option_candidates)})
+            return None
         except Exception as exc:
-            log.warning("thesis call failed: %s", exc)
-            if journal:
-                journal.append("thesis.llm", "THESIS_UNAVAILABLE", {
-                    "error": str(exc),
-                    "impact": "none: deterministic sleeves continue trading"})
-            return []
+            log.warning("candidate selection unavailable: %s", exc)
+            self._record(journal, "CANDIDATE_SELECTION_UNAVAILABLE", {
+                "error": str(exc), "impact": "abstained"})
+            return None
 
-        plans: list[TradePlan] = []
-        for item in raw:
-            try:
-                plans.append(TradePlan(**item))
-            except Exception as exc:
-                # Discarded, not repaired. A repair loop is a drift loop.
-                if journal:
-                    journal.append("thesis.llm", "PLAN_DISCARDED_INVALID", {
-                        "error": str(exc), "raw": item})
-        if journal:
-            journal.append("thesis.llm", "THESIS_COMPLETE", {
-                "proposed": len(raw), "validated": len(plans)})
-        return plans
+        if selection.candidate_id is None:
+            self._record(journal, "CANDIDATE_ABSTAINED", {
+                "reason": selection.rationale, "offered": len(option_candidates)})
+            return None
 
-    def _context(self, state, features: dict) -> dict:
+        selected = by_id.get(selection.candidate_id)
+        if selected is None:
+            self._record(journal, "CANDIDATE_SELECTION_INVALID", {
+                "error": "unknown or non-option candidate ID",
+                "candidate_id": selection.candidate_id,
+                "offered_ids": sorted(by_id),
+            })
+            return None
+
+        self._record(journal, "CANDIDATE_SELECTED", {
+            "candidate_id": selected.plan_id,
+            "rationale": selection.rationale,
+            "offered": len(option_candidates),
+        })
+        return selected
+
+    @staticmethod
+    def _record(journal, event: str, payload: dict) -> None:
+        if journal is not None:
+            journal.append("thesis.llm", event, payload)
+
+    def _selection_context(self, candidates: list[TradePlan], state) -> dict:
         upcoming = [
             {"event": e.name, "when_et": e.when.isoformat(), "tier": e.tier,
              "source": e.source}
@@ -110,37 +127,52 @@ class ThesisLayer:
             "measurement_et": MEASUREMENT_ET.isoformat(),
             "equity": str(state.equity),
             "cash": str(state.cash),
-            "positions": [
-                {"symbol": p.symbol, "instrument": p.instrument,
-                 "qty": str(p.qty), "market_value": str(p.market_value)}
-                for p in state.positions],
             "convex_premium_outstanding": str(state.convex_premium_outstanding),
             "convex_budget_remaining": str(
                 C.CONVEX_TOTAL_PREMIUM_CAP - state.convex_premium_outstanding),
-            "features": features,
             "macro_calendar": upcoming,
-            "allowlists": {
-                "equity": sorted(C.EQUITY_ALLOWLIST),
-                "crypto": sorted(C.CRYPTO_ALLOWLIST),
-                "option_underlyings": sorted(C.OPTION_UNDERLYING_ALLOWLIST)},
+            "candidates": [self._candidate_summary(candidate)
+                           for candidate in candidates],
         }
 
-    def _ask(self, payload: dict) -> list[dict]:
+    @staticmethod
+    def _candidate_summary(candidate: TradePlan) -> dict:
+        return {
+            "candidate_id": candidate.plan_id,
+            "underlying": candidate.symbol,
+            "legs": [
+                {
+                    "symbol": leg.symbol,
+                    "side": leg.side,
+                    "qty": leg.qty,
+                    "limit_price": str(leg.limit_price),
+                }
+                for leg in candidate.option_legs
+            ],
+            "notional_usd": str(candidate.notional_usd),
+            "max_loss_usd": str(candidate.max_loss_usd),
+            "time_exit": (candidate.time_exit.isoformat()
+                          if candidate.time_exit is not None else None),
+            "thesis": candidate.thesis,
+            "evidence": candidate.evidence,
+        }
+
+    def _ask_selection(self, payload: dict) -> dict:
         msg = self.client.messages.create(
             model=self.model,
-            max_tokens=2000,
+            max_tokens=500,
             temperature=0.2,
             system=SYSTEM,
             messages=[{"role": "user", "content":
-                       "Here is the current information set.\n\n"
+                       "Choose one of these immutable, pre-priced option "
+                       "candidates or abstain.\n\n"
                        f"{json.dumps(payload, indent=2)}\n\n"
-                       "Return a JSON array of trade plans, or [] if nothing is "
-                       "compelling. Each object must have: sleeve, action, "
-                       "instrument, symbol, side, notional_usd, max_loss_usd, "
-                       "thesis, evidence, confidence. Return only the JSON array."}],
+                       "Return exactly {\"candidate_id\": \"<existing id>\", "
+                       "\"rationale\": \"<brief reason>\"} or use null for "
+                       "candidate_id to abstain. Return no other fields."}],
         )
         text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
-        return _extract_json_array(text)
+        return _extract_json_object(text)
 
     # -- daily review ----------------------------------------------------------
 
@@ -166,18 +198,18 @@ class ThesisLayer:
                        if getattr(b, "type", "") == "text").strip()
 
 
-def _extract_json_array(text: str) -> list[dict]:
+def _extract_json_object(text: str) -> dict:
     """Tolerant of fenced output, intolerant of anything else."""
     t = text.strip()
     if t.startswith("```"):
         t = t.split("```")[1]
         if t.startswith("json"):
             t = t[4:]
-    start, end = t.find("["), t.rfind("]")
+    start, end = t.find("{"), t.rfind("}")
     if start == -1 or end == -1:
-        return []
+        return {}
     try:
         parsed = json.loads(t[start:end + 1])
-        return parsed if isinstance(parsed, list) else []
+        return parsed if isinstance(parsed, dict) else {}
     except json.JSONDecodeError:
-        return []
+        return {}
