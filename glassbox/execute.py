@@ -38,7 +38,10 @@ from .schema import TradePlan, Verdict
 log = logging.getLogger("glassbox.execute")
 
 TERMINAL_OK = {"filled"}
-TERMINAL_DEAD = {"canceled", "cancelled", "expired", "rejected", "suspended"}
+TERMINAL_DEAD = {
+    "canceled", "cancelled", "expired", "rejected", "suspended",
+    "done_for_day", "replaced",
+}
 
 
 @dataclass
@@ -71,6 +74,7 @@ class LegResult:
     client_order_id: str = ""
     broker_order_id: str = ""
     status: str = "unsubmitted"
+    order_state_uncertain: bool = False
 
     @property
     def filled_qty(self) -> Decimal:
@@ -198,6 +202,21 @@ class ExecutionEngine:
             return ExecutionResult(plan.plan_id, True,
                                    "all legs filled after repricing", legs)
 
+        # Nothing may remain live after execution returns. Confirm terminal
+        # state and capture any fill that landed during cancellation before
+        # deciding what quantity must be unwound.
+        cleanup_ok = True
+        for r in (leg for leg in legs if not leg.complete):
+            if not self._cancel_leg(plan, r):
+                cleanup_ok = False
+                continue
+            r.bank()
+        if not cleanup_ok:
+            return ExecutionResult(
+                plan.plan_id, False,
+                "residual order state uncertain; manual intervention required",
+                legs)
+
         # Could not complete. A flat book beats a naked directional leg into a
         # scheduled macro print.
         filled = [l for l in legs if l.filled_qty > 0]
@@ -229,16 +248,15 @@ class ExecutionEngine:
     def _reprice(self, plan: TradePlan, r: LegResult, attempt: int) -> None:
         """Cancel the remainder and resubmit wider, within the band."""
         leg = plan.option_legs[r.leg_index]
-        if r.broker_order_id:
-            try:
-                self.broker.cancel(r.broker_order_id)
-            except Exception:
-                pass  # already terminal; reconciliation will show the truth
+        if r.order_state_uncertain or not self._cancel_leg(plan, r):
+            return
 
-        # Bank whatever the cancelled order filled BEFORE computing what is
-        # left, so the remainder is the true shortfall and never re-orders
-        # quantity the broker has already given us.
+        # Bank the terminal order's final fill before computing what is left.
+        # This includes fills that arrived after the cancel request.
         r.bank()
+        r.broker_order_id = ""
+        r.client_order_id = ""
+        r.status = "canceled"
 
         remaining = r.requested_qty - r.filled_qty
         if remaining <= 0:
@@ -272,6 +290,39 @@ class ExecutionEngine:
             r.status = "repriced"
         except Exception as exc:
             r.status = f"reprice_failed: {exc}"
+
+    def _cancel_leg(self, plan: TradePlan, r: LegResult) -> bool:
+        """Cancel one working order and refresh its terminal fill ledger."""
+        if r.order_state_uncertain:
+            return False
+        if not r.broker_order_id or r.status in TERMINAL_OK | TERMINAL_DEAD:
+            return True
+        try:
+            final = self.broker.cancel_and_confirm(
+                r.broker_order_id, r.client_order_id,
+                timeout=self.fill_wait_seconds,
+                poll_seconds=self.poll_seconds)
+        except Exception as exc:
+            r.order_state_uncertain = True
+            r.status = "cancel_uncertain"
+            self.journal.append("execute", "RESIDUAL_ORDER_UNCERTAIN", {
+                "plan_id": plan.plan_id,
+                "symbol": r.symbol,
+                "client_order_id": r.client_order_id,
+                "broker_order_id": r.broker_order_id,
+                "error": str(exc),
+            })
+            return False
+        self._refresh_leg(r, final)
+        return r.status in TERMINAL_OK | TERMINAL_DEAD
+
+    @staticmethod
+    def _refresh_leg(r: LegResult, order) -> None:
+        """Copy the broker order's current fill and normalized status."""
+        r.current_qty = Decimal(str(getattr(order, "filled_qty", 0) or 0))
+        avg = getattr(order, "filled_avg_price", None)
+        r.current_avg = Decimal(str(avg)) if avg else Decimal(0)
+        r.status = str(getattr(order, "status", "")).lower().split(".")[-1]
 
     # -- equity and crypto -----------------------------------------------------
 
@@ -313,10 +364,19 @@ class ExecutionEngine:
                                    multiplier=1)
 
         self._await_fills([r])
+        if not r.complete:
+            if not self._cancel_leg(plan, r):
+                return ExecutionResult(
+                    plan.plan_id, False,
+                    "residual order state uncertain; manual intervention required",
+                    [r], multiplier=1)
+            r.bank()
         ok = r.filled_qty > 0
+        reason = "filled" if r.complete else (
+            "partial fill; residual canceled" if ok
+            else "no fill; residual canceled")
         return ExecutionResult(plan.plan_id, ok,
-                               "filled" if ok else "no fill within the wait window",
-                               [r], multiplier=1)
+                               reason, [r], multiplier=1)
 
     # -- fill polling ----------------------------------------------------------
 
@@ -327,7 +387,7 @@ class ExecutionEngine:
         while time.monotonic() < deadline:
             pending = False
             for r in legs:
-                if r.complete or not r.client_order_id:
+                if r.complete or r.order_state_uncertain or not r.client_order_id:
                     continue
                 o = self.broker.get_order_by_coid(r.client_order_id)
                 if o is None:
@@ -335,11 +395,7 @@ class ExecutionEngine:
                     continue
                 # The broker reports the fill on THIS order only. Anything
                 # filled by a superseded order lives in settled_qty.
-                r.current_qty = Decimal(str(getattr(o, "filled_qty", 0) or 0))
-                avg = getattr(o, "filled_avg_price", None)
-                if avg:
-                    r.current_avg = Decimal(str(avg))
-                r.status = str(getattr(o, "status", "")).lower().split(".")[-1]
+                self._refresh_leg(r, o)
                 if r.status in TERMINAL_DEAD:
                     continue
                 if not r.complete:

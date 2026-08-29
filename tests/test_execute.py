@@ -12,7 +12,7 @@ from decimal import Decimal
 
 import pytest
 
-from glassbox.broker import TokenBucket
+from glassbox.broker import OrderStateUncertain, TokenBucket
 from glassbox.execute import ExecutionEngine
 from glassbox.journal import Journal
 from glassbox.schema import OptionLeg, TradePlan, Verdict
@@ -25,19 +25,24 @@ def occ(right: str, strike: int) -> str:
 
 
 class FakeOrder:
-    def __init__(self, oid, coid, qty):
+    def __init__(self, oid, coid, qty, symbol):
         self.id, self.client_order_id = oid, coid
         self.filled_qty, self.filled_avg_price = 0, None
         self.status, self.qty = "new", qty
+        self.symbol = symbol
         self.submitted_at = "2026-09-03T18:00:00Z"
 
 
 class FakeBroker:
     """Fill behaviour is scripted per symbol: fraction of requested qty."""
 
-    def __init__(self, fill: dict[str, float] | None = None, price=Decimal("5.00")):
+    def __init__(self, fill: dict[str, float] | None = None, price=Decimal("5.00"),
+                 cancel_fill: dict[str, list[float]] | None = None,
+                 uncertain_cancel: set[str] | None = None):
         self.fill = fill or {}
         self.price = price
+        self.cancel_fill = cancel_fill or {}
+        self.uncertain_cancel = uncertain_cancel or set()
         self.orders: dict[str, FakeOrder] = {}
         self.submitted: list[dict] = []
         self.closed: list[str] = []
@@ -48,9 +53,9 @@ class FakeBroker:
     def submit(self, *, symbol, qty, side, client_order_id, limit_price=None,
                instrument="equity"):
         self._n += 1
-        o = FakeOrder(f"broker-{self._n}", client_order_id, qty)
+        o = FakeOrder(f"broker-{self._n}", client_order_id, qty, symbol)
         frac = self.fill.get(symbol, 1.0)
-        o.filled_qty = int(float(qty) * frac)
+        o.filled_qty = Decimal(str(qty)) * Decimal(str(frac))
         if o.filled_qty:
             o.filled_avg_price = limit_price or self.price
         o.status = "filled" if o.filled_qty >= float(qty) else (
@@ -65,6 +70,20 @@ class FakeBroker:
 
     def cancel(self, order_id):
         self.cancelled.append(order_id)
+
+    def cancel_and_confirm(self, order_id, client_order_id, **kwargs):
+        order = self.orders[client_order_id]
+        if order.symbol in self.uncertain_cancel:
+            raise OrderStateUncertain(f"{client_order_id} still working")
+        self.cancelled.append(order_id)
+        scripted = self.cancel_fill.get(order.symbol, [])
+        if scripted:
+            fraction = Decimal(str(scripted.pop(0)))
+            order.filled_qty = Decimal(str(order.qty)) * fraction
+            if order.filled_qty:
+                order.filled_avg_price = self.price
+        order.status = "canceled"
+        return order
 
     def close_position(self, symbol):
         self.closed.append(symbol)
@@ -90,6 +109,19 @@ def strangle(qty: int = 10) -> TradePlan:
         thesis="Scheduled payrolls print one hour before measurement with implied "
                "volatility near the lows. Buying the move, not the direction.",
         evidence=["macro_cal: NFP 2026-09-04 08:30 ET"], confidence=0.6)
+
+
+def single(instrument: str) -> TradePlan:
+    symbol = "BTC/USD" if instrument == "crypto" else "SPY"
+    sleeve = "crypto" if instrument == "crypto" else "core"
+    return TradePlan(
+        sleeve=sleeve, action="open", instrument=instrument, symbol=symbol,
+        side="buy", notional_usd=Decimal("1000"),
+        max_loss_usd=Decimal("100"),
+        thesis="A deterministic test allocation with a bounded requested size "
+               "and an independently checked execution cleanup path.",
+        evidence=["test fixture with literal expected quantities"],
+        confidence=0.5)
 
 
 APPROVED = lambda p: Verdict(plan_id=p.plan_id, approved=True, reason="ok",
@@ -178,6 +210,71 @@ def test_partial_fill_is_also_unwound(journal):
     p = strangle()
     r = engine(b, journal).execute(p, APPROVED(p))
     assert not r.ok and r.unwound
+
+
+def test_late_fill_during_cancel_reduces_the_replacement_quantity(journal):
+    put = occ("P", 760)
+    b = FakeBroker(fill={put: 0.2}, cancel_fill={put: [0.7]})
+    p = strangle()
+
+    engine(b, journal).execute(p, APPROVED(p))
+
+    put_orders = [order for order in b.submitted if order["symbol"] == put]
+    assert put_orders[1]["qty"] == Decimal("3")
+
+
+def test_unconfirmed_cancel_never_submits_a_replacement(journal):
+    put = occ("P", 760)
+    b = FakeBroker(fill={put: 0.2}, uncertain_cancel={put})
+    p = strangle()
+
+    result = engine(b, journal).execute(p, APPROVED(p))
+
+    put_orders = [order for order in b.submitted if order["symbol"] == put]
+    assert len(put_orders) == 1
+    assert not result.ok
+    assert "manual intervention" in result.reason
+
+
+def test_failed_replacement_submit_does_not_bank_predecessor_twice(journal):
+    put = occ("P", 760)
+
+    class ReplacementFails(FakeBroker):
+        def submit(self, **kwargs):
+            if len(self.submitted) == 2:
+                raise RuntimeError("replacement rejected")
+            return super().submit(**kwargs)
+
+    broker = ReplacementFails(fill={put: 0.3})
+    plan = strangle()
+
+    result = engine(broker, journal).execute(plan, APPROVED(plan))
+
+    put_result = next(leg for leg in result.legs if leg.symbol == put)
+    assert put_result.filled_qty == Decimal("3")
+
+
+@pytest.mark.parametrize("instrument", ["equity", "crypto"])
+def test_single_order_partial_fill_cancels_the_residual(journal, instrument):
+    plan = single(instrument)
+    broker = FakeBroker(fill={plan.symbol: 0.5})
+
+    result = engine(broker, journal).execute(plan, APPROVED(plan))
+
+    assert result.ok
+    assert broker.cancelled == ["broker-1"]
+    assert "residual canceled" in result.reason
+
+
+def test_single_order_cancel_uncertainty_is_not_success(journal):
+    plan = single("equity")
+    broker = FakeBroker(fill={plan.symbol: 0.5},
+                        uncertain_cancel={plan.symbol})
+
+    result = engine(broker, journal).execute(plan, APPROVED(plan))
+
+    assert not result.ok
+    assert "residual order state uncertain" in result.reason
 
 
 def test_nothing_filled_needs_no_unwind(journal):
