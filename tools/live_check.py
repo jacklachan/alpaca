@@ -22,8 +22,11 @@ from __future__ import annotations
 import argparse
 import sys
 import time
-from decimal import Decimal
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from decimal import Decimal, ROUND_DOWN
 from pathlib import Path
+from typing import Callable
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -39,6 +42,164 @@ GREEN, RED, YELLOW, DIM, RESET = "\033[32m", "\033[31m", "\033[33m", "\033[2m", 
 
 _fails: list[str] = []
 _warns: list[str] = []
+
+LIVE_CHECK_MAX_NOTIONAL_USD = Decimal("50.00")
+_TERMINAL_ORDER_STATES = {
+    "filled", "canceled", "cancelled", "expired", "rejected",
+    "suspended", "done_for_day", "replaced",
+}
+
+
+@dataclass(frozen=True)
+class LiveTradeResult:
+    """Outcome of the development-account venue proof."""
+
+    ok: bool
+    reason: str
+    entry_filled: Decimal = Decimal(0)
+    exit_filled: Decimal = Decimal(0)
+
+
+def _status(order) -> str:
+    return str(getattr(order, "status", "")).lower().split(".")[-1]
+
+
+def _filled_qty(order) -> Decimal:
+    return Decimal(str(getattr(order, "filled_qty", 0) or 0))
+
+
+def _settle_order(broker, order, client_order_id: str, *,
+                  wait_seconds: float, poll_seconds: float,
+                  sleep: Callable[[float], None]):
+    """Observe terminal state, canceling and confirming at the deadline."""
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        current = broker.get_order_by_coid(client_order_id)
+        if current is not None and _status(current) in _TERMINAL_ORDER_STATES:
+            return current
+        if time.monotonic() >= deadline:
+            return broker.cancel_and_confirm(
+                str(order.id), client_order_id,
+                timeout=max(wait_seconds, 0.01), poll_seconds=poll_seconds)
+        sleep(poll_seconds)
+
+
+def run_trade_check(broker, journal, notional: Decimal, *,
+                    run_id: str | None = None,
+                    wait_seconds: float = 30.0,
+                    poll_seconds: float = 2.0,
+                    sleep: Callable[[float], None] = time.sleep) -> LiveTradeResult:
+    """Place and exactly reverse one bounded dev-account BTC/USD trade."""
+    requested = Decimal(str(notional))
+    if requested <= 0 or requested > LIVE_CHECK_MAX_NOTIONAL_USD:
+        return LiveTradeResult(
+            False,
+            f"notional {requested} is outside the positive "
+            f"${LIVE_CHECK_MAX_NOTIONAL_USD} hard ceiling")
+
+    try:
+        broker.assert_ready()
+    except Exception as exc:
+        return LiveTradeResult(False, f"account identity was not proven: {exc}")
+
+    try:
+        baseline_positions = broker.positions()
+        baseline_orders = broker.open_orders()
+    except Exception as exc:
+        return LiveTradeResult(False, f"could not prove a clean baseline: {exc}")
+    if baseline_positions:
+        return LiveTradeResult(False, "clean baseline required: positions exist")
+    if baseline_orders:
+        return LiveTradeResult(False, "clean baseline required: open orders exist")
+
+    symbol = "BTC/USD"
+    try:
+        price = broker.snapshot_prices([symbol]).get(symbol)
+    except Exception as exc:
+        return LiveTradeResult(False, f"could not price {symbol}: {exc}")
+    if price is None or price <= 0:
+        return LiveTradeResult(False, f"no positive {symbol} price")
+
+    quantity = (requested / price).quantize(Decimal("0.000001"),
+                                            rounding=ROUND_DOWN)
+    if quantity <= 0:
+        return LiveTradeResult(False, "notional produces zero tradeable quantity")
+
+    from glassbox.ids import client_order_id
+
+    proof_id = run_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    entry_coid = client_order_id(f"live-check:{proof_id}", 0)
+    exit_coid = client_order_id(f"live-check:{proof_id}", 1)
+    journal.append("live_check", "VENUE_PROOF_STARTED", {
+        "symbol": symbol, "notional_ceiling": str(LIVE_CHECK_MAX_NOTIONAL_USD),
+        "requested_notional": str(requested), "requested_qty": str(quantity),
+        "entry_client_order_id": entry_coid, "exit_client_order_id": exit_coid,
+    })
+
+    try:
+        entry = broker.submit(
+            symbol=symbol, qty=quantity, side="buy",
+            client_order_id=entry_coid,
+            limit_price=(price * Decimal("1.01")).quantize(Decimal("0.01")),
+            instrument="crypto")
+        entry_final = _settle_order(
+            broker, entry, entry_coid, wait_seconds=wait_seconds,
+            poll_seconds=poll_seconds, sleep=sleep)
+    except Exception as exc:
+        return LiveTradeResult(False, f"entry state is uncertain: {exc}")
+
+    entry_filled = _filled_qty(entry_final)
+    if entry_filled <= 0:
+        try:
+            flat = not broker.positions() and not broker.open_orders()
+        except Exception:
+            flat = False
+        reason = "entry reached terminal state without a fill"
+        if not flat:
+            reason += "; exact baseline was not restored"
+        return LiveTradeResult(False, reason)
+
+    try:
+        exit_order = broker.submit(
+            symbol=symbol, qty=entry_filled, side="sell",
+            client_order_id=exit_coid,
+            limit_price=(price * Decimal("0.99")).quantize(Decimal("0.01")),
+            instrument="crypto")
+        exit_final = _settle_order(
+            broker, exit_order, exit_coid, wait_seconds=wait_seconds,
+            poll_seconds=poll_seconds, sleep=sleep)
+    except Exception as exc:
+        return LiveTradeResult(
+            False, f"cleanup exit state is uncertain: {exc}", entry_filled)
+
+    exit_filled = _filled_qty(exit_final)
+    try:
+        residual_positions = broker.positions()
+        residual_orders = broker.open_orders()
+    except Exception as exc:
+        return LiveTradeResult(
+            False, f"exact baseline reconciliation failed: {exc}",
+            entry_filled, exit_filled)
+
+    if exit_filled != entry_filled or residual_positions:
+        return LiveTradeResult(
+            False,
+            "cleanup did not restore the exact baseline position quantity",
+            entry_filled, exit_filled)
+    created_ids = {entry_coid, exit_coid}
+    if any(str(getattr(o, "client_order_id", "")) in created_ids
+           for o in residual_orders):
+        return LiveTradeResult(
+            False, "cleanup left a test-owned open order",
+            entry_filled, exit_filled)
+
+    journal.append("live_check", "VENUE_PROOF_RECONCILED", {
+        "entry_filled": str(entry_filled), "exit_filled": str(exit_filled),
+        "positions": 0, "test_owned_open_orders": 0,
+    })
+    return LiveTradeResult(
+        True, "entry and exact-quantity exit filled; account reconciled flat",
+        entry_filled, exit_filled)
 
 
 def ok(msg: str, detail: str = "") -> None:
@@ -66,11 +227,13 @@ def section(title: str) -> None:
 
 
 def main() -> int:
+    _fails.clear()
+    _warns.clear()
     ap = argparse.ArgumentParser(prog="live_check")
     ap.add_argument("--trade", action="store_true",
                     help="place and immediately close ONE small real crypto order")
-    ap.add_argument("--notional", type=float, default=50.0,
-                    help="size of that test order in USD (default 50)")
+    ap.add_argument("--notional", type=Decimal, default=LIVE_CHECK_MAX_NOTIONAL_USD,
+                    help="test order USD size; hard maximum 50.00")
     args = ap.parse_args()
 
     print(f"{YELLOW}Glassbox live check{RESET}")
@@ -104,14 +267,16 @@ def main() -> int:
         return 1
 
     try:
+        info = broker.assert_ready()
         acct = broker.account()
     except Exception as exc:
-        bad("cannot reach Alpaca", str(exc))
+        bad("cannot prove Alpaca account identity", str(exc))
         print(f"\n{DIM}If this says proxy/403, you are behind an egress filter. "
               f"Run this from an ordinary terminal.{RESET}")
         return 1
 
-    ok("reached Alpaca", f"account {acct.account_number}, status {acct.status}")
+    ok("reached expected Alpaca account",
+       f"account {info['account_number']}, status {acct.status}")
     ok("equity", f"${Decimal(str(acct.equity)):,}")
 
     level = getattr(acct, "options_trading_level", None)
@@ -181,46 +346,13 @@ def main() -> int:
     if not args.trade:
         print(f"  {DIM}skipped. Re-run with --trade to place one.{RESET}")
     else:
-        sym = "BTC/USD"
-        px = broker.snapshot_prices([sym]).get(sym)
-        if not px:
-            bad("no BTC/USD price; cannot place the test order")
+        result = run_trade_check(broker, journal, args.notional)
+        if result.ok:
+            ok("venue proof reconciled",
+               f"entry {result.entry_filled} BTC; exact exit "
+               f"{result.exit_filled} BTC; flat")
         else:
-            qty = (Decimal(str(args.notional)) / px).quantize(Decimal("0.000001"))
-            print(f"  {DIM}buying {qty} {sym} at about {px}{RESET}")
-            from glassbox.ids import client_order_id
-            coid = client_order_id(f"live-check-{int(time.time())}", 0)
-            try:
-                order = broker.submit(symbol=sym, qty=qty, side="buy",
-                                      client_order_id=coid,
-                                      limit_price=(px * Decimal("1.01")).quantize(Decimal("0.01")),
-                                      instrument="crypto")
-                ok("order accepted", f"broker id {order.id}")
-            except Exception as exc:
-                bad("submit failed", str(exc))
-                order = None
-
-            if order is not None:
-                filled = None
-                for _ in range(15):
-                    time.sleep(2)
-                    o = broker.get_order_by_coid(coid)
-                    if o and str(getattr(o, "status", "")).lower().endswith("filled"):
-                        filled = o
-                        break
-                if filled:
-                    ok("order FILLED",
-                       f"{filled.filled_qty} @ {filled.filled_avg_price} — "
-                       f"the execution path is proven end to end")
-                else:
-                    warn("no fill within 30s",
-                         "not necessarily wrong; check the dashboard")
-
-                try:
-                    broker.close_position(sym)
-                    ok("position closed", "account returned to flat")
-                except Exception as exc:
-                    warn("could not close automatically", f"{exc} — close it by hand")
+            bad("venue proof failed", result.reason)
 
     # -- verdict ---------------------------------------------------------------
     print(f"\n{'-' * 66}")
