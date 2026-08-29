@@ -112,6 +112,15 @@ against a live account.
 Keys live in the environment. They are never committed, never written to the
 journal, and are scrubbed from any recorded terminal output.
 
+## Handover
+
+- `HANDOVER.md` — architecture, how to run it, what the pieces do.
+- `HANDOVER-2.md` — **start here.** What changed on 29 Aug, the fourteen audit
+  fixes, what is still not done, and what to do next.
+- `DECISIONS.md` — why every choice was made, including where we were wrong.
+- `PLAN.md` — the competition plan.
+- `SOCIAL.md` — the social criterion, with drafted posts.
+
 ## Running it
 
 ```bash
@@ -124,10 +133,11 @@ python main.py                   # the agent
 Operational checks, all runnable without a broker connection:
 
 ```bash
-pytest -q                        # 142 tests
+pytest -q                        # 166 tests
 python tools/crash_drill.py      # 13 checks: real SIGKILL, real restarts
 python tools/verify_chain.py     # re-hash the journal end to end
 python tools/env_parity.py .env  # systemd vs dotenv agreement
+python tools/live_check.py       # the checks that need real network access
 sudo bash tools/soak.sh          # on the VPS: systemd in the loop
 ```
 
@@ -187,7 +197,7 @@ dependencies are the public packages listed in `requirements.txt`.
 
 Complete and tested: the full autonomous loop — reconcile → manage → propose →
 kernel → execute → journal — plus the read-only dashboard, CI, and the
-crash-recovery drill. 142 tests.
+crash-recovery drill. 166 tests.
 
 Proven: the recovery *logic*, via `tools/crash_drill.py` (real SIGKILL on real
 child processes).
