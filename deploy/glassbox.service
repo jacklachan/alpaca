@@ -1,0 +1,43 @@
+# /etc/systemd/system/glassbox.service
+#
+#   sudo cp deploy/glassbox.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now glassbox
+#   journalctl -u glassbox -f
+#
+# Restart=always is the whole point. The most common way a hackathon trading
+# agent dies is a laptop going to sleep on Tuesday night. This is not a laptop,
+# and if the process dies it comes back in five seconds and reconciles against
+# the broker rather than trusting any local state it left behind.
+
+[Unit]
+Description=Glassbox autonomous options trading agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=glassbox
+WorkingDirectory=/opt/glassbox
+EnvironmentFile=/opt/glassbox/.env
+ExecStart=/opt/glassbox/.venv/bin/python main.py
+Restart=always
+RestartSec=5
+
+# Do not give up. A crash loop that stops restarting at 03:00 on Wednesday is
+# indistinguishable from the agent being dead.
+StartLimitIntervalSec=0
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=glassbox
+
+# The process only needs its own directory and the network.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/glassbox/state
+
+[Install]
+WantedBy=multi-user.target

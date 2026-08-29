@@ -22,7 +22,7 @@ from decimal import Decimal
 from uuid import uuid4
 
 from .. import config as C
-from ..macro import MacroEvent, next_event, sessions_remaining_at_measurement
+from ..macro import CALENDAR, MacroEvent, next_event, sessions_remaining_at_measurement
 from ..schema import OptionLeg, TradePlan
 
 
@@ -170,8 +170,11 @@ class ChainLeg:
 class EventVolStrategy:
     """Emits at most one plan per catalyst. Never sizes above the kernel's caps."""
 
-    def __init__(self, underlying: str = "SPY"):
+    name = "event_vol"
+
+    def __init__(self, underlying: str = "SPY", data=None):
         self.underlying = underlying
+        self.data = data
 
     def propose(
         self,
@@ -273,3 +276,54 @@ class EventVolStrategy:
     def _nearest(legs: list[ChainLeg], right: str, target: Decimal) -> ChainLeg | None:
         same = [l for l in legs if l.right == right and l.ask > 0]
         return min(same, key=lambda l: abs(l.strike - target)) if same else None
+
+    # -- scheduler interface ---------------------------------------------------
+
+    def propose_from_state(self, state, positioned_for=None) -> list[TradePlan]:
+        """Adapter matching the interface the scheduler drives.
+
+        Pulls the term structure and the chain from the data layer, then defers
+        to `propose`. Requires a MarketData instance -- without one this
+        strategy is inert rather than guessing.
+        """
+        from ..macro import MEASUREMENT_ET
+
+        if self.data is None:
+            return []
+        spot = state.snapshot_price.get(self.underlying)
+        if not spot or spot <= 0:
+            return []
+
+        try:
+            quotes = self.data.expiry_quotes(self.underlying, spot)
+        except Exception:
+            return []
+        if not quotes:
+            return []
+
+        rv = self.data.realised_vol(self.underlying, days=10)
+        front = min(quotes, key=lambda q: q.expiry)
+        if rv <= 0:
+            return []
+        ratio = Decimal(str(round(float(front.atm_iv) / rv, 4)))
+
+        choice = select_expiry(quotes, next_event(state.now_et, tier=C.EVENT_MIN_TIER,
+                                                 within_hours=C.EVENT_LOOKAHEAD_HOURS)
+                               or CALENDAR[-1], MEASUREMENT_ET)
+        if choice is None:
+            return []
+
+        try:
+            chain = self.data.chain_legs(self.underlying, choice.expiry, spot)
+        except Exception:
+            return []
+
+        remaining = C.CONVEX_TOTAL_PREMIUM_CAP - state.convex_premium_outstanding
+        if remaining <= 0:
+            return []
+
+        return self.propose(
+            now=state.now_et, spot=spot, iv_vs_rv=ratio,
+            expiry_candidates=quotes, chain=chain,
+            measurement=MEASUREMENT_ET, remaining_budget=remaining,
+            already_positioned_for=positioned_for)
