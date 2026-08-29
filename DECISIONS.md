@@ -327,6 +327,15 @@ Worth recording, because it is the honest case for why the suite exists.
    run. Fixed in the strategy, not by loosening the rule.
 5. **SPY seeded at 650 in fixtures.** A placeholder never checked; the real
    close was 774.46, and later 769.28.
+6. **`reconcile()` never populated `trading_days_to`.** Invariant 10 refuses
+   any option plan whose expiry it cannot count sessions to, so the empty map
+   refused *every* option trade. The convex sleeve — the entire thesis — would
+   have been dead at Monday's open, discovered at 09:30 with the code frozen.
+   Surfaced by the practice harness, not by review.
+7. **`panic.sh` invented its CLI syntax.** `alpaca order cancel --all` and
+   `--output json` do not exist; the real commands are `order cancel-all`,
+   `position close-all` and `--json`. The manual kill switch would have failed
+   at the moment it was needed. Verified against github.com/alpacahq/cli.
 
 ---
 

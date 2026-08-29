@@ -290,6 +290,13 @@ the autonomy claim on the most important trade of the week.
 ## 9 · Gotchas that will bite you
 
 - **`.env.example` is tracked.** Real keys go in `.env` only.
+- **Pushing to GitHub through Claude may 403** with "not in this session's
+  authorized repository set". That is Claude Code's git proxy, not GitHub --
+  collaborator access will not fix it. Either add the repo to the session's
+  sources, or push from a normal terminal after `gh auth login`.
+- **The Alpaca CLI syntax is `cancel-all` / `close-all` and `--json`**, not
+  `cancel --all` / `--output json`. panic.sh was written wrong first and would
+  have failed exactly when it was needed.
 - **The scored account must stay pristine.** One test order against it and it
   is arguably ineligible.
 - **Do not "fix" the loose options delta bound** — see §4.
