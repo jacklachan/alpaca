@@ -23,6 +23,7 @@ from typing import Any, Callable, TypeVar
 
 from . import config as C
 from .kernel import PortfolioState, Position
+from .macro import trading_days_between
 from .schema import OptionContract
 
 log = logging.getLogger("glassbox.broker")
@@ -263,6 +264,17 @@ class Broker:
                 if filled and avg:
                     convex_today += filled * avg * 100
 
+        # Trading-day counts for every plausible expiry. Invariant 10 refuses
+        # any option plan whose expiry it cannot count sessions to, so an empty
+        # map here silently refuses EVERY option trade -- which is exactly what
+        # happened until the practice harness surfaced it.
+        today = datetime.now(C.ET).date()
+        horizon = {
+            date.fromordinal(today.toordinal() + d): trading_days_between(
+                today, date.fromordinal(today.toordinal() + d))
+            for d in range(1, 46)
+        }
+
         state = PortfolioState(
             equity=Decimal(str(acct.equity)),
             cash=Decimal(str(acct.cash)),
@@ -275,6 +287,7 @@ class Broker:
             orders_today=len(todays),
             orders_today_by_symbol=by_symbol,
             open_client_order_ids=open_coids,
+            trading_days_to=horizon,
             market_open=bool(clock.is_open),
             now_et=datetime.now(C.ET),
             snapshot_price=self.snapshot_prices(

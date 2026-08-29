@@ -348,3 +348,16 @@ def test_adversarial_plans_are_refused_with_a_reason(bad):
 def test_every_invariant_has_a_check_method():
     for name in RiskKernel.INVARIANTS:
         assert hasattr(K, f"_check_{name}"), f"missing implementation for {name}"
+
+
+# --- regression: the expiry guard must have data to work with -----------------
+
+def test_option_plan_is_refused_when_session_counts_are_missing():
+    """Invariant 10 fails closed, which is correct -- but it means an empty
+    trading_days_to map refuses EVERY option trade. Reconciliation must
+    populate it. See test_broker.py for the other half of this."""
+    s = state(trading_days_to={})
+    v = K.review(option_plan(), s)
+    assert not v.approved
+    assert v.failed_invariant == "10_expiry_guard"
+    assert "no trading-day count" in v.reason
