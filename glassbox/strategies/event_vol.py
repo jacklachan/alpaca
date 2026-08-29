@@ -247,6 +247,7 @@ class EventVolStrategy:
             symbol=self.underlying,
             side="buy",
             is_event_trade=True,
+            event_key=event.name,
             option_legs=[
                 OptionLeg(symbol=call.symbol, side="buy", qty=qty, limit_price=call_limit),
                 OptionLeg(symbol=put.symbol, side="buy", qty=qty, limit_price=put_limit),

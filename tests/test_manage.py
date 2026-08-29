@@ -43,7 +43,10 @@ def journal(tmp_path):
 @pytest.fixture
 def mgr(tmp_path, journal):
     ks = KillSwitch(tmp_path / "kill.json", journal=journal)
-    return PositionManager(FakeBroker(), journal, ks)
+    # Exit targets are persisted so they survive a restart; point each test at
+    # its own file so they do not leak into one another.
+    return PositionManager(FakeBroker(), journal, ks,
+                           targets_path=tmp_path / "targets.json")
 
 
 def state(now: datetime, positions=None, **kw) -> PortfolioState:
@@ -153,9 +156,28 @@ def test_convex_sleeve_going_to_zero_does_not_trip_it(mgr):
     assert not mgr.kill.tripped
 
 
-def test_portfolio_backstop_trips_it(mgr):
+def test_backstop_does_not_fire_on_the_designed_worst_case(mgr):
+    """The convex sleeve is permitted to go to zero -- that is a ~50% outcome
+    by design, not a failure. A backstop that fires there would latch, flatten
+    the sleeve at the bottom, and halt trading for the rest of the week with
+    nobody present to re-arm. It must sit BELOW the designed floor.
+    """
     now = datetime(2026, 9, 3, 11, 0, tzinfo=C.ET)
-    mgr.tick(state(now, equity=Decimal("84000"),
+    designed_floor = (C.STARTING_EQUITY - C.CONVEX_SLEEVE_USD
+                      - C.CORE_SLEEVE_USD * C.CORE_DRAWDOWN_KILL_PCT)
+    # Convex fully spent, core flat: strictly better than the designed floor.
+    mgr.tick(state(now, equity=C.STARTING_EQUITY - C.CONVEX_SLEEVE_USD,
+                   core_sleeve_value=C.CORE_SLEEVE_USD,
+                   core_sleeve_cost_basis=C.CORE_SLEEVE_USD))
+    assert not mgr.kill.tripped, (
+        "backstop fired on the strategy doing exactly what it is designed to do")
+    assert designed_floor / C.STARTING_EQUITY > (1 - C.PORTFOLIO_DRAWDOWN_KILL_PCT)
+
+
+def test_portfolio_backstop_trips_on_something_pathological(mgr):
+    now = datetime(2026, 9, 3, 11, 0, tzinfo=C.ET)
+    beyond = C.STARTING_EQUITY * (1 - C.PORTFOLIO_DRAWDOWN_KILL_PCT) - Decimal("1000")
+    mgr.tick(state(now, equity=beyond,
                    core_sleeve_value=Decimal("60000"),
                    core_sleeve_cost_basis=Decimal("60000")))
     assert mgr.kill.tripped

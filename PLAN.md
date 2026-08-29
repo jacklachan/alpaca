@@ -331,9 +331,8 @@ page covers the Application URL requirement with no build step.
 
 > Glassbox is an autonomous agent that trades scheduled volatility events. It
 > buys convexity into catalysts when implied volatility is cheap, a
-> deterministic kernel bounds every position's loss before it opens, and on
-> Friday morning it trades the payrolls print in crypto while the equity market
-> is still closed.
+> deterministic kernel bounds every position's loss before it opens, and it is
+> measured holding peak event premium the evening before payrolls lands.
 
 **Say:** "The model proposes. It never executes." · "Every option position had
 an exact maximum loss before it opened." · "We froze the code at Monday's open

@@ -23,11 +23,18 @@ from typing import Any, Callable, TypeVar
 
 from . import config as C
 from . import env
+from .ids import EVENT_PREFIX as EVENT_COID_PREFIX
 from .kernel import PortfolioState, Position
 from .macro import trading_days_between
 from .schema import OptionContract
 
 log = logging.getLogger("glassbox.broker")
+
+# An order in one of these states can no longer consume buying power.
+_TERMINAL_ORDER_STATES = {
+    "filled", "canceled", "cancelled", "expired", "rejected",
+    "suspended", "done_for_day", "replaced",
+}
 
 T = TypeVar("T")
 
@@ -98,9 +105,14 @@ class Broker:
 
         from alpaca.trading.client import TradingClient
         from alpaca.data.historical.stock import StockHistoricalDataClient
+        from alpaca.data.historical.crypto import CryptoHistoricalDataClient
 
         self.trading = TradingClient(key, secret, paper=True)
         self.data = StockHistoricalDataClient(key, secret)
+        # Alpaca serves crypto from its own venue and its own data client.
+        # Without this the crypto sleeve can never be priced, and therefore
+        # never trades.
+        self.crypto_data = CryptoHistoricalDataClient(key, secret)
         self.bucket = bucket or TokenBucket()
         self.journal = journal
         # require_choice, not getenv: an unrecognised ALPACA_ENV must crash, not
@@ -204,6 +216,34 @@ class Broker:
                         px = (Decimal(str(q.bid_price)) + Decimal(str(q.ask_price))) / 2
                 if px:
                     out[sym] = px
+
+        # AUDIT NOTE: crypto symbols were filtered out above and never priced
+        # anywhere else, so CryptoStrategy always saw no price and returned no
+        # plans. The whole sleeve -- and with it the "runs 24/7, operates while
+        # the equity market is shut" claim -- was dead code. Alpaca serves
+        # crypto from a different data client, so it needs its own request.
+        cryptos = [s for s in symbols if "/" in s]
+        if cryptos:
+            try:
+                from alpaca.data.requests import CryptoSnapshotRequest
+                snaps = self._call(
+                    lambda: self.crypto_data.get_crypto_snapshot(
+                        CryptoSnapshotRequest(symbol_or_symbols=cryptos)),
+                    "get_crypto_snapshot")
+                for sym, s in snaps.items():
+                    px = None
+                    if getattr(s, "latest_trade", None):
+                        px = Decimal(str(s.latest_trade.price))
+                    elif getattr(s, "latest_quote", None):
+                        q = s.latest_quote
+                        if q.bid_price and q.ask_price:
+                            px = (Decimal(str(q.bid_price))
+                                  + Decimal(str(q.ask_price))) / 2
+                    if px:
+                        out[sym] = px
+            except Exception as exc:
+                # Never let a crypto data failure stop the equity path.
+                log.warning("crypto snapshot failed: %s", exc)
         return out
 
     # -- reconciliation --------------------------------------------------------
@@ -265,12 +305,40 @@ class Broker:
             coid = getattr(o, "client_order_id", None)
             if coid:
                 open_coids.add(str(coid))
-            # Premium committed today, counted from filled option buys.
+            # Premium committed today.
+            #
+            # AUDIT NOTE, two bugs fixed here, both of which let the agent spend
+            # past its own caps:
+            #
+            #  1. Only FILLED orders were counted. An order that is submitted
+            #     and still resting contributes real committed premium, but was
+            #     invisible to invariants 03 and 04 -- so plans raced each
+            #     other. Measured: six resting orders worth $21,000 reported as
+            #     $0, and a seventh $7,000 plan approved on top.
+            #  2. event_today was hard-coded to Decimal(0) below and never
+            #     computed, which made EVENT_TRADE_DAILY_CAP a per-ORDER cap
+            #     rather than a per-day one. Two $16,000 event strangles in one
+            #     day both passed an $18,000 cap.
+            #
+            # Working orders are counted at their limit price, which is the
+            # most we could pay for them. Better to over-count exposure we have
+            # committed than to discover it after the fills arrive.
             if len(s) > 15 and str(o.side).lower().endswith("buy"):
                 filled = Decimal(str(getattr(o, "filled_qty", 0) or 0))
                 avg = Decimal(str(getattr(o, "filled_avg_price", 0) or 0))
+                committed = Decimal(0)
                 if filled and avg:
-                    convex_today += filled * avg * 100
+                    committed += filled * avg * 100
+                status = str(getattr(o, "status", "")).lower().split(".")[-1]
+                if status not in _TERMINAL_ORDER_STATES:
+                    qty = Decimal(str(getattr(o, "qty", 0) or 0))
+                    lim = Decimal(str(getattr(o, "limit_price", 0) or 0))
+                    resting = qty - filled
+                    if resting > 0 and lim > 0:
+                        committed += resting * lim * 100
+                convex_today += committed
+                if str(coid or "").startswith(EVENT_COID_PREFIX):
+                    event_today += committed
 
         # Trading-day counts for every plausible expiry. Invariant 10 refuses
         # any option plan whose expiry it cannot count sessions to, so an empty
@@ -298,9 +366,19 @@ class Broker:
             trading_days_to=horizon,
             market_open=bool(clock.is_open),
             now_et=datetime.now(C.ET),
+            # AUDIT NOTE: this used to ask only for symbols already HELD, plus
+            # SPY and QQQ. Every strategy skips a symbol with no snapshot price
+            # and invariants 02/05/12 hard-refuse without one, so any symbol
+            # not already in the book could never be bought -- which meant it
+            # never entered the book, which meant it was never priced. IWM sat
+            # in that trap all week, leaving 30% of the core sleeve in cash,
+            # and it closed off the other nine allowlisted names to any future
+            # strategy. Price the whole tradeable universe.
             snapshot_price=self.snapshot_prices(
                 sorted({(p.underlying or p.symbol) for p in positions}
-                       | {"SPY", "QQQ"})),
+                       | set(C.EQUITY_ALLOWLIST)
+                       | set(C.OPTION_UNDERLYING_ALLOWLIST)
+                       | set(C.CRYPTO_ALLOWLIST))),
             kill_switch_tripped=kill_switch_tripped,
         )
         self._log("broker", "RECONCILED", {

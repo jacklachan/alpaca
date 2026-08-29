@@ -130,8 +130,14 @@ def test_client_order_ids_are_deterministic_and_distinct(journal):
     engine(b, journal).execute(p, APPROVED(p))
     coids = [s["coid"] for s in b.submitted]
     assert len(set(coids)) == 2
-    from glassbox.ids import client_order_id
-    assert coids[0] == client_order_id(p.plan_id, 0)
+    from glassbox.ids import EVENT_PREFIX, client_order_id
+    assert coids[0] == client_order_id(p.plan_id, 0, event=p.is_event_trade)
+
+    # An event trade must be identifiable from the id alone. reconcile() sees
+    # broker orders, not plans, so without this marker the per-day event
+    # premium cap degrades into a per-order check.
+    if p.is_event_trade:
+        assert all(c.startswith(EVENT_PREFIX) for c in coids)
 
 
 # --- the ugly cases -----------------------------------------------------------

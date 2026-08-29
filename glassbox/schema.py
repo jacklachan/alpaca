@@ -101,6 +101,17 @@ class TradePlan(BaseModel):
     # the separately budgeted event-trade allowance.
     is_event_trade: bool = False
 
+    # Which catalyst this plan is positioning for, e.g. "ISM Services PMI".
+    #
+    # AUDIT NOTE: the de-duplication guard used to compare two different things.
+    # The scheduler recorded plan.symbol ("SPY"); EventVolStrategy checked
+    # event.name ("ADP National Employment"). Those sets never intersect, so the
+    # guard never fired and the same catalyst was re-traded on consecutive
+    # ticks -- measured at $24,720 of premium, the entire convex sleeve, spent
+    # on one print in two minutes, stopped only when the total premium cap
+    # finally bound. One key, set by the strategy, read by the scheduler.
+    event_key: str | None = None
+
     thesis: str = Field(min_length=40, max_length=800)
     evidence: list[str] = Field(min_length=1)
     confidence: float = Field(ge=0, le=1)

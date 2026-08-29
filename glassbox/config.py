@@ -135,10 +135,34 @@ CORE_GROSS_EXPOSURE_MAX = Decimal("1.0")   # no equity margin leverage anywhere
 # the convex sleeve is *permitted* to go to zero; the core sleeve is not.
 
 CORE_DRAWDOWN_KILL_PCT = Decimal("0.06")    # core sleeve down 6% -> halt
-PORTFOLIO_DRAWDOWN_KILL_PCT = Decimal("0.15")  # backstop, 85% of start
+
+# AUDIT NOTE: this was 0.15, which reintroduced the exact bug the per-sleeve
+# split above exists to prevent. The convex sleeve is 25% of equity and is
+# explicitly *permitted* to go to zero -- that is a designed ~50% outcome. A
+# 15% portfolio backstop therefore trips while the convex sleeve is doing
+# nothing but what it was built to do: measured tripping with the core sleeve
+# exactly flat and the convex sleeve down only 60% of its premium. It then
+# latches, force-closes the convex sleeve at the bottom, and refuses all
+# further trading for the rest of the week, with no human present to re-arm.
+#
+# The backstop must sit BELOW the designed floor, not inside it. Designed
+# worst case is the convex sleeve fully spent (-25%) plus the core sleeve at
+# its own -6% stop on 65% of capital (-3.9%), i.e. equity near $71,100.
+# 30% leaves the strategy room to be wrong in the way it is allowed to be
+# wrong, while still catching something genuinely pathological.
+PORTFOLIO_DRAWDOWN_KILL_PCT = Decimal("0.30")
 
 # Latching: once tripped, only a human re-arms. See README for the re-arm rule.
 KILL_SWITCH_STATE_FILE = "state/kill_switch.json"
+
+# Which catalysts we have already positioned for today. Persisted so a restart
+# does not re-buy the same event.
+POSITIONED_STATE_FILE = _os.getenv("GLASSBOX_POSITIONED_FILE",
+                                   "state/positioned_for.json")
+
+# Stops, targets and time exits. Persisted so a restart does not leave open
+# positions with no exit logic attached to them.
+TARGETS_STATE_FILE = _os.getenv("GLASSBOX_TARGETS_FILE", "state/targets.json")
 
 # --- Circuit breakers ---------------------------------------------------------
 # AUDIT NOTE: invariant #11 (idempotency) stops the *same* plan being sent twice.

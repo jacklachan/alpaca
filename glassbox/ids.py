@@ -9,8 +9,18 @@ from __future__ import annotations
 
 import hashlib
 
+PREFIX = "gbx-"
+EVENT_PREFIX = "gbxe-"
 
-def client_order_id(plan_id: str, leg_index: int = 0) -> str:
-    """Stable, collision-resistant, and short enough for Alpaca's field."""
+
+def client_order_id(plan_id: str, leg_index: int = 0, *, event: bool = False) -> str:
+    """Stable, collision-resistant, and short enough for Alpaca's field.
+
+    The prefix carries one bit of information on purpose. `reconcile()` sees
+    only what the broker returns -- orders, not plans -- so without a marker in
+    the id there is no way to tell an event trade's premium from any other
+    option premium, and EVENT_TRADE_DAILY_CAP degrades into a per-order check
+    that two $16,000 strangles in one day both pass.
+    """
     digest = hashlib.sha256(f"{plan_id}:{leg_index}".encode()).hexdigest()
-    return f"gbx-{digest[:32]}"
+    return f"{EVENT_PREFIX if event else PREFIX}{digest[:32]}"

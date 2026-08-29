@@ -22,6 +22,7 @@ from decimal import Decimal
 from statistics import median
 
 from . import config as C
+from . import env
 from .strategies.event_vol import ChainLeg, ExpiryQuote
 
 log = logging.getLogger("glassbox.data")
@@ -109,7 +110,7 @@ class MarketData:
             from alpaca.data.requests import OptionChainRequest
             import os
             client = OptionHistoricalDataClient(
-                os.getenv("ALPACA_API_KEY"), os.getenv("ALPACA_SECRET_KEY"))
+                env.get("ALPACA_API_KEY"), env.get("ALPACA_SECRET_KEY"))
             return self.broker._call(
                 lambda: client.get_option_chain(
                     OptionChainRequest(underlying_symbol=underlying)),

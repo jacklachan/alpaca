@@ -19,11 +19,13 @@ import os
 import signal
 import urllib.request
 from datetime import datetime, timezone
+from pathlib import Path
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from . import config as C
+from . import env
 from .macro import MEASUREMENT_ET
 from .manage import measurement_countdown
 
@@ -38,7 +40,7 @@ JOB_DEFAULTS = {
 
 
 def discord(message: str, webhook: str | None = None) -> bool:
-    url = webhook or os.getenv("DISCORD_WEBHOOK_URL")
+    url = webhook or env.get("DISCORD_WEBHOOK_URL")
     if not url:
         return False
     try:
@@ -69,7 +71,35 @@ class Agent:
         self.thesis = thesis
         self.scheduler = BackgroundScheduler(
             timezone="UTC", job_defaults=JOB_DEFAULTS)
-        self._positioned_for: set[str] = set()
+        # Persisted, not in-memory. An in-memory set is empty after any
+        # restart, and the agent would happily buy the same catalyst a second
+        # time on the tick after coming back up -- which is precisely when we
+        # are least able to notice.
+        self._positioned_path = Path(C.POSITIONED_STATE_FILE)
+        self._positioned_path.parent.mkdir(parents=True, exist_ok=True)
+        self._positioned_for: set[str] = self._load_positioned()
+
+    # -- catalyst de-duplication -----------------------------------------------
+
+    def _load_positioned(self) -> set[str]:
+        try:
+            data = json.loads(self._positioned_path.read_text())
+        except Exception:
+            return set()
+        # Scoped to the trading day: a catalyst traded yesterday must not block
+        # a different one today.
+        if data.get("day") != datetime.now(C.ET).date().isoformat():
+            return set()
+        return set(data.get("keys", []))
+
+    def _mark_positioned(self, key: str) -> None:
+        self._positioned_for.add(key)
+        try:
+            self._positioned_path.write_text(json.dumps({
+                "day": datetime.now(C.ET).date().isoformat(),
+                "keys": sorted(self._positioned_for)}, indent=2))
+        except Exception as exc:      # never let bookkeeping stop trading
+            log.warning("could not persist positioned-for set: %s", exc)
 
     # -- safety wrapper --------------------------------------------------------
 
@@ -96,27 +126,51 @@ class Agent:
 
         for name, strategy in self.strategies.items():
             for plan in strategy.propose_from_state(state, self._positioned_for):
-                verdict = self.kernel.review(plan, state)
-                self.journal.append(
-                    "risk.kernel",
-                    "PLAN_APPROVED" if verdict.approved else "PLAN_REFUSED",
-                    {"plan_id": plan.plan_id, "strategy": name,
-                     "sleeve": plan.sleeve, "symbol": plan.symbol,
-                     "thesis": plan.thesis, "evidence": plan.evidence,
-                     "checks_passed": verdict.checks_passed,
-                     "checks_total": verdict.checks_total,
-                     "reason": verdict.reason,
-                     "failed_invariant": verdict.failed_invariant})
-                if verdict.approved:
-                    self.execute(plan, verdict)
-                    state = self.broker.reconcile(
-                        kill_switch_tripped=self.manager.kill.tripped)
+                self._review_and_execute(plan, state, name)
+                state = self.broker.reconcile(
+                    kill_switch_tripped=self.manager.kill.tripped)
+
+    def _review_and_execute(self, plan, state, strategy_name: str) -> None:
+        """Kernel first, always. The single path from a plan to an order."""
+        verdict = self.kernel.review(plan, state)
+        self.journal.append(
+            "risk.kernel",
+            "PLAN_APPROVED" if verdict.approved else "PLAN_REFUSED",
+            {"plan_id": plan.plan_id, "strategy": strategy_name,
+             "sleeve": plan.sleeve, "symbol": plan.symbol,
+             "thesis": plan.thesis, "evidence": plan.evidence,
+             "checks_passed": verdict.checks_passed,
+             "checks_total": verdict.checks_total,
+             "reason": verdict.reason,
+             "failed_invariant": verdict.failed_invariant})
+        if verdict.approved:
+            self.execute(plan, verdict)
 
     def crypto_tick(self) -> None:
-        """Same loop, crypto only. Runs 24/7 -- including the hour after the
-        payrolls print, when the equity market is still closed."""
+        """Same loop, crypto only. Runs 24/7 -- including the pre-open window
+        after an 08:15 or 08:30 ET release, when equities are still shut.
+
+        AUDIT NOTE: this used to reconcile and manage but never iterate the
+        strategies, so the crypto sleeve proposed nothing, ever. The only place
+        CryptoStrategy was driven was equity_tick, which returns early when the
+        market is closed -- i.e. exactly when the crypto sleeve is supposed to
+        be doing its job. The sleeve's entire stated purpose was unreachable.
+        """
         state = self.broker.reconcile(kill_switch_tripped=self.manager.kill.tripped)
         self.manager.tick(state)
+
+        if self.manager.kill.tripped:
+            return
+
+        strategy = self.strategies.get("crypto")
+        if strategy is None:
+            return
+        for plan in strategy.propose_from_state(state, self._positioned_for):
+            if plan.instrument != "crypto":
+                continue      # this loop trades the 24/7 venue only
+            self._review_and_execute(plan, state, "crypto")
+            state = self.broker.reconcile(
+                kill_switch_tripped=self.manager.kill.tripped)
 
     def heartbeat(self) -> None:
         state = self.broker.reconcile(kill_switch_tripped=self.manager.kill.tripped)
@@ -134,7 +188,7 @@ class Agent:
 
     def anchor(self) -> None:
         """Publish the journal head somewhere with a clock we do not control."""
-        self.journal.anchor(os.getenv("DISCORD_WEBHOOK_URL"))
+        self.journal.anchor(env.get("DISCORD_WEBHOOK_URL"))
 
     def eod_manage(self) -> None:
         state = self.broker.reconcile(kill_switch_tripped=self.manager.kill.tripped)
@@ -161,7 +215,10 @@ class Agent:
         engine = ExecutionEngine(self.broker, self.journal)
         result = engine.execute(plan, verdict)
         if result.ok:
-            self._positioned_for.add(plan.symbol)
+            # Record the CATALYST, not the ticker. Recording plan.symbol meant
+            # the strategy's `event.name in done` guard never matched, so one
+            # print was traded on every tick until the total premium cap bound.
+            self._mark_positioned(plan.event_key or plan.symbol)
             if plan.time_exit or plan.stop or plan.target:
                 for leg in (plan.option_legs or []):
                     self.manager.register(leg.symbol, stop=plan.stop,
@@ -182,8 +239,15 @@ class Agent:
 
         # Market hours only. Alpaca's clock is still checked inside the tick --
         # cron gets us close, get_clock() is the authority.
+        #
+        # AUDIT NOTE: this was hour="9-15", so there was no equity tick at all
+        # between 16:00 and 16:59. `time_exit` for the convex sleeve is
+        # MEASUREMENT_ET (16:00), which meant the only loop that could act on
+        # it was crypto_tick -- at or after the close, when an option order
+        # will not fill. The position was carried straight past the flatten it
+        # was supposed to get. 9-16 covers the closing minute.
         add(self._guard("equity_tick", self.equity_tick),
-            cron(day_of_week="mon-fri", hour="9-15", minute="*"), id="equity_tick")
+            cron(day_of_week="mon-fri", hour="9-16", minute="*"), id="equity_tick")
 
         add(self._guard("crypto_tick", self.crypto_tick),
             cron(minute="*/5"), id="crypto_tick")

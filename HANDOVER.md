@@ -13,7 +13,8 @@ We are building **Glassbox** for the Alpaca AI Trading Agents Hackathon
 (28 Aug – 4 Sep 2026, $6,300 pool).
 
 An autonomous agent trades a fresh $100,000 Alpaca **paper** account. It starts
-Monday 31 Aug 09:30 ET and the account is measured Friday 4 Sep. Judging is on
+Monday 31 Aug 09:30 ET and the account is measured at **EOD Thursday 3 Sep**
+(Alpaca's guidelines; the window nominally runs to Fri 4 Sep 09:30). Judging is on
 five criteria: **P&L, Technology Implementation, Creativity & Originality,
 Presentation & Execution, and Social engagement.**
 
@@ -175,21 +176,27 @@ it reads the live term structure and decides.
 
 Measured from the live chain on 29 Aug:
 
-| Expiry | ATM IV | Spread | Sessions left at measurement |
-|---|---|---|---|
-| 4 Sep | **10.7%** | 4.1% | 1 — payrolls day, highest IV; refused as 0DTE |
-| **8 Sep** | **9.4%** | 5.3% | 2 — spans Labor Day; **the pick** |
-| 9 Sep | 9.7% | 6.0% | 3 |
-| 11 Sep | 10.6% | 4.0% | 5 — the default fallback |
+| Expiry | ATM IV | Spread | Sessions left at measurement | Verdict |
+|---|---|---|---|---|
+| 3 Sep | 9.9% | 4.0% | 1 | refused — expires on the measurement day |
+| **4 Sep** | **10.7%** | 4.1% | **2** | **the pick, 3.0×** |
+| 8 Sep | 9.4% | 5.3% | 3 | viable, 2.0× |
+| 9 Sep | 9.7% | 6.0% | 4 | refused — wider than 5.5% |
+| 11 Sep | 10.6% | 4.0% | 6 | viable, 1.0× — the baseline |
 
-Forward vol **4 Sep → 8 Sep is 7.0%**; **8 Sep → 11 Sep is 13.9%**. We are
-measured Friday morning, so every session past 4 Sep is time we pay for and
-never use — and the Labor Day stretch costs half what the following week does.
-The 8 Sep contract is simultaneously the cheapest and the highest gamma per
-dollar, which is abnormal and is the whole edge. Selector picks it at **2.5×**.
+**This changed when the measurement date was corrected to EOD Thu 3 Sep.**
+The old pick was 8 Sep, on the argument that the Labor Day weekend made it
+cheap in business time. Measured Thursday, we never live to see the holiday,
+so that discount is time we pay for and never use.
+
+4 Sep wins on the arithmetic — 3.0× the convexity per dollar of the 11 Sep
+contract. The better argument is that **4 Sep is the payrolls expiry, so its
+IV peaks at Thursday's close, the exact moment we are measured**: the event
+premium is fully priced and has not decayed, because the print is the next
+morning. Marked on the run-up, flat before the risk.
 
 **Re-run `python -m tools.smoke_test` Monday during market hours.** Saturday
-spreads are meaningless. If 8 Sep quotes above 5.5% in session, the selector
+spreads are meaningless. If 4 Sep quotes above 5.5% in session, the selector
 falls back to 11 Sep on its own — that is intended, not a bug.
 
 ---
@@ -228,12 +235,17 @@ falls back to 11 Sep on its own — that is intended, not a bug.
 
 ## 7 · Open questions that change decisions
 
-**1. When exactly is equity measured?** Asked on Discord, not yet answered.
-The Q&A says Friday 09:30 ET; the event page implies the 11:00 ET submission
-close. If it is 11:00, the market has been open ninety minutes, marks are
-reliable, and **you could close the position into cash before measurement —
-cash has zero marking ambiguity.** That is a switchable behaviour worth
-building if the answer comes back "11:00".
+**1. When exactly is equity measured?** ~~Asked on Discord.~~ **ANSWERED.**
+Alpaca's guidelines: total equity **as of EOD Thursday 3 Sep**, with Sep 3
+exercises and assignments reflected in that value. The code, the calendar and
+`next_event()` all use this, and CI asserts it.
+
+The open sub-question that remains: whether to **close the convex position into
+cash before Thursday's close**. Cash has zero marking ambiguity; an option
+marked off an indicative feed does not. Against that, closing forfeits exactly
+the peak event premium that makes the 4 Sep expiry attractive. Current
+behaviour is to hold. Decide this deliberately by Wednesday, not at 15:50 on
+Thursday.
 
 Until answered, `macro.MEASUREMENT_ET` assumes 09:30. Being early is
 recoverable; being late is not.
@@ -336,9 +348,8 @@ the autonomy claim on the most important trade of the week.
 
 > Glassbox is an autonomous agent that trades scheduled volatility events. It
 > buys convexity into catalysts when implied volatility is cheap, a
-> deterministic kernel bounds every position's loss before it opens, and on
-> Friday morning it trades the payrolls print in crypto while the equity market
-> is still closed.
+> deterministic kernel bounds every position's loss before it opens, and it is
+> measured holding peak event premium the evening before payrolls lands.
 
 **Say:** "The model proposes. It never executes." · "Every option position had
 an exact maximum loss before it opened." · "We froze the code at Monday's open

@@ -27,6 +27,7 @@ import os
 from decimal import Decimal
 
 from . import config as C
+from . import env
 from .macro import CALENDAR, MEASUREMENT_ET
 from .schema import TradePlan
 
@@ -62,7 +63,7 @@ class ThesisLayer:
     def client(self):
         if self._client is None:
             import anthropic
-            key = os.getenv("ANTHROPIC_API_KEY")
+            key = env.get("ANTHROPIC_API_KEY")
             if not key:
                 raise RuntimeError("ANTHROPIC_API_KEY not set")
             # Explicit timeout. A hung call would otherwise stall the tick loop.

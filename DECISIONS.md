@@ -45,10 +45,22 @@ not exist.
 | Submission deadline Fri 4 Sep 20:30 IST | event page |
 | Prize pool $6,300, split published | event page |
 
-**Still unresolved:** whether equity is measured at Friday 09:30 ET (per the
-Q&A) or at the 11:00 ET submission close (implied by the event page). Asked on
-Discord. Until answered we assume the earlier time, because being early is
-recoverable and being late is not.
+**RESOLVED 29 Aug — and it moved the target by a full session.** Alpaca's
+official guidelines say:
+
+> "We will be looking at the portfolio's total equity **as of EOD Thursday
+> Sep 3rd**. Any option exercises and assignments for options expiring on
+> Sep 3rd will be reflected in the EOD value."
+
+We had assumed Friday's opening bell. The account is actually valued at
+**Thursday 3 Sep, 16:00 ET**, which puts the August payrolls print (Fri 4 Sep,
+08:30) about 16.5 hours *outside* the scored window rather than 60 minutes
+inside it.
+
+Everything downstream had to be re-derived — see §3, which the correction
+improved rather than damaged. `next_event()` now refuses any catalyst at or
+after the measurement, and CI asserts it, because buying convexity for payrolls
+would have meant paying for a payoff that lands after the photograph.
 
 ---
 
@@ -145,27 +157,38 @@ to trade — is a valid outcome.
 
 **What the live chain said on 29 Aug:**
 
-| Expiry | ATM IV | ATM spread | Sessions left at measurement |
-|---|---|---|---|
-| 3 Sep | 9.9% | 4.0% | 0 |
-| 4 Sep | **10.7%** | 4.1% | 1 — payrolls day, highest IV in the curve |
-| **8 Sep** | **9.4%** | 5.3% | 2 — cheapest viable, spans Labor Day |
-| 9 Sep | 9.7% | 6.0% | 3 |
-| 11 Sep | 10.6% | 4.0% | 5 |
+**What the live chain said on 29 Aug**, re-scored against the EOD Thu 3 Sep
+measurement:
 
-Two forward-vol calculations settle it:
+| Expiry | ATM IV | ATM spread | Sessions left at measurement | Verdict |
+|---|---|---|---|---|
+| 3 Sep | 9.9% | 4.0% | 1 | refused — expires on the measurement day |
+| **4 Sep** | **10.7%** | 4.1% | **2** | **selected, 3.0× gamma per dollar** |
+| 8 Sep | 9.4% | 5.3% | 3 | viable, 2.0× |
+| 9 Sep | 9.7% | 6.0% | 4 | refused — quotes wider than 5.5% |
+| 11 Sep | 10.6% | 4.0% | 6 | viable, 1.0× — the baseline |
 
-- **4 Sep → 8 Sep: 7.0% annualised.** Saturday, Sunday, Labor Day, one session.
-- **8 Sep → 11 Sep: 13.9% annualised.**
+**The correction inverted the answer, and improved it.** Under the old Friday
+assumption we chose 8 Sep, on the argument that the Labor Day weekend made it
+cheap in business time. Measured at Thursday's close instead, that reasoning
+dies: we never live to see the holiday, so its discount is time we pay for and
+never use.
 
-We are measured Friday morning, so every session past 4 Sep is time we pay for
-and never use — and the holiday stretch costs half what the following week
-costs. The 8 Sep contract is simultaneously the cheapest in vol terms and the
-highest gamma per dollar, which is abnormal and is the whole edge.
+The 4 Sep contract wins on the arithmetic — 3.0× the convexity per dollar of
+the 11 Sep expiry a team without this analysis would default to. But the
+stronger argument is one the old date could not have produced:
 
-Selector picks **8 Sep at 2.5×**, with event premium *negative* against the
-11 Sep baseline. If Monday's quotes come back wider than 5.5%, it falls back to
-11 Sep automatically.
+> **4 Sep is the payrolls expiry, so its implied volatility is at its maximum
+> at Thursday's close — the exact moment we are measured.** The event premium
+> is fully priced and has not yet decayed, because the print is the following
+> morning. We are marked on the run-up and are flat before the risk.
+
+That is the rare case where the calendar hands you the vega without the event
+risk. It exists only because the measurement is Thursday, and we would have
+missed it entirely had the guidelines not been read properly.
+
+If Monday's quotes come back wider than 5.5% the selector falls back to 8 Sep,
+then 11 Sep. Returning `None` — refusing to trade — remains a valid outcome.
 
 **Caveat we state rather than hide:** the finer the pricing distinction an edge
 relies on, the more it depends on Alpaca's paper marking methodology, which is
@@ -357,7 +380,7 @@ Worth recording, because it is the honest case for why the suite exists.
    close was 774.46, and later 769.28.
 6. **`reconcile()` never populated `trading_days_to`.** Invariant 10 refuses
    any option plan whose expiry it cannot count sessions to, so the empty map
-   refused *every* option trade. The convex sleeve � the entire thesis � would
+   refused *every* option trade. The convex sleeve — the entire thesis — would
    have been dead at Monday's open, discovered at 09:30 with the code frozen.
    Surfaced by the practice harness, not by review.
 7. **`panic.sh` invented its CLI syntax.** `alpaca order cancel --all` and
@@ -391,9 +414,8 @@ Worth recording, because it is the honest case for why the suite exists.
 
 > Glassbox is an autonomous agent that trades scheduled volatility events. It
 > buys convexity into catalysts when implied volatility is cheap, a
-> deterministic kernel bounds every position's loss before it opens, and on
-> Friday morning it trades the payrolls print in crypto while the equity market
-> is still closed.
+> deterministic kernel bounds every position's loss before it opens, and it is
+> measured holding peak event premium the evening before payrolls lands.
 
 **Say:** "The model proposes. It never executes." · "Every option position had
 an exact maximum loss before it opened." · "We froze the code at Monday's open

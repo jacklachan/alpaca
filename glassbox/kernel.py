@@ -58,6 +58,15 @@ class PortfolioState:
     kill_switch_tripped: bool = False
 
 
+def _underlying_of(symbol: str) -> str:
+    """Underlying for an OCC contract symbol; the symbol itself otherwise."""
+    try:
+        from .schema import OptionContract
+        return OptionContract.parse(symbol).underlying
+    except Exception:
+        return symbol
+
+
 class Refusal(Exception):
     def __init__(self, invariant: str, reason: str):
         self.invariant = invariant
@@ -354,9 +363,26 @@ class RiskKernel:
             raise Refusal("13_order_frequency",
                           f"{s.orders_today} orders already placed today "
                           f"(max {C.MAX_ORDERS_PER_DAY}); halting and alerting")
+        # AUDIT NOTE: this compared plan.symbol against a map keyed by the
+        # symbol the ORDER was placed in. For an option plan those are
+        # different things -- plan.symbol is the underlying ("SPY"), while the
+        # order key is the OCC contract ("SPY260904C00783000"). The per-symbol
+        # cap was therefore unreachable for every option trade: 100 orders in
+        # the exact same contract still passed an 8-order limit. Count orders
+        # in the plan's own contracts, and for options also count them against
+        # the underlying, so a runaway loop is caught either way.
         sym = plan.symbol
-        n = s.orders_today_by_symbol.get(sym, 0)
-        if n >= C.MAX_ORDERS_PER_SYMBOL_PER_DAY:
-            raise Refusal("13_order_frequency",
-                          f"{n} orders already placed in {sym} today "
-                          f"(max {C.MAX_ORDERS_PER_SYMBOL_PER_DAY})")
+        counted = {sym: s.orders_today_by_symbol.get(sym, 0)}
+        for leg in (plan.option_legs or []):
+            counted[leg.symbol] = s.orders_today_by_symbol.get(leg.symbol, 0)
+        if plan.option_legs:
+            underlying_total = sum(
+                n for k, n in s.orders_today_by_symbol.items()
+                if _underlying_of(k) == sym)
+            counted[f"{sym} (all contracts)"] = underlying_total
+
+        for label, n in counted.items():
+            if n >= C.MAX_ORDERS_PER_SYMBOL_PER_DAY:
+                raise Refusal("13_order_frequency",
+                              f"{n} orders already placed in {label} today "
+                              f"(max {C.MAX_ORDERS_PER_SYMBOL_PER_DAY})")

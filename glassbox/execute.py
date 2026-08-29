@@ -43,14 +43,56 @@ TERMINAL_DEAD = {"canceled", "cancelled", "expired", "rejected", "suspended"}
 
 @dataclass
 class LegResult:
+    """One leg, across however many orders it took to fill it.
+
+    A leg can be worked by more than one order: `_reprice` cancels the
+    remainder and resubmits wider under a new client_order_id. Fills from the
+    superseded orders are banked in `settled_qty`, because the broker only
+    reports the fill on the order you ask about.
+
+    Not banking them was a real bug. `_await_fills` overwrote `filled_qty` with
+    the new order's fill, which erased the original partial. Two things then
+    went wrong at once: `remaining` was recomputed from the reset value, so the
+    agent ordered MORE than the kernel approved (measured at 14 contracts
+    against an approved 10, a 21.9% breach of the max-loss invariant); and
+    `complete` stayed False on a leg that was actually full, so a correctly
+    filled strangle was unwound.
+    """
     leg_index: int
     symbol: str
-    requested_qty: int
-    filled_qty: int = 0
-    avg_price: Decimal = Decimal(0)
+    # Decimal, not int. Crypto quantities are fractional -- int(0.0968) is 0,
+    # which made `complete` true at zero fill and reported a filled order as a
+    # failure. The same truncation hit the fill side.
+    requested_qty: Decimal
+    settled_qty: Decimal = Decimal(0)       # banked from superseded orders
+    settled_notional: Decimal = Decimal(0)  # price * qty of those fills
+    current_qty: Decimal = Decimal(0)       # fill on the order now working
+    current_avg: Decimal = Decimal(0)
     client_order_id: str = ""
     broker_order_id: str = ""
     status: str = "unsubmitted"
+
+    @property
+    def filled_qty(self) -> Decimal:
+        return self.settled_qty + self.current_qty
+
+    @property
+    def avg_price(self) -> Decimal:
+        total = self.filled_qty
+        if total <= 0:
+            return Decimal(0)
+        return (self.settled_notional + self.current_avg * self.current_qty) / total
+
+    def bank(self) -> None:
+        """Move the working order's fill into the settled total.
+
+        Called before resubmitting, so the next poll adds to this leg's history
+        rather than replacing it.
+        """
+        self.settled_notional += self.current_avg * self.current_qty
+        self.settled_qty += self.current_qty
+        self.current_qty = 0
+        self.current_avg = Decimal(0)
 
     @property
     def complete(self) -> bool:
@@ -69,9 +111,14 @@ class ExecutionResult:
     legs: list[LegResult] = field(default_factory=list)
     unwound: bool = False
 
+    # 100 is the OPTION contract multiplier. Applying it to equity and crypto
+    # legs overstated those by 100x in the journal.
+    multiplier: int = 100
+
     @property
     def premium_paid(self) -> Decimal:
-        return sum((l.avg_price * l.filled_qty * 100 for l in self.legs), Decimal(0))
+        return sum((l.avg_price * l.filled_qty * self.multiplier
+                    for l in self.legs), Decimal(0))
 
 
 class ExecutionEngine:
@@ -113,9 +160,9 @@ class ExecutionEngine:
         legs: list[LegResult] = []
 
         for i, leg in enumerate(plan.option_legs):
-            coid = client_order_id(plan.plan_id, i)
+            coid = client_order_id(plan.plan_id, i, event=plan.is_event_trade)
             r = LegResult(leg_index=i, symbol=leg.symbol,
-                          requested_qty=leg.qty, client_order_id=coid)
+                          requested_qty=Decimal(leg.qty), client_order_id=coid)
             try:
                 order = self.broker.submit(
                     symbol=leg.symbol, qty=leg.qty, side=leg.side,
@@ -188,6 +235,11 @@ class ExecutionEngine:
             except Exception:
                 pass  # already terminal; reconciliation will show the truth
 
+        # Bank whatever the cancelled order filled BEFORE computing what is
+        # left, so the remainder is the true shortfall and never re-orders
+        # quantity the broker has already given us.
+        r.bank()
+
         remaining = r.requested_qty - r.filled_qty
         if remaining <= 0:
             return
@@ -195,8 +247,12 @@ class ExecutionEngine:
         base = leg.limit_price or Decimal(0)
         if base <= 0:
             return
-        bump = C.LIMIT_TOLERANCE + C.REPRICE_STEP_PCT * Decimal(attempt)
-        if bump > C.LIMIT_PRICE_BAND_PCT:
+        # The strategy's limit already carries LIMIT_TOLERANCE, so bumping by
+        # tolerance again would compound: ask*1.03 then *1.03 is 6% over the
+        # reference, past the 5% band the journal claims we never cross. Step
+        # from the reference price, not from the padded limit.
+        bump = C.REPRICE_STEP_PCT * Decimal(attempt + 1)
+        if C.LIMIT_TOLERANCE + bump > C.LIMIT_PRICE_BAND_PCT:
             self.journal.append("execute", "REPRICE_REFUSED", {
                 "plan_id": plan.plan_id, "symbol": r.symbol,
                 "reason": f"next limit would exceed the {C.LIMIT_PRICE_BAND_PCT:.0%} band"})
@@ -205,7 +261,8 @@ class ExecutionEngine:
 
         # New client_order_id: this is a genuinely new order, and reusing the
         # id would be rejected as a duplicate. Offset keeps it deterministic.
-        coid = client_order_id(plan.plan_id, 100 * attempt + r.leg_index)
+        coid = client_order_id(plan.plan_id, 100 * attempt + r.leg_index,
+                               event=plan.is_event_trade)
         try:
             order = self.broker.submit(
                 symbol=r.symbol, qty=remaining, side=leg.side,
@@ -219,27 +276,29 @@ class ExecutionEngine:
     # -- equity and crypto -----------------------------------------------------
 
     def _execute_single(self, plan: TradePlan) -> ExecutionResult:
-        coid = client_order_id(plan.plan_id, 0)
+        coid = client_order_id(plan.plan_id, 0, event=plan.is_event_trade)
         px = None
         if plan.instrument in ("equity", "crypto"):
             prices = self.broker.snapshot_prices([plan.symbol])
             px = prices.get(plan.symbol)
         if not px or px <= 0:
             return ExecutionResult(plan.plan_id, False,
-                                   f"no snapshot price for {plan.symbol}", [])
+                                   f"no snapshot price for {plan.symbol}", [],
+                                   multiplier=1)
 
         qty = (plan.notional_usd / px)
         qty = qty.quantize(Decimal("0.0001")) if plan.instrument == "crypto" \
             else Decimal(int(qty))
         if qty <= 0:
-            return ExecutionResult(plan.plan_id, False, "computed quantity is zero", [])
+            return ExecutionResult(plan.plan_id, False, "computed quantity is zero",
+                                   [], multiplier=1)
 
         # Marketable limit rather than a market order: paper fills are
         # unrealistically generous and a market order would hide that.
         pad = C.LIMIT_TOLERANCE if plan.side == "buy" else -C.LIMIT_TOLERANCE
         limit = (px * (1 + pad)).quantize(Decimal("0.01"))
 
-        r = LegResult(leg_index=0, symbol=plan.symbol, requested_qty=int(qty),
+        r = LegResult(leg_index=0, symbol=plan.symbol, requested_qty=qty,
                       client_order_id=coid)
         try:
             order = self.broker.submit(
@@ -250,12 +309,14 @@ class ExecutionEngine:
             r.status = "submitted"
         except Exception as exc:
             r.status = f"submit_failed: {exc}"
-            return ExecutionResult(plan.plan_id, False, f"submit failed: {exc}", [r])
+            return ExecutionResult(plan.plan_id, False, f"submit failed: {exc}", [r],
+                                   multiplier=1)
 
         self._await_fills([r])
         ok = r.filled_qty > 0
         return ExecutionResult(plan.plan_id, ok,
-                               "filled" if ok else "no fill within the wait window", [r])
+                               "filled" if ok else "no fill within the wait window",
+                               [r], multiplier=1)
 
     # -- fill polling ----------------------------------------------------------
 
@@ -272,10 +333,12 @@ class ExecutionEngine:
                 if o is None:
                     pending = True
                     continue
-                r.filled_qty = int(float(getattr(o, "filled_qty", 0) or 0))
+                # The broker reports the fill on THIS order only. Anything
+                # filled by a superseded order lives in settled_qty.
+                r.current_qty = Decimal(str(getattr(o, "filled_qty", 0) or 0))
                 avg = getattr(o, "filled_avg_price", None)
                 if avg:
-                    r.avg_price = Decimal(str(avg))
+                    r.current_avg = Decimal(str(avg))
                 r.status = str(getattr(o, "status", "")).lower().split(".")[-1]
                 if r.status in TERMINAL_DEAD:
                     continue

@@ -86,16 +86,64 @@ class KillSwitch:
 
 
 class PositionManager:
-    def __init__(self, broker, journal, kill_switch: KillSwitch | None = None):
+    def __init__(self, broker, journal, kill_switch: KillSwitch | None = None,
+                 targets_path: str | Path | None = None):
         self.broker = broker
         self.journal = journal
         self.kill = kill_switch or KillSwitch(journal=journal)
-        self._targets: dict[str, dict] = {}     # symbol -> stop/target/time_exit
+        # AUDIT NOTE: this was an in-memory dict and nothing rebuilt it. After
+        # any restart every registered stop, target and time exit was silently
+        # gone, leaving positions open with no exit logic at all -- only the
+        # symbol-derived expiry close-out still worked. For an agent whose
+        # whole claim is surviving restarts unattended, that was the gap that
+        # mattered most.
+        self._targets_path = Path(targets_path or C.TARGETS_STATE_FILE)
+        self._targets_path.parent.mkdir(parents=True, exist_ok=True)
+        self._targets: dict[str, dict] = self._load_targets()
+
+        # Exits already sent this session, so a position the broker has not yet
+        # dropped is not closed again on the next tick. `_close` used to fire
+        # unconditionally every tick until the position list caught up: on a
+        # one-minute loop, the 14:30 expiry close-out could issue ~90 duplicate
+        # market orders for one contract.
+        self._exits_sent: set[str] = set()
+
+    # -- persistence -----------------------------------------------------------
+
+    def _load_targets(self) -> dict[str, dict]:
+        try:
+            raw = json.loads(self._targets_path.read_text())
+        except Exception:
+            return {}
+        out: dict[str, dict] = {}
+        for sym, t in raw.items():
+            out[sym] = {
+                "stop": Decimal(t["stop"]) if t.get("stop") else None,
+                "target": Decimal(t["target"]) if t.get("target") else None,
+                "time_exit": (datetime.fromisoformat(t["time_exit"])
+                              if t.get("time_exit") else None),
+                "entry": Decimal(t["entry"]) if t.get("entry") else None,
+            }
+        return out
+
+    def _save_targets(self) -> None:
+        try:
+            self._targets_path.write_text(json.dumps({
+                sym: {
+                    "stop": str(t["stop"]) if t.get("stop") is not None else None,
+                    "target": str(t["target"]) if t.get("target") is not None else None,
+                    "time_exit": (t["time_exit"].isoformat()
+                                  if t.get("time_exit") else None),
+                    "entry": str(t["entry"]) if t.get("entry") is not None else None,
+                } for sym, t in self._targets.items()}, indent=2))
+        except Exception as exc:      # bookkeeping must never stop trading
+            log.warning("could not persist exit targets: %s", exc)
 
     def register(self, symbol: str, *, stop=None, target=None, time_exit=None,
                  entry_price: Decimal | None = None) -> None:
         self._targets[symbol] = {"stop": stop, "target": target,
                                  "time_exit": time_exit, "entry": entry_price}
+        self._save_targets()
 
     # -- the tick --------------------------------------------------------------
 
@@ -209,12 +257,21 @@ class PositionManager:
             return None
 
     def _close(self, e: ExitOrder) -> None:
+        # One exit per symbol per session. The broker takes time to reflect a
+        # close, and `tick` re-reads positions every minute, so without this
+        # the same contract is closed again on every tick until it disappears.
+        if e.symbol in self._exits_sent:
+            return
+        self._exits_sent.add(e.symbol)
+
         self.journal.append("manage", "EXIT_TRIGGERED", {
             "symbol": e.symbol, "qty": str(e.qty),
             "reason": e.reason, "urgency": e.urgency})
         try:
             self.broker.close_position(e.symbol)
         except Exception as exc:
+            # A failed close must be retryable, so release the guard.
+            self._exits_sent.discard(e.symbol)
             self.journal.append("manage", "EXIT_FAILED", {
                 "symbol": e.symbol, "reason": e.reason, "error": str(exc)})
             log.error("failed to close %s: %s", e.symbol, exc)
