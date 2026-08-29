@@ -178,3 +178,9 @@ LIMIT_TOLERANCE = Decimal("0.03")
 # Fridays quote ~4.0-4.2%, the post-holiday Tuesday 5.3%, mid-week dailies
 # 6.0%. 5.5% cleanly separates the liquid expiries from the thin ones.
 MAX_ATM_SPREAD_PCT = Decimal("0.055")
+
+# Incremental widening per reprice attempt, ADDED to LIMIT_TOLERANCE. Chasing
+# stops when the cumulative bump would exceed LIMIT_PRICE_BAND_PCT, so the
+# band is what actually bounds how far we chase.
+#   attempt 1 -> 4%, attempt 2 -> 5%, attempt 3 -> refused
+REPRICE_STEP_PCT = Decimal("0.01")
