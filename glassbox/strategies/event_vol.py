@@ -48,7 +48,7 @@ def select_expiry(
     event: MacroEvent,
     measurement: datetime,
     baseline_iv: Decimal | None = None,
-    max_spread_pct: Decimal = Decimal("0.06"),
+    max_spread_pct: Decimal | None = None,
     max_event_premium_pts: Decimal = Decimal("0.020"),
 ) -> ExpiryChoice | None:
     """Pick the expiry using the term structure, not an argument.
@@ -75,6 +75,8 @@ def select_expiry(
     """
     if not candidates:
         return None
+    if max_spread_pct is None:
+        max_spread_pct = C.MAX_ATM_SPREAD_PCT
 
     ordered = sorted(candidates, key=lambda c: c.expiry)
     # Baseline = the longest candidate's IV, taken as the "clean" vol level
@@ -91,7 +93,7 @@ def select_expiry(
         # week -- that is gambling on a mark, not on a market.
         if tdays < C.OPTION_MIN_DTE_AT_MEASUREMENT:
             continue
-        if tdays > C.OPTION_MAX_DTE:
+        if tdays > C.OPTION_MAX_SESSIONS_AT_MEASUREMENT:
             continue
 
         # (b) must quote tightly enough that the mark means something.
@@ -106,7 +108,12 @@ def select_expiry(
         # Convexity per dollar. Cost scales sqrt(T) and gamma scales 1/sqrt(T),
         # so payoff per dollar on a gap goes as 1/T. Expressed relative to the
         # longest candidate so the number is readable in a journal entry.
-        t_ref = max(sessions_remaining_at_measurement(ordered[-1].expiry, measurement), 1)
+        # Reference = the longest expiry still inside our window, i.e. the one
+        # a team without this analysis would default to.
+        t_ref = max((sessions_remaining_at_measurement(o.expiry, measurement)
+                     for o in ordered
+                     if sessions_remaining_at_measurement(o.expiry, measurement)
+                     <= C.OPTION_MAX_SESSIONS_AT_MEASUREMENT), default=1)
         gpd = Decimal(t_ref) / Decimal(max(tdays, 1))
         viable.append((gpd, q, premium))
 

@@ -163,6 +163,18 @@ STRANGLE_OTM_PCT = Decimal("0.012")
 # the week.
 OPTION_MIN_DTE_AT_MEASUREMENT = 2
 
+# Upper bound on sessions remaining at measurement. Distinct from
+# OPTION_MAX_DTE, which bounds days-to-expiry at ENTRY -- conflating the two
+# let 18 Sep into the candidate set and made the convexity ratio meaningless
+# by comparing against an expiry we would never trade. Six sessions keeps the
+# comparison against the expiry a normal team would default to (11 Sep).
+OPTION_MAX_SESSIONS_AT_MEASUREMENT = 6
+
 # Marketable limit tolerance. Pricing off an indicative feed, so pay up slightly
 # rather than sit unfilled -- but never chase beyond this.
 LIMIT_TOLERANCE = Decimal("0.03")
+
+# Max ATM relative bid/ask for an expiry to be tradeable. Measured 29 Aug:
+# Fridays quote ~4.0-4.2%, the post-holiday Tuesday 5.3%, mid-week dailies
+# 6.0%. 5.5% cleanly separates the liquid expiries from the thin ones.
+MAX_ATM_SPREAD_PCT = Decimal("0.055")
