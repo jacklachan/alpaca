@@ -38,11 +38,13 @@ class FakeBroker:
 
     def __init__(self, fill: dict[str, float] | None = None, price=Decimal("5.00"),
                  cancel_fill: dict[str, list[float]] | None = None,
-                 uncertain_cancel: set[str] | None = None):
+                 uncertain_cancel: set[str] | None = None,
+                 accepted_then_timeout: set[str] | None = None):
         self.fill = fill or {}
         self.price = price
         self.cancel_fill = cancel_fill or {}
         self.uncertain_cancel = uncertain_cancel or set()
+        self.accepted_then_timeout = accepted_then_timeout or set()
         self.orders: dict[str, FakeOrder] = {}
         self.submitted: list[dict] = []
         self.closed: list[str] = []
@@ -63,6 +65,9 @@ class FakeBroker:
         self.orders[client_order_id] = o
         self.submitted.append({"symbol": symbol, "qty": qty, "side": side,
                                "limit": limit_price, "coid": client_order_id})
+        if symbol in self.accepted_then_timeout:
+            self.accepted_then_timeout.remove(symbol)
+            raise TimeoutError("response lost after broker acceptance")
         return o
 
     def get_order_by_coid(self, coid):
@@ -275,6 +280,19 @@ def test_single_order_cancel_uncertainty_is_not_success(journal):
 
     assert not result.ok
     assert "residual order state uncertain" in result.reason
+
+
+def test_submit_timeout_adopts_the_existing_client_order_without_resubmit(journal):
+    plan = single("equity")
+    broker = FakeBroker(accepted_then_timeout={plan.symbol})
+
+    result = engine(broker, journal).execute(plan, APPROVED(plan))
+
+    assert result.ok, result.reason
+    assert len(broker.submitted) == 1
+    events = [entry["event"] for entry in journal.read()]
+    assert "ORDER_SUBMIT_INTENT" in events
+    assert "ORDER_SUBMIT_RECONCILED" in events
 
 
 def test_nothing_filled_needs_no_unwind(journal):

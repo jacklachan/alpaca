@@ -22,6 +22,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from .. import config as C
+from ..ids import stable_plan_id
 from ..kernel import PortfolioState
 from ..schema import TradePlan
 
@@ -72,6 +73,7 @@ class CoreStrategy:
             max_loss = (abs(spot - stop) * qty * C.GAP_MULTIPLIER).quantize(Decimal("1"))
 
             plans.append(TradePlan(
+                plan_id=stable_plan_id("core", state.now_et.date(), symbol),
                 sleeve="core", action="open", instrument="equity", symbol=symbol,
                 side="buy", notional_usd=notional, max_loss_usd=max_loss,
                 stop=stop,

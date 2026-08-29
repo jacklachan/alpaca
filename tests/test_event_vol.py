@@ -9,6 +9,9 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 
+import pytest
+from pydantic import ValidationError
+
 from glassbox import config as C
 from glassbox.macro import CALENDAR, MEASUREMENT_ET, next_event, sessions_remaining_at_measurement
 from glassbox.strategies.event_vol import (ChainLeg, EventVolStrategy, ExpiryQuote,
@@ -156,6 +159,28 @@ def test_proposes_a_strangle_into_the_catalyst():
     # strangle straddles the spot
     strikes = sorted(l.contract.strike for l in p.option_legs)
     assert strikes[0] < SPOT < strikes[1]
+
+
+def test_same_event_opportunity_has_the_same_plan_id_after_restart():
+    kwargs = dict(
+        now=WED, spot=SPOT, iv_vs_rv=Decimal("1.05"),
+        expiry_candidates=FLAT, chain=chain_for(date(2026, 9, 4)),
+        measurement=MEASUREMENT_ET, remaining_budget=Decimal("18000"))
+
+    first = EventVolStrategy().propose(**kwargs)[0]
+    restarted = EventVolStrategy().propose(**kwargs)[0]
+
+    assert first.plan_id == restarted.plan_id
+
+
+def test_priced_candidate_is_immutable():
+    plan = EventVolStrategy().propose(
+        now=WED, spot=SPOT, iv_vs_rv=Decimal("1.05"),
+        expiry_candidates=FLAT, chain=chain_for(date(2026, 9, 4)),
+        measurement=MEASUREMENT_ET, remaining_budget=Decimal("18000"))[0]
+
+    with pytest.raises(ValidationError):
+        plan.symbol = "QQQ"
 
 
 def test_stands_down_when_convexity_is_expensive():

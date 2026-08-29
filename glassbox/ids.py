@@ -8,9 +8,19 @@ same leg produces the same id and the broker rejects the duplicate.
 from __future__ import annotations
 
 import hashlib
+import json
 
 PREFIX = "gbx-"
 EVENT_PREFIX = "gbxe-"
+PLAN_PREFIX = "gbp-"
+
+
+def stable_plan_id(namespace: str, *parts: object) -> str:
+    """Return a deterministic identity for one semantic trade opportunity."""
+    body = json.dumps(
+        [namespace, *parts], sort_keys=True, separators=(",", ":"), default=str)
+    digest = hashlib.sha256(body.encode()).hexdigest()
+    return f"{PLAN_PREFIX}{digest[:32]}"
 
 
 def client_order_id(plan_id: str, leg_index: int = 0, *, event: bool = False) -> str:

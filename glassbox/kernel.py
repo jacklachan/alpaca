@@ -324,7 +324,8 @@ class RiskKernel:
         from .ids import client_order_id
         n = len(plan.option_legs) or 1
         for i in range(n):
-            coid = client_order_id(plan.plan_id, i)
+            coid = client_order_id(
+                plan.plan_id, i, event=plan.is_event_trade)
             if coid in s.open_client_order_ids:
                 raise Refusal("11_idempotency",
                               f"client_order_id {coid[:16]} already exists at the broker")

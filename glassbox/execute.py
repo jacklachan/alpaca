@@ -158,6 +158,56 @@ class ExecutionEngine:
                       "broker_order_id": l.broker_order_id} for l in result.legs]})
         return result
 
+    def _submit_with_reconciliation(self, plan: TradePlan, *, symbol: str,
+                                    qty: Decimal | int, side: str,
+                                    client_order_id: str,
+                                    limit_price: Decimal | None,
+                                    instrument: str):
+        """Journal intent, submit once, and reconcile an ambiguous response."""
+        intent = {
+            "plan_id": plan.plan_id,
+            "client_order_id": client_order_id,
+            "symbol": symbol,
+            "qty": str(qty),
+            "side": side,
+            "limit_price": str(limit_price) if limit_price is not None else None,
+            "instrument": instrument,
+        }
+        self.journal.append("execute", "ORDER_SUBMIT_INTENT", intent)
+        try:
+            return self.broker.submit(
+                symbol=symbol, qty=qty, side=side,
+                client_order_id=client_order_id, limit_price=limit_price,
+                instrument=instrument)
+        except Exception as submit_error:
+            deadline = time.monotonic() + min(self.fill_wait_seconds, 5.0)
+            lookup_error: Exception | None = None
+            while True:
+                try:
+                    existing = self.broker.get_order_by_coid(client_order_id)
+                except Exception as exc:
+                    lookup_error = exc
+                    existing = None
+                if existing is not None:
+                    self.journal.append("execute", "ORDER_SUBMIT_RECONCILED", {
+                        **intent,
+                        "broker_order_id": str(existing.id),
+                        "status": str(getattr(existing, "status", "")),
+                        "submit_error": str(submit_error),
+                    })
+                    return existing
+                if time.monotonic() >= deadline:
+                    self.journal.append("execute", "ORDER_SUBMIT_AMBIGUOUS", {
+                        **intent,
+                        "submit_error": str(submit_error),
+                        "lookup_error": (str(lookup_error)
+                                         if lookup_error is not None else None),
+                    })
+                    raise RuntimeError(
+                        f"submit outcome ambiguous for {client_order_id}: "
+                        f"{submit_error}") from submit_error
+                time.sleep(self.poll_seconds)
+
     # -- options ---------------------------------------------------------------
 
     def _execute_legged(self, plan: TradePlan) -> ExecutionResult:
@@ -168,7 +218,8 @@ class ExecutionEngine:
             r = LegResult(leg_index=i, symbol=leg.symbol,
                           requested_qty=Decimal(leg.qty), client_order_id=coid)
             try:
-                order = self.broker.submit(
+                order = self._submit_with_reconciliation(
+                    plan,
                     symbol=leg.symbol, qty=leg.qty, side=leg.side,
                     client_order_id=coid, limit_price=leg.limit_price,
                     instrument="option")
@@ -282,7 +333,8 @@ class ExecutionEngine:
         coid = client_order_id(plan.plan_id, 100 * attempt + r.leg_index,
                                event=plan.is_event_trade)
         try:
-            order = self.broker.submit(
+            order = self._submit_with_reconciliation(
+                plan,
                 symbol=r.symbol, qty=remaining, side=leg.side,
                 client_order_id=coid, limit_price=new_limit, instrument="option")
             r.broker_order_id = str(order.id)
@@ -352,7 +404,8 @@ class ExecutionEngine:
         r = LegResult(leg_index=0, symbol=plan.symbol, requested_qty=qty,
                       client_order_id=coid)
         try:
-            order = self.broker.submit(
+            order = self._submit_with_reconciliation(
+                plan,
                 symbol=plan.symbol, qty=qty, side=plan.side,
                 client_order_id=coid, limit_price=limit,
                 instrument=plan.instrument)

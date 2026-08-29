@@ -19,9 +19,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
-from uuid import uuid4
 
 from .. import config as C
+from ..ids import stable_plan_id
 from ..macro import CALENDAR, MacroEvent, next_event, sessions_remaining_at_measurement
 from ..schema import OptionLeg, TradePlan
 
@@ -237,7 +237,9 @@ class EventVolStrategy:
             return []
 
         premium = pair_cost * qty
-        plan_id = str(uuid4())
+        plan_id = stable_plan_id(
+            "event-vol", event.name, self.underlying, choice.expiry,
+            call.symbol, put.symbol)
 
         return [TradePlan(
             plan_id=plan_id,

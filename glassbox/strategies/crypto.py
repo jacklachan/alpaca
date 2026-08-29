@@ -28,6 +28,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 from .. import config as C
+from ..ids import stable_plan_id
 from ..kernel import PortfolioState
 from ..macro import MEASUREMENT_ET, next_event
 from ..schema import TradePlan
@@ -103,6 +104,9 @@ class CryptoStrategy:
                 confidence = 0.5
 
             plans.append(TradePlan(
+                plan_id=stable_plan_id(
+                    "crypto", now.date(), symbol,
+                    event.name if in_event_window else "baseline"),
                 sleeve="crypto", action="open", instrument="crypto", symbol=symbol,
                 side="buy", notional_usd=notional, max_loss_usd=max_loss,
                 stop=stop, time_exit=time_exit,

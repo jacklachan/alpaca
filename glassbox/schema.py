@@ -16,9 +16,10 @@ import re
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
-from uuid import uuid4
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from .ids import stable_plan_id
 
 Sleeve = Literal["core", "crypto", "convex"]
 Instrument = Literal["equity", "crypto", "option"]
@@ -55,6 +56,8 @@ class OptionContract(BaseModel):
 class OptionLeg(BaseModel):
     """One option leg. `side` is intentionally unconstrained -- see module docstring."""
 
+    model_config = ConfigDict(frozen=True)
+
     symbol: str = Field(description="OCC 21-character contract symbol")
     side: Side
     qty: int = Field(gt=0, le=200, description="contracts")
@@ -78,7 +81,9 @@ class OptionLeg(BaseModel):
 class TradePlan(BaseModel):
     """A proposal. Never an order. The kernel decides whether it becomes one."""
 
-    plan_id: str = Field(default_factory=lambda: str(uuid4()))
+    model_config = ConfigDict(frozen=True)
+
+    plan_id: str = ""
     sleeve: Sleeve
     action: Literal["open", "close", "adjust"]
     instrument: Instrument
@@ -126,6 +131,9 @@ class TradePlan(BaseModel):
             raise ValueError("option plan must carry at least one leg")
         if self.instrument != "option" and self.option_legs:
             raise ValueError("non-option plan must not carry option legs")
+        if not self.plan_id:
+            payload = self.model_dump(mode="json", exclude={"plan_id"})
+            object.__setattr__(self, "plan_id", stable_plan_id("plan", payload))
 
 
 class Verdict(BaseModel):

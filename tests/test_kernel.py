@@ -293,6 +293,16 @@ def test_rejects_duplicate_client_order_id():
     assert v.failed_invariant == "11_idempotency"
 
 
+def test_rejects_duplicate_event_order_in_the_event_namespace():
+    plan = option_plan(is_event_trade=True)
+    existing = {client_order_id(plan.plan_id, 0, event=True)}
+
+    verdict = K.review(plan, state(open_client_order_ids=existing))
+
+    assert not verdict.approved
+    assert verdict.failed_invariant == "11_idempotency"
+
+
 def test_client_order_id_is_deterministic():
     assert client_order_id("abc", 0) == client_order_id("abc", 0)
     assert client_order_id("abc", 0) != client_order_id("abc", 1)

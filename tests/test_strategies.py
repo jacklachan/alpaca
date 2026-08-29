@@ -64,6 +64,13 @@ def test_every_core_plan_passes_the_kernel():
         assert v.approved, f"{p.symbol}: {v.reason}"
 
 
+def test_core_plan_ids_survive_a_restart():
+    first = CoreStrategy().propose_from_state(state())
+    restarted = CoreStrategy().propose_from_state(state())
+
+    assert [plan.plan_id for plan in first] == [plan.plan_id for plan in restarted]
+
+
 # --- crypto -------------------------------------------------------------------
 
 def test_crypto_allocates_its_sleeve():
@@ -112,6 +119,13 @@ def test_every_crypto_plan_passes_the_kernel():
     for p in CryptoStrategy().propose_from_state(s):
         v = K.review(p, s)
         assert v.approved, f"{p.symbol}: {v.reason}"
+
+
+def test_crypto_plan_ids_survive_a_restart():
+    first = CryptoStrategy().propose_from_state(state(market_open=False))
+    restarted = CryptoStrategy().propose_from_state(state(market_open=False))
+
+    assert [plan.plan_id for plan in first] == [plan.plan_id for plan in restarted]
 
 
 # --- features -----------------------------------------------------------------
