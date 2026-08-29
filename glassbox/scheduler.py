@@ -70,6 +70,9 @@ class Agent:
         self.manager = manager
         self.strategies = strategies
         self.thesis = thesis
+        self.environment = getattr(broker, "env", "dev")
+        if self.environment not in {"dev", "scored"}:
+            raise ValueError(f"unknown broker environment {self.environment!r}")
         self._state_faulted = False
         self.scheduler = BackgroundScheduler(
             timezone="UTC", job_defaults=JOB_DEFAULTS)
@@ -141,11 +144,66 @@ class Agent:
                 or self.manager.kill.tripped or not state.market_open):
             return
 
+        if self.environment == "scored":
+            self._scored_selection_tick(state)
+            return
+
         for name, strategy in self.strategies.items():
             for plan in strategy.propose_from_state(state, self._positioned_for):
                 self._review_and_execute(plan, state, name)
                 state = self.broker.reconcile(
                     kill_switch_tripped=self.manager.kill.tripped)
+
+    def _scored_selection_tick(self, state) -> None:
+        """Offer deterministic option candidates; execute at most one.
+
+        Core equity and crypto are not part of the scored strategy set. This
+        policy check is repeated here so an accidentally injected strategy
+        still cannot cross the account boundary.
+        """
+        candidates = []
+        candidate_sources: dict[int, str] = {}
+        for name, strategy in self.strategies.items():
+            for plan in strategy.propose_from_state(state, self._positioned_for):
+                if plan.instrument != "option":
+                    self._scored_policy_refusal(
+                        plan, name, "scored account accepts option candidates only")
+                    continue
+                candidates.append(plan)
+                candidate_sources[id(plan)] = name
+
+        if self.thesis is None:
+            self.journal.append("thesis.llm", "CANDIDATE_SELECTION_UNAVAILABLE", {
+                "error": "bounded selector is disabled",
+                "impact": "scored cycle abstained",
+                "offered": len(candidates),
+            })
+            return
+
+        selected = self.thesis.select(candidates, state, self.journal)
+        if selected is None:
+            return
+
+        # Defense in depth: even a replacement selector implementation may
+        # return only the exact original option object it was offered.
+        if (selected.instrument != "option"
+                or not any(selected is candidate for candidate in candidates)):
+            self._scored_policy_refusal(
+                selected, "bounded_ai",
+                "selector returned an object outside the offered option set")
+            return
+
+        self._review_and_execute(
+            selected, state, candidate_sources[id(selected)])
+
+    def _scored_policy_refusal(self, plan, source: str, reason: str) -> None:
+        self.journal.append("scheduler", "SCORED_POLICY_REFUSED", {
+            "plan_id": getattr(plan, "plan_id", None),
+            "strategy": source,
+            "instrument": getattr(plan, "instrument", None),
+            "symbol": getattr(plan, "symbol", None),
+            "reason": reason,
+        })
 
     def _review_and_execute(self, plan, state, strategy_name: str) -> None:
         """Kernel first, always. The single path from a plan to an order."""
@@ -215,8 +273,7 @@ class Agent:
             "positions": [p.symbol for p in state.positions]})
 
     def daily_review(self) -> None:
-        """Plain-English summary into the journal. The only scheduled job the
-        model touches, and it cannot place an order."""
+        """Write a plain-English, read-only session summary into the journal."""
         if self.thesis is None:
             return
         state = self.broker.reconcile(kill_switch_tripped=self.manager.kill.tripped)
@@ -266,8 +323,9 @@ class Agent:
         add(self._guard("equity_tick", self.equity_tick),
             cron(day_of_week="mon-fri", hour="9-16", minute="*"), id="equity_tick")
 
-        add(self._guard("crypto_tick", self.crypto_tick),
-            cron(minute="*/5"), id="crypto_tick")
+        if self.environment == "dev":
+            add(self._guard("crypto_tick", self.crypto_tick),
+                cron(minute="*/5"), id="crypto_tick")
 
         add(self._guard("eod_manage", self.eod_manage),
             cron(day_of_week="mon-fri", hour=14, minute=30), id="eod_manage")

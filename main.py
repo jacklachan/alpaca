@@ -39,6 +39,24 @@ def setup_logging(verbose: bool = False) -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
+def strategy_set(environment: str, data) -> dict:
+    """Construct the explicit strategy surface for one account role."""
+    if environment not in {"dev", "scored"}:
+        raise ValueError(f"unknown environment {environment!r}")
+
+    strategies = {
+        f"event_vol_{underlying.lower()}": EventVolStrategy(
+            underlying=underlying, data=data)
+        for underlying in C.SCORED_OPTION_UNDERLYINGS
+    }
+    if environment == "dev":
+        strategies.update({
+            "core": CoreStrategy(),
+            "crypto": CryptoStrategy(data=data),
+        })
+    return strategies
+
+
 def build(thesis_enabled: bool = True):
     journal = Journal(C.JOURNAL_PATH)
     broker = Broker(journal=journal)
@@ -46,11 +64,7 @@ def build(thesis_enabled: bool = True):
     kill = KillSwitch(journal=journal)
     manager = PositionManager(broker, journal, kill)
 
-    strategies = {
-        "event_vol": EventVolStrategy(underlying="SPY", data=data),
-        "core": CoreStrategy(),
-        "crypto": CryptoStrategy(data=data),
-    }
+    strategies = strategy_set(broker.env, data)
 
     thesis = None
     if thesis_enabled:

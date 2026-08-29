@@ -28,6 +28,10 @@ CRYPTO_ALLOWLIST: frozenset[str] = frozenset({"BTC/USD", "ETH/USD"})
 # underlying and checking membership here.
 OPTION_UNDERLYING_ALLOWLIST: frozenset[str] = frozenset({"SPY", "QQQ"})
 
+# The scored account registers only these deterministic option candidate
+# generators. Keep this ordered so the model sees candidates consistently.
+SCORED_OPTION_UNDERLYINGS: tuple[str, ...] = ("SPY", "QQQ")
+
 # --- Account ------------------------------------------------------------------
 
 STARTING_EQUITY = Decimal("100000")
