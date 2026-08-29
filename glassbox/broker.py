@@ -22,6 +22,7 @@ from decimal import Decimal
 from typing import Any, Callable, TypeVar
 
 from . import config as C
+from . import env
 from .kernel import PortfolioState, Position
 from .macro import trading_days_between
 from .schema import OptionContract
@@ -74,19 +75,24 @@ def _is_retryable(exc: Exception) -> bool:
 
 class Broker:
     def __init__(self, journal=None, bucket: TokenBucket | None = None):
-        key = os.getenv("ALPACA_API_KEY")
-        secret = os.getenv("ALPACA_SECRET_KEY")
+        # Every read goes through env.clean(). systemd's EnvironmentFile parser
+        # keeps inline '#' comments that python-dotenv strips, and load_dotenv()
+        # will not override what systemd already set -- so a value that looks
+        # fine by hand can arrive here with a comment glued to it. See
+        # glassbox/env.py for the full account of what that broke.
+        key = env.get("ALPACA_API_KEY")
+        secret = env.get("ALPACA_SECRET_KEY")
         if not key or not secret:
             raise RuntimeError("ALPACA_API_KEY / ALPACA_SECRET_KEY not set")
 
         # Fatal, and deliberately checked three ways. A live account here would
         # be an unrecoverable mistake, so the cost of a false positive is zero
         # and the cost of a false negative is everything.
-        if os.getenv("ALPACA_PAPER_TRADE", "true").lower() != "true":
+        if env.get("ALPACA_PAPER_TRADE", "true").lower() != "true":
             raise NotPaperTrading("ALPACA_PAPER_TRADE is not true")
         if not key.startswith("PK"):
             raise NotPaperTrading("API key is not a paper key (expected PK prefix)")
-        base = os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
+        base = env.get("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
         if "paper-api" not in base:
             raise NotPaperTrading(f"base URL is not the paper endpoint: {base}")
 
@@ -97,7 +103,9 @@ class Broker:
         self.data = StockHistoricalDataClient(key, secret)
         self.bucket = bucket or TokenBucket()
         self.journal = journal
-        self.env = os.getenv("ALPACA_ENV", "dev")
+        # require_choice, not getenv: an unrecognised ALPACA_ENV must crash, not
+        # quietly take the dev branch and skip the scored-account guards below.
+        self.env = env.require_choice("ALPACA_ENV", {"dev", "scored"}, default="dev")
 
     # -- plumbing --------------------------------------------------------------
 

@@ -85,11 +85,35 @@ and enforceable by a risk check, while the upside is uncapped.
 
 This is also why we refuse standing margin leverage (§6).
 
-### Allocation: 80/15/5 → 65/25/10
+### Allocation: 80/15/5 → 65/25/10 → **70/20/10** (corrected 29 Aug)
 
-Options are a core requirement and the challenge is titled *Options Alpha
-Agents*. Under the original split, 85% of capital sat in instruments that
-scored on none of the five criteria.
+**We got this wrong once, on a fact that was never true.** The move to 65/25/10
+was justified in this document by the claim that "options are a core
+requirement and the challenge is titled *Options Alpha Agents*". That title
+does not exist. The event is the **Alpaca AI Trading Agents Hackathon**; the
+phrase appears nowhere on the event page or in the official Q&A, which mentions
+options only when listing market-data feeds. Nothing in the published rules
+requires options at all.
+
+Recording it rather than quietly editing it, because a fabricated premise moved
+$10,000 of capital into instruments that can go to zero, and the same failure
+mode — reasoning confidently from something nobody checked — is the one most
+likely to bite us again this week.
+
+Re-derived from what is actually documented:
+
+- **For more convexity:** the payoff is a step function (top-3 or nothing), so
+  the objective is P(placing), not expected return. The core sleeve is
+  deliberately passive and contributes ~nothing, so long premium is the *only*
+  source of right tail.
+- **Against:** judging is explicitly "not P&L alone", and a −25% finish damages
+  the P&L half badly. The marginal 5% of capital buys little upside — a 4×
+  strangle pays +60% at a 20% sleeve versus +75% at 25% — while adding real
+  probability of finishing embarrassingly negative.
+
+20% dominates both neighbours. Designed floor ≈ −20%; realistic bad case ≈ −12%,
+because a strangle with sessions left at measurement retains time value and a
+total loss requires a pin. Upside essentially unchanged.
 
 ---
 

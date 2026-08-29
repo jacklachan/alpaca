@@ -15,18 +15,40 @@ Description=Glassbox autonomous options trading agent
 After=network-online.target
 Wants=network-online.target
 
+# Do not give up. A crash loop that stops restarting at 03:00 on Wednesday is
+# indistinguishable from the agent being dead.
+#
+# FIXED: these two directives were previously in [Service], where systemd does
+# not recognise them -- it logs "Unknown key name" and applies the DEFAULT
+# limit instead (5 starts / 10s, then the unit gives up permanently). The
+# comment above promised behaviour the file did not deliver.
+StartLimitIntervalSec=0
+StartLimitBurst=0
+
 [Service]
 Type=simple
 User=glassbox
 WorkingDirectory=/opt/glassbox
+
+# WARNING: systemd's EnvironmentFile parser is NOT python-dotenv. It treats '#'
+# as a comment only at the start of a line, so `FOO=bar  # note` sets FOO to
+# "bar  # note". load_dotenv() will not override what systemd already set, so
+# the mangled value is the one the process sees. Keep every comment in .env on
+# its own line; ExecStartPre below enforces it.
 EnvironmentFile=/opt/glassbox/.env
+
+# Refuse to start on a .env that the two parsers read differently, rather than
+# starting and behaving subtly differently from every hand test.
+ExecStartPre=/opt/glassbox/.venv/bin/python -m glassbox.preflight
+
 ExecStart=/opt/glassbox/.venv/bin/python main.py
 Restart=always
 RestartSec=5
 
-# Do not give up. A crash loop that stops restarting at 03:00 on Wednesday is
-# indistinguishable from the agent being dead.
-StartLimitIntervalSec=0
+# SIGTERM, then give the tick loop time to finish its current write. The journal
+# fsyncs every entry, so this is about finishing cleanly, not about flushing.
+KillSignal=SIGTERM
+TimeoutStopSec=30
 
 StandardOutput=journal
 StandardError=journal

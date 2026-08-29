@@ -95,7 +95,25 @@ def main() -> int:
         return 3
 
     if args.dry_run:
-        info = broker.assert_ready()
+        try:
+            info = broker.assert_ready()
+        except Exception as exc:
+            # A raw traceback at 03:00 tells the on-call person nothing useful.
+            # Separate "the network is unhappy" (systemd will retry) from "this
+            # account is wrong" (a human must intervene), because the responses
+            # are completely different.
+            transient = any(t in str(exc).lower() for t in
+                            ("proxy", "timeout", "connection", "temporarily",
+                             "unreachable", "resolve"))
+            if transient:
+                log.critical("cannot reach Alpaca: %s", exc)
+                log.critical("this looks transient; the service will retry. "
+                             "Check egress/DNS if it persists.")
+                return 4
+            log.critical("ACCOUNT CHECK FAILED: %s", exc)
+            log.critical("this is not transient. Do not start the agent until "
+                         "it is understood.")
+            return 5
         log.info("account %s | equity %s | env=%s | options level %s",
                  info["account_number"], info["equity"], info["env"],
                  info["options_level"])

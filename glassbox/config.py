@@ -6,6 +6,7 @@ so it can be read, tested, and cited in the journal without hunting.
 
 from __future__ import annotations
 
+import os as _os
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -32,14 +33,36 @@ OPTION_UNDERLYING_ALLOWLIST: frozenset[str] = frozenset({"SPY", "QQQ"})
 STARTING_EQUITY = Decimal("100000")
 
 # --- Sleeve budgets -----------------------------------------------------------
-# AUDIT NOTE: the original plan ran 80/15/5. Options are a *core requirement* of
-# this competition and the challenge is titled "Options Alpha Agents", so 85% of
-# capital in non-options instruments scores on none of the published criteria.
-# Shifted to 65/25/10, which preserves the barbell shape (bounded left tail,
-# open right tail) while putting the mandated instrument at the centre.
+# AUDIT NOTE (corrected 29 Aug -- read this before changing the numbers again).
+#
+# A previous revision moved 80/15/5 -> 65/25/10 on the stated grounds that
+# "options are a core requirement and the challenge is titled Options Alpha
+# Agents". THAT PREMISE IS FALSE. The event is titled "Alpaca AI Trading Agents
+# Hackathon"; the phrase "Options Alpha Agents" appears nowhere on the event
+# page, in the official Q&A, or anywhere findable. The Q&A mentions options
+# only when listing market-data feeds. Nothing requires options at all.
+#
+# That matters because the false premise moved $10,000 of real capital into
+# instruments that can go to zero. Re-derived from what is actually documented:
+#
+#   For  a larger convex sleeve: the payoff is a step function (top-3 or
+#        nothing), so the objective is P(placing), not expected return, and
+#        long premium is the only bounded-loss convexity available. The core
+#        sleeve is deliberately passive and contributes ~nothing to P&L, so
+#        convexity is the ONLY source of right tail.
+#   Against: judging is explicitly "not P&L alone". A -25% finish damages the
+#        P&L half badly; the marginal 5% of capital buys little extra upside
+#        (a 4x strangle pays +60% at 20% vs +75% at 25%) while adding a real
+#        chance of finishing embarrassingly negative.
+#
+# 20% dominates both neighbours: it keeps the designed floor near -20% and the
+# realistic bad case near -12% (a strangle with sessions left at measurement
+# retains time value; total loss requires a pin), while preserving essentially
+# all of the upside. Landing at 70/20/10 on that reasoning, not on a retitle
+# that never happened.
 
-CORE_SLEEVE_USD = Decimal("65000")
-CONVEX_SLEEVE_USD = Decimal("25000")
+CORE_SLEEVE_USD = Decimal("70000")
+CONVEX_SLEEVE_USD = Decimal("20000")
 CRYPTO_SLEEVE_USD = Decimal("10000")
 
 # --- Convex sleeve rules ------------------------------------------------------
@@ -139,8 +162,10 @@ RATE_LIMIT_PER_MIN = 150          # against Alpaca's 200 ceiling
 HEARTBEAT_INTERVAL_MIN = 15
 LLM_TIMEOUT_SECONDS = 45          # a *hung* thesis call stalls the tick loop
 
-JOURNAL_PATH = "state/journal.jsonl"
-DB_PATH = "state/glassbox.db"
+# Overridable so drills and tests can point at a scratch journal without
+# touching the real one. Production leaves these unset.
+JOURNAL_PATH = _os.getenv("GLASSBOX_JOURNAL_PATH", "state/journal.jsonl")
+DB_PATH = _os.getenv("GLASSBOX_DB_PATH", "state/glassbox.db")
 
 SLEEVES = ("core", "crypto", "convex")
 

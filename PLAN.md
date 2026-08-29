@@ -131,13 +131,23 @@ check rather than by discipline.
 
 | Sleeve | Allocation | Job |
 |---|---|---|
-| Event / convex | **$25,000** | Long premium only. The strategy. |
+| Event / convex | **$20,000** | Long premium only. The strategy. |
 | Crypto | **$10,000** | 24/7. Carries the Friday 08:30 window. |
-| Core | **$65,000** | Passive, fixed-weight, buy-and-hold. Financing, not alpha. |
+| Core | **$70,000** | Passive, fixed-weight, buy-and-hold. Financing, not alpha. |
 
-Changed from the original 80/15/5. Options are a core requirement and the
-challenge is titled *Options Alpha Agents*; 85% of capital in non-options
-instruments scored on none of the five criteria.
+Changed from the original 80/15/5, then corrected on 29 Aug. An intermediate
+revision set 25% on the stated grounds that the challenge is titled *Options
+Alpha Agents* and that options are a core requirement — **neither is true**.
+The event is the *Alpaca AI Trading Agents Hackathon*, and the official Q&A
+mentions options only when listing market-data feeds.
+
+Re-derived on the evidence: the step-function payoff argues for meaningful
+convexity (the core sleeve is passive and contributes no P&L, so premium is the
+only right tail), while "winners will not be selected based on P&L alone"
+argues against a sleeve large enough to produce an embarrassing finish. 20%
+keeps the designed floor near −20% and the realistic bad case near −12% while
+preserving essentially all of the upside. See DECISIONS.md §2 for the full
+derivation and the retraction.
 
 **The core sleeve is deliberately passive** — fixed-weight SPY/QQQ/IWM bought
 at Monday's open and held. Twenty lines, unbreakable, and the write-up says
