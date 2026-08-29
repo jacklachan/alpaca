@@ -18,12 +18,12 @@ from glassbox.schema import OptionLeg, TradePlan
 
 K = RiskKernel()
 
-SPY = Decimal("650")
+SPY = Decimal("774")
 EXPIRY = date(2026, 9, 11)
 
 
 def occ(underlying: str = "SPY", exp: date = EXPIRY, right: str = "C",
-        strike: Decimal = Decimal("650")) -> str:
+        strike: Decimal = Decimal("774")) -> str:
     return f"{underlying}{exp:%y%m%d}{right}{int(strike * 1000):08d}"
 
 
@@ -33,7 +33,7 @@ def state(**kw) -> PortfolioState:
         cash=Decimal("40000"),
         core_sleeve_value=Decimal("60000"),
         core_sleeve_cost_basis=Decimal("60000"),
-        snapshot_price={"SPY": SPY, "QQQ": Decimal("580"), "IWM": Decimal("240"),
+        snapshot_price={"SPY": SPY, "QQQ": Decimal("640"), "IWM": Decimal("240"),
                         "AAPL": Decimal("230"), "MSFT": Decimal("520"),
                         "NVDA": Decimal("180"), "AMZN": Decimal("235"),
                         "BTC/USD": Decimal("95000")},
@@ -66,7 +66,7 @@ def equity_plan(**kw) -> TradePlan:
     base = dict(
         sleeve="core", action="open", instrument="equity", symbol="SPY",
         side="buy", notional_usd=Decimal("10000"), max_loss_usd=Decimal("800"),
-        stop=Decimal("616"),
+        stop=Decimal("734"),
         thesis="Core sleeve allocation to broad market beta, held passively for "
                "the scored window with a disaster stop.",
         evidence=["allocation_policy=core_passive"],
@@ -129,7 +129,7 @@ def test_rejects_understated_max_loss():
 
 
 def test_equity_max_loss_uses_gap_multiplier_not_bare_stop():
-    """A stop is not a bound. 10000/650 = 15.38 shares, 34 wide, x1.5 = ~784."""
+    """A stop is not a bound. 10000/774 = 12.92 shares, 40 wide, x1.5 = ~775."""
     v = K.review(equity_plan(max_loss_usd=Decimal("530")), state())
     assert not v.approved, "bare stop distance must not satisfy the check"
     assert K.review(equity_plan(max_loss_usd=Decimal("800")), state()).approved
@@ -172,9 +172,9 @@ def test_long_strangle_is_delta_flat_and_passes_concentration():
     """Net basis. Under a gross reading this would be refused, which was the bug."""
     strangle = option_plan(
         option_legs=[
-            OptionLeg(symbol=occ(right="C", strike=Decimal("660")), side="buy", qty=5,
+            OptionLeg(symbol=occ(right="C", strike=Decimal("786")), side="buy", qty=5,
                       limit_price=Decimal("6.00")),
-            OptionLeg(symbol=occ(right="P", strike=Decimal("640")), side="buy", qty=5,
+            OptionLeg(symbol=occ(right="P", strike=Decimal("762")), side="buy", qty=5,
                       limit_price=Decimal("6.00")),
         ],
         notional_usd=Decimal("6000"), max_loss_usd=Decimal("6000"),
@@ -309,7 +309,7 @@ def test_rejects_fat_finger_notional():
 
 def test_rejects_strike_far_from_spot():
     plan = option_plan(option_legs=[
-        OptionLeg(symbol=occ(strike=Decimal("900")), side="buy", qty=1,
+        OptionLeg(symbol=occ(strike=Decimal("1100")), side="buy", qty=1,
                   limit_price=Decimal("0.05"))],
         notional_usd=Decimal("5"), max_loss_usd=Decimal("5"))
     v = K.review(plan, state())
