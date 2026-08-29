@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import glassbox.broker as broker_module
 from glassbox import config as C
 from glassbox.broker import Broker
 from glassbox.macro import trading_days_between
@@ -84,3 +85,52 @@ def test_assert_ready_accepts_the_expected_returned_account(monkeypatch):
     broker = _ready_broker("dev", "DEV-EXPECTED")
 
     assert broker.assert_ready()["account_number"] == "DEV-EXPECTED"
+
+
+def test_cancel_and_confirm_returns_the_terminal_late_fill():
+    broker = Broker.__new__(Broker)
+    cancel_calls = []
+    states = iter([
+        SimpleNamespace(status="partially_filled", filled_qty="1"),
+        SimpleNamespace(status="canceled", filled_qty="3",
+                        filled_avg_price="5.25"),
+    ])
+    broker.cancel = lambda order_id: cancel_calls.append(order_id)
+    broker.get_order_by_coid = lambda coid: next(states)
+    broker._log = lambda actor, event, payload: None
+
+    final = broker.cancel_and_confirm(
+        "broker-1", "client-1", timeout=0.1, poll_seconds=0)
+
+    assert cancel_calls == ["broker-1"]
+    assert final.status == "canceled"
+    assert final.filled_qty == "3"
+
+
+def test_cancel_and_confirm_raises_when_terminal_state_is_unproven():
+    broker = Broker.__new__(Broker)
+    broker.cancel = lambda order_id: None
+    broker.get_order_by_coid = lambda coid: SimpleNamespace(
+        status="partially_filled", filled_qty="1")
+    broker._log = lambda actor, event, payload: None
+
+    with pytest.raises(broker_module.OrderStateUncertain, match="client-1"):
+        broker.cancel_and_confirm(
+            "broker-1", "client-1", timeout=0.01, poll_seconds=0)
+
+
+def test_cancel_and_confirm_accepts_terminal_state_after_cancel_error():
+    broker = Broker.__new__(Broker)
+
+    def already_terminal(order_id):
+        raise RuntimeError("order is already canceled")
+
+    broker.cancel = already_terminal
+    broker.get_order_by_coid = lambda coid: SimpleNamespace(
+        status="canceled", filled_qty="0")
+    broker._log = lambda actor, event, payload: None
+
+    final = broker.cancel_and_confirm(
+        "broker-1", "client-1", timeout=0.1, poll_seconds=0)
+
+    assert final.status == "canceled"

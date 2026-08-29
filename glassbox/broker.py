@@ -43,6 +43,15 @@ class NotPaperTrading(RuntimeError):
     """Raised at startup. Deliberately fatal."""
 
 
+class OrderStateUncertain(RuntimeError):
+    """A cancellation could not be observed in a terminal broker state."""
+
+
+def _order_status(order: Any) -> str:
+    """Normalize Alpaca enum and string order statuses."""
+    return str(getattr(order, "status", "")).lower().split(".")[-1]
+
+
 class TokenBucket:
     """Shared across every loop. 150/min against Alpaca's 200 ceiling."""
 
@@ -452,7 +461,48 @@ class Broker:
 
     def cancel(self, order_id: str) -> None:
         self._call(lambda: self.trading.cancel_order_by_id(order_id), "cancel_order")
-        self._log("broker", "ORDER_CANCELLED", {"broker_order_id": str(order_id)})
+        self._log("broker", "ORDER_CANCEL_REQUESTED", {
+            "broker_order_id": str(order_id)})
+
+    def cancel_and_confirm(self, order_id: str, client_order_id: str, *,
+                           timeout: float = 15.0,
+                           poll_seconds: float = 0.5) -> Any:
+        """Request cancellation and return only after terminal broker state."""
+        cancel_error: str | None = None
+        try:
+            self.cancel(order_id)
+        except Exception as exc:
+            # The order may already be terminal. The read below, not the cancel
+            # response, is authoritative.
+            cancel_error = str(exc)
+
+        deadline = time.monotonic() + timeout
+        last_status = "not_found"
+        while True:
+            order = self.get_order_by_coid(client_order_id)
+            if order is not None:
+                last_status = _order_status(order)
+                if last_status in _TERMINAL_ORDER_STATES:
+                    self._log("broker", "ORDER_CANCEL_CONFIRMED", {
+                        "broker_order_id": str(order_id),
+                        "client_order_id": client_order_id,
+                        "status": last_status,
+                        "filled_qty": str(getattr(order, "filled_qty", 0) or 0),
+                        "cancel_error": cancel_error,
+                    })
+                    return order
+            if time.monotonic() >= deadline:
+                detail = {
+                    "broker_order_id": str(order_id),
+                    "client_order_id": client_order_id,
+                    "last_status": last_status,
+                    "cancel_error": cancel_error,
+                }
+                self._log("broker", "ORDER_CANCEL_UNCERTAIN", detail)
+                raise OrderStateUncertain(
+                    f"order {client_order_id} did not reach terminal state "
+                    f"within {timeout}s (last status {last_status})")
+            time.sleep(poll_seconds)
 
     def close_position(self, symbol: str) -> Any:
         order = self._call(lambda: self.trading.close_position(symbol), "close_position")
