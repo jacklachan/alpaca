@@ -14,8 +14,20 @@ from glassbox.macro import CALENDAR, MEASUREMENT_ET, next_event, sessions_remain
 from glassbox.strategies.event_vol import (ChainLeg, EventVolStrategy, ExpiryQuote,
                                            select_expiry)
 
+# The measurement is EOD Thu 3 Sep, so the August payrolls print (Fri 4 Sep
+# 08:30) falls OUTSIDE the scored window. It is kept in the calendar because it
+# is real, and excluded from trading because it pays out after we are measured.
 NFP = CALENDAR[-1]
-THU = datetime(2026, 9, 3, 14, 30, tzinfo=C.ET)
+
+# The catalyst the strategy actually selects from the trade window, rather than
+# one hand-picked here -- so the test moves with the calendar instead of
+# encoding a second, drifting copy of the selection rule.
+
+# Wednesday afternoon: the trade window. By Thursday 14:30 every in-window
+# catalyst has already printed, so there is nothing left to position for.
+WED = datetime(2026, 9, 2, 14, 30, tzinfo=C.ET)
+THU_LATE = datetime(2026, 9, 3, 14, 30, tzinfo=C.ET)
+CATALYST = next_event(WED, tier=C.EVENT_MIN_TIER, within_hours=30)
 SPOT = Decimal("774")
 
 
@@ -24,11 +36,14 @@ def q(exp: date, iv: str, spread: str = "0.03") -> ExpiryQuote:
                        atm_straddle_px=Decimal("11"), bid_ask_pct=Decimal(spread))
 
 
-FLAT = [q(date(2026, 9, 4), "0.132"), q(date(2026, 9, 8), "0.133"),
-        q(date(2026, 9, 9), "0.132"), q(date(2026, 9, 11), "0.131")]
+# Re-based on the EOD Thu 3 Sep measurement:
+#   3 Sep -> 1 session (below the minimum, refused)
+#   4 Sep -> 2,  8 Sep -> 3,  9 Sep -> 4,  11 Sep -> 6
+FLAT = [q(date(2026, 9, 3), "0.132"), q(date(2026, 9, 4), "0.133"),
+        q(date(2026, 9, 8), "0.133"), q(date(2026, 9, 11), "0.131")]
 
-EVENT_PREMIUM = [q(date(2026, 9, 4), "0.240"), q(date(2026, 9, 8), "0.185"),
-                 q(date(2026, 9, 9), "0.164"), q(date(2026, 9, 11), "0.132")]
+EVENT_PREMIUM = [q(date(2026, 9, 3), "0.240"), q(date(2026, 9, 4), "0.240"),
+                 q(date(2026, 9, 8), "0.185"), q(date(2026, 9, 11), "0.132")]
 
 
 # --- the calendar -------------------------------------------------------------
@@ -38,51 +53,77 @@ def test_nfp_is_the_only_tier_one_event():
     assert NFP.when == datetime(2026, 9, 4, 8, 30, tzinfo=C.ET)
 
 
-def test_nfp_lands_one_hour_before_measurement():
-    assert (MEASUREMENT_ET - NFP.when).total_seconds() / 3600 == 1.0
+def test_payrolls_falls_OUTSIDE_the_scored_window():
+    """The correction that reshaped this strategy.
+
+    We built the original trade around payrolls landing 60 minutes before a
+    Friday 09:30 measurement. Alpaca's guidelines put the measurement at EOD
+    Thursday 3 Sep, which puts payrolls ~16.5 hours the wrong side of it.
+    """
+    assert NFP.when > MEASUREMENT_ET
+    assert (NFP.when - MEASUREMENT_ET).total_seconds() / 3600 > 16
+
+
+def test_a_post_measurement_catalyst_is_never_selected():
+    """Regression guard. Buying convexity for payrolls would be paying for a
+    payoff that lands after the account has already been photographed."""
+    from glassbox.macro import post_measurement_events
+    assert NFP in post_measurement_events()
+    # Even standing on Thursday with payrolls well inside the lookahead window.
+    assert next_event(THU_LATE, tier=1, within_hours=48) is None
 
 
 def test_labor_day_makes_the_8_sep_expiry_span_a_holiday_weekend():
-    """Four calendar days, two sessions. That gap is the discount."""
-    assert sessions_remaining_at_measurement(date(2026, 9, 8)) == 2
-    assert (date(2026, 9, 8) - MEASUREMENT_ET.date()).days == 4
+    """Five calendar days, three sessions. That gap is the discount."""
+    assert sessions_remaining_at_measurement(date(2026, 9, 8)) == 3
+    assert (date(2026, 9, 8) - MEASUREMENT_ET.date()).days == 5
 
 
-def test_thursday_afternoon_sees_nfp_as_the_next_catalyst():
-    assert next_event(THU, tier=1, within_hours=30).name == NFP.name
+def test_wednesday_sees_the_thursday_catalysts():
+    assert next_event(WED, tier=2, within_hours=30) is not None
+
+
+def test_thursday_afternoon_has_nothing_left_to_trade():
+    """Every in-window catalyst has printed by 14:30 Thursday. Standing down is
+    the correct behaviour, not a failure."""
+    assert next_event(THU_LATE, tier=2, within_hours=48) is None
 
 
 # --- expiry selection ---------------------------------------------------------
 
 def test_refuses_zero_dte_which_marks_as_a_stub():
-    choice = select_expiry(FLAT, NFP, MEASUREMENT_ET)
+    """3 Sep is the 0DTE now -- it expires on the measurement day itself."""
+    choice = select_expiry(FLAT, CATALYST, MEASUREMENT_ET)
     assert choice is not None
-    assert choice.expiry != date(2026, 9, 4)
+    assert choice.expiry != date(2026, 9, 3)
 
 
-def test_flat_term_structure_takes_the_short_expiry_for_the_holiday_discount():
-    """No event premium -> the Labor Day discount dominates, buy more gamma."""
-    choice = select_expiry(FLAT, NFP, MEASUREMENT_ET)
-    assert choice.expiry == date(2026, 9, 8)
-    assert choice.gamma_per_dollar == Decimal("2.5")   # 5 sessions / 2 sessions
+def test_flat_term_structure_takes_the_shortest_surviving_expiry():
+    """No event premium -> buy the most gamma per dollar that still marks off a
+    real quote at measurement. Against an EOD Thu 3 Sep snapshot that is the
+    4 Sep expiry: two sessions left, so three times the convexity per dollar of
+    the 11 Sep contract a team without this analysis would default to."""
+    choice = select_expiry(FLAT, CATALYST, MEASUREMENT_ET)
+    assert choice.expiry == date(2026, 9, 4)
+    assert choice.gamma_per_dollar == Decimal("3")     # 6 sessions / 2 sessions
 
 
 def test_event_premium_pushes_us_out_to_the_longer_expiry():
     """The correction: short-dated options carrying event premium get crushed
     once the number is out, which offsets the holiday discount."""
-    choice = select_expiry(EVENT_PREMIUM, NFP, MEASUREMENT_ET)
+    choice = select_expiry(EVENT_PREMIUM, CATALYST, MEASUREMENT_ET)
     assert choice.expiry == date(2026, 9, 11)
     assert choice.gamma_per_dollar == Decimal("1")
 
 
 def test_wide_quotes_disqualify_an_expiry():
-    wide = [q(date(2026, 9, 8), "0.132", spread="0.14"), q(date(2026, 9, 11), "0.131")]
-    assert select_expiry(wide, NFP, MEASUREMENT_ET).expiry == date(2026, 9, 11)
+    wide = [q(date(2026, 9, 4), "0.132", spread="0.14"), q(date(2026, 9, 11), "0.131")]
+    assert select_expiry(wide, CATALYST, MEASUREMENT_ET).expiry == date(2026, 9, 11)
 
 
 def test_returns_none_when_nothing_qualifies():
-    assert select_expiry([q(date(2026, 9, 4), "0.132")], NFP, MEASUREMENT_ET) is None
-    assert select_expiry([], NFP, MEASUREMENT_ET) is None
+    assert select_expiry([q(date(2026, 9, 3), "0.132")], CATALYST, MEASUREMENT_ET) is None
+    assert select_expiry([], CATALYST, MEASUREMENT_ET) is None
 
 
 # --- plan construction --------------------------------------------------------
@@ -101,8 +142,8 @@ def chain_for(exp: date) -> dict[date, list[ChainLeg]]:
 
 def test_proposes_a_strangle_into_the_catalyst():
     s = EventVolStrategy()
-    plans = s.propose(now=THU, spot=SPOT, iv_vs_rv=Decimal("1.05"),
-                      expiry_candidates=FLAT, chain=chain_for(date(2026, 9, 8)),
+    plans = s.propose(now=WED, spot=SPOT, iv_vs_rv=Decimal("1.05"),
+                      expiry_candidates=FLAT, chain=chain_for(date(2026, 9, 4)),
                       measurement=MEASUREMENT_ET, remaining_budget=Decimal("18000"))
     assert len(plans) == 1
     p = plans[0]
@@ -119,35 +160,35 @@ def test_proposes_a_strangle_into_the_catalyst():
 
 def test_stands_down_when_convexity_is_expensive():
     s = EventVolStrategy()
-    plans = s.propose(now=THU, spot=SPOT, iv_vs_rv=Decimal("1.80"),
-                      expiry_candidates=FLAT, chain=chain_for(date(2026, 9, 8)),
+    plans = s.propose(now=WED, spot=SPOT, iv_vs_rv=Decimal("1.80"),
+                      expiry_candidates=FLAT, chain=chain_for(date(2026, 9, 4)),
                       measurement=MEASUREMENT_ET, remaining_budget=Decimal("18000"))
     assert plans == [], "must not buy gamma it is not being paid to own"
 
 
 def test_stands_down_when_already_positioned_for_the_event():
     s = EventVolStrategy()
-    plans = s.propose(now=THU, spot=SPOT, iv_vs_rv=Decimal("1.05"),
-                      expiry_candidates=FLAT, chain=chain_for(date(2026, 9, 8)),
+    plans = s.propose(now=WED, spot=SPOT, iv_vs_rv=Decimal("1.05"),
+                      expiry_candidates=FLAT, chain=chain_for(date(2026, 9, 4)),
                       measurement=MEASUREMENT_ET, remaining_budget=Decimal("18000"),
-                      already_positioned_for={NFP.name})
+                      already_positioned_for={CATALYST.name})
     assert plans == []
 
 
 def test_sizes_within_the_budget():
     s = EventVolStrategy()
-    plans = s.propose(now=THU, spot=SPOT, iv_vs_rv=Decimal("1.05"),
-                      expiry_candidates=FLAT, chain=chain_for(date(2026, 9, 8)),
+    plans = s.propose(now=WED, spot=SPOT, iv_vs_rv=Decimal("1.05"),
+                      expiry_candidates=FLAT, chain=chain_for(date(2026, 9, 4)),
                       measurement=MEASUREMENT_ET, remaining_budget=Decimal("4000"))
     assert plans[0].notional_usd <= Decimal("4000")
 
 
 def test_thesis_and_evidence_are_grounded():
     s = EventVolStrategy()
-    p = s.propose(now=THU, spot=SPOT, iv_vs_rv=Decimal("1.05"),
-                  expiry_candidates=FLAT, chain=chain_for(date(2026, 9, 8)),
+    p = s.propose(now=WED, spot=SPOT, iv_vs_rv=Decimal("1.05"),
+                  expiry_candidates=FLAT, chain=chain_for(date(2026, 9, 4)),
                   measurement=MEASUREMENT_ET, remaining_budget=Decimal("18000"))[0]
-    assert "Employment Situation" in p.thesis
+    assert CATALYST.name in p.thesis
     joined = " ".join(p.evidence)
     assert "macro_cal:" in joined
     assert "iv_to_rv_ratio" in joined
@@ -166,8 +207,8 @@ def test_the_event_plan_is_approved_by_the_kernel():
     from glassbox.kernel import PortfolioState, RiskKernel
 
     s = EventVolStrategy()
-    plan = s.propose(now=THU, spot=SPOT, iv_vs_rv=Decimal("1.05"),
-                     expiry_candidates=FLAT, chain=chain_for(date(2026, 9, 8)),
+    plan = s.propose(now=WED, spot=SPOT, iv_vs_rv=Decimal("1.05"),
+                     expiry_candidates=FLAT, chain=chain_for(date(2026, 9, 4)),
                      measurement=MEASUREMENT_ET, remaining_budget=Decimal("18000"))[0]
 
     state = PortfolioState(
@@ -175,9 +216,9 @@ def test_the_event_plan_is_approved_by_the_kernel():
         core_sleeve_value=Decimal("60000"), core_sleeve_cost_basis=Decimal("60000"),
         convex_premium_today=Decimal("7000"),   # daily cap already spent
         snapshot_price={"SPY": SPOT},
-        trading_days_to={date(2026, 9, 8): 4},
+        trading_days_to={date(2026, 9, 4): 2},
         market_open=True, median_order_notional=Decimal("6000"),
-        now_et=THU,
+        now_et=WED,
     )
     verdict = RiskKernel().review(plan, state)
     assert verdict.approved, verdict.reason

@@ -77,9 +77,12 @@ def test_crypto_trades_while_the_equity_market_is_closed():
     assert plans, "the crypto sleeve is the reason the agent runs at 03:00"
 
 
-def test_crypto_event_window_after_the_payrolls_print():
-    """08:30 ET Friday: the number is out and equities do not open until 09:30."""
-    during = datetime(2026, 9, 4, 8, 45, tzinfo=C.ET)
+def test_crypto_carries_a_pre_open_catalyst_while_equities_are_shut():
+    """Thu 3 Sep 08:35 ET: jobless claims are out, equities do not open until
+    09:30, and the measurement is that afternoon. Crypto is the only venue the
+    agent can express the reaction on, which is the whole reason the sleeve
+    exists."""
+    during = datetime(2026, 9, 3, 8, 35, tzinfo=C.ET)
     plans = CryptoStrategy().propose_from_state(state(now=during, market_open=False))
     assert plans
     p = plans[0]
@@ -89,8 +92,17 @@ def test_crypto_event_window_after_the_payrolls_print():
 
 
 def test_crypto_outside_the_window_is_a_baseline_allocation():
-    before = datetime(2026, 9, 4, 7, 0, tzinfo=C.ET)
+    before = datetime(2026, 9, 2, 7, 0, tzinfo=C.ET)
     p = CryptoStrategy().propose_from_state(state(now=before, market_open=False))[0]
+    assert "baseline allocation" in p.thesis
+    assert p.time_exit is None
+
+
+def test_crypto_stands_down_from_event_mode_once_measurement_has_passed():
+    """Fri 4 Sep 08:45 is AFTER the EOD Thu 3 Sep snapshot. The payrolls print
+    is real and large, and taking risk for it would score nothing."""
+    after = datetime(2026, 9, 4, 8, 45, tzinfo=C.ET)
+    p = CryptoStrategy().propose_from_state(state(now=after, market_open=False))[0]
     assert "baseline allocation" in p.thesis
     assert p.time_exit is None
 

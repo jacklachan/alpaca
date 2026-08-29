@@ -72,8 +72,22 @@ CONVEX_DAILY_BURN_CAP = Decimal("8000")
 EVENT_TRADE_DAILY_CAP = Decimal("18000")
 
 OPTION_STRIKE_BAND_PCT = Decimal("0.02")   # within ~2% of spot
-OPTION_MIN_DTE = 3                          # trading days
-OPTION_MAX_DTE = 10                         # trading days
+
+# AUDIT NOTE: this was 3, calibrated when we believed the measurement was Fri
+# 4 Sep 09:30. Alpaca's guidelines put it at EOD Thu 3 Sep, which pulls every
+# sensible expiry a session closer and made a 3-day entry minimum refuse the
+# strategy's own best candidate (the 4 Sep expiry, two sessions alive at
+# measurement, 3x the convexity per dollar of the 11 Sep contract).
+#
+# Lowered to 2 deliberately, not loosened carelessly. The safety property we
+# actually care about is "never hold a contract that marks as a stub when the
+# account is valued, and never depend on expiry-day settlement". That property
+# is enforced by OPTION_MIN_DTE_AT_MEASUREMENT (sessions remaining AT the
+# snapshot) and by the 14:30 ET force-close -- not by days-since-entry, which
+# is only a proxy for it. With the measurement moved, the proxy and the real
+# constraint disagreed, so we kept the real one.
+OPTION_MIN_DTE = 2                          # trading days at ENTRY
+OPTION_MAX_DTE = 10                         # trading days at ENTRY
 
 # AUDIT NOTE: Alpaca stops accepting options orders at 15:30 ET on expiration
 # day. The original plan force-closed at 15:45 ET -- after the cutoff -- which

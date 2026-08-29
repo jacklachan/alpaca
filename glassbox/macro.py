@@ -54,11 +54,30 @@ CALENDAR: tuple[MacroEvent, ...] = (
                "BLS September 2026 release schedule, verified"),
 )
 
-# When the account is measured. The Q&A says the opening bell; the event page
-# implies the 11:00 ET submission close. Until Discord answers, we assume the
-# earlier of the two, because being early is recoverable and being late is not.
-MEASUREMENT_ET = _et(2026, 9, 4, 9, 30)
-MEASUREMENT_IS_CONFIRMED = False
+# When the account is measured. RESOLVED 29 Aug by Alpaca's official guidelines:
+#
+#   "Official P&L measurement: Monday, August 31 at 9:30 a.m. ET to Friday,
+#    September 4 at 9:30 a.m. ET. We will be looking at the portfolio's total
+#    equity as of EOD Thursday Sep 3rd. Any option exercises and assignments
+#    for options expiring on Sep 3rd will be reflected in the EOD value."
+#
+# This moved the target by a full session and it invalidates the trade this
+# strategy was originally built around. We had assumed Friday's opening bell,
+# which put the 08:30 ET payrolls print sixty minutes INSIDE the window. It is
+# now ~17 hours OUTSIDE it. Buying convexity for payrolls would have been
+# paying for a catalyst that resolves after the account is photographed --
+# the most expensive kind of wrong, because it looks like a thesis.
+#
+# Two consequences, both handled below:
+#   1. next_event() now refuses to return a catalyst at or after measurement.
+#   2. Sep 3 expiries are no longer a stub risk. Alpaca states exercises and
+#      assignments for that expiry ARE reflected in the EOD value, which is
+#      the specific settlement concern that pushed us out to later expiries.
+#      We still close at 14:30 ET (OPTION_FORCE_CLOSE_ET) rather than rely on
+#      it, because a realised close is worth more than a settlement promise.
+MEASUREMENT_ET = _et(2026, 9, 3, 16, 0)
+MEASUREMENT_IS_CONFIRMED = True
+MEASUREMENT_SOURCE = "Alpaca official guidelines doc, 'Timeline' and FAQ rows"
 
 # Alpaca stops accepting options orders at 15:30 ET on expiration day.
 OPTION_ORDER_CUTOFF_ET = (15, 30)
@@ -70,15 +89,34 @@ HOLIDAYS_2026 = frozenset({date(2026, 9, 7)})  # Labor Day
 
 
 def next_event(now: datetime, tier: int | None = None,
-               within_hours: float = 48) -> MacroEvent | None:
-    """The next scheduled catalyst, optionally filtered by tier."""
+               within_hours: float = 48,
+               measurement: datetime | None = None) -> MacroEvent | None:
+    """The next scheduled catalyst that resolves BEFORE we are measured.
+
+    The measurement filter is not a refinement, it is the point. The largest
+    event in the calendar -- the August Employment Situation, tier 1, an 85bp
+    expected move -- falls on Fri 4 Sep at 08:30 ET, which is AFTER the EOD
+    Thu 3 Sep snapshot. Without this filter the agent spends its convexity
+    budget on Wednesday buying a catalyst whose payoff lands after the account
+    has already been photographed. It would look like a well-reasoned trade
+    right up until it scored nothing.
+    """
+    cutoff = measurement or MEASUREMENT_ET
     upcoming = [
         e for e in CALENDAR
         if e.when > now
+        and e.when <= cutoff
         and (tier is None or e.tier <= tier)
         and e.hours_until(now) <= within_hours
     ]
     return min(upcoming, key=lambda e: e.when) if upcoming else None
+
+
+def post_measurement_events(measurement: datetime | None = None) -> list[MacroEvent]:
+    """Catalysts that fall outside the scored window. Excluded from trading,
+    kept so the journal can say explicitly why they were skipped."""
+    cutoff = measurement or MEASUREMENT_ET
+    return sorted([e for e in CALENDAR if e.when > cutoff], key=lambda e: e.when)
 
 
 def events_between(start: datetime, end: datetime) -> list[MacroEvent]:
@@ -105,18 +143,20 @@ def sessions_remaining_at_measurement(expiry: date,
                                       measurement: datetime | None = None) -> int:
     """How many trading sessions the contract still has when we are measured.
 
-    Inclusive of the measurement day itself, because the account is
-    photographed at the open and the option still has that whole session to
-    live. This is the number that decides whether a contract marks off a real
-    two-sided quote or a 0DTE stub.
+    Inclusive of the measurement day itself, because the option still has that
+    session to live when the account is valued. This is the number that decides
+    whether a contract marks off a real two-sided quote or a 0DTE stub.
 
-    For the 4 Sep 09:30 measurement, with Labor Day on Mon 7 Sep:
+    For the EOD Thu 3 Sep measurement, with Labor Day on Mon 7 Sep:
 
-        4 Sep  -> 1   expires that afternoon; marks as a stub. Refuse.
-        8 Sep  -> 2   Fri + Tue. Cheap per calendar day precisely BECAUSE the
-                      holiday weekend sits inside it and carries no vol.
-        9 Sep  -> 3   Fri + Tue + Wed
-        11 Sep -> 5   Fri + Tue + Wed + Thu + Fri
+        3 Sep  -> 1   expires the same afternoon. Alpaca states exercises and
+                      assignments for this expiry ARE reflected in the EOD
+                      value, so it is no longer a settlement risk -- but we
+                      still close at 14:30 ET rather than rely on that.
+        4 Sep  -> 2   Thu + Fri
+        8 Sep  -> 3   Thu + Fri + Tue. Cheap per calendar day precisely BECAUSE
+                      the holiday weekend sits inside it and carries no vol.
+        11 Sep -> 6   Thu + Fri + Tue + Wed + Thu + Fri
     """
     m = (measurement or MEASUREMENT_ET).date()
     if expiry < m:

@@ -112,22 +112,85 @@ against a live account.
 Keys live in the environment. They are never committed, never written to the
 journal, and are scrubbed from any recorded terminal output.
 
+## Running it
+
+```bash
+python -m glassbox.preflight     # refuses to start on a bad .env
+python main.py --dry-run         # wire up, verify the account, print schedule
+python main.py --once            # a single tick
+python main.py                   # the agent
+```
+
+Operational checks, all runnable without a broker connection:
+
+```bash
+pytest -q                        # 142 tests
+python tools/crash_drill.py      # 13 checks: real SIGKILL, real restarts
+python tools/verify_chain.py     # re-hash the journal end to end
+python tools/env_parity.py .env  # systemd vs dotenv agreement
+sudo bash tools/soak.sh          # on the VPS: systemd in the loop
+```
+
+The dashboard — the Application URL a judge opens — is read-only, holds no
+credentials, and has no write path:
+
+```bash
+uvicorn dashboard.app:app --host 0.0.0.0 --port 8080
+```
+
+## The measurement date, and why it reshaped the strategy
+
+Alpaca's guidelines measure **total equity as of EOD Thursday 3 September**,
+not at Friday's open. The August payrolls print (Fri 4 Sep, 08:30 ET) therefore
+falls *outside* the scored window.
+
+We originally built the flagship options trade around payrolls landing sixty
+minutes *inside* it. `next_event()` now refuses to return any catalyst at or
+after the measurement, and CI asserts it, because buying convexity for payrolls
+would have meant paying for a payoff that arrives after the account has already
+been photographed.
+
 ## Repository layout
 
 ```
 glassbox/
   config.py     every threshold, in one place
+  env.py        fail-closed env reads (systemd vs dotenv parity)
+  preflight.py  startup gate; runs as systemd ExecStartPre
   schema.py     the trade-plan schema (Pydantic v2)
   kernel.py     the thirteen invariants
   journal.py    hash-chained append-only log + verifier + anchoring
+  macro.py      the scored-window calendar and the measurement boundary
   ids.py        deterministic client_order_id
-tests/
-  test_kernel.py   one named test per invariant, plus adversarial plans
-  test_journal.py  chain verification and tamper detection
+  strategies/   core (passive), crypto (24/7), event_vol (the options trade)
+dashboard/
+  app.py        read-only journal + equity view. No credentials, no writes.
+tools/
+  crash_drill.py  SIGKILL/restart drill, 13 checks, no broker needed
+  soak.sh         the same on the VPS, with systemd in the loop
+  env_parity.py   systemd vs python-dotenv disagreement detector
+  verify_chain.py standalone journal verifier
+  panic.sh        flatten everything via the Alpaca CLI
+tests/            142 tests
 ```
+
+## Disclosure of pre-event work
+
+Required by the FAQ ("If pre-event work is permitted, must it be disclosed in
+the README or final submission? Yes.").
+
+All application code in this repository was written during the hackathon
+window. No pre-existing private library is vendored or depended on. Third-party
+dependencies are the public packages listed in `requirements.txt`.
 
 ## Status
 
-Kernel, schema, journal and their tests are complete — 36 tests passing.
-Broker wrapper, data layer, execution, position manager, scheduler, strategies
-and dashboard are in progress.
+Complete and tested: the full autonomous loop — reconcile → manage → propose →
+kernel → execute → journal — plus the read-only dashboard, CI, and the
+crash-recovery drill. 142 tests.
+
+Proven: the recovery *logic*, via `tools/crash_drill.py` (real SIGKILL on real
+child processes).
+
+Not yet proven: the *host*. Until `tools/soak.sh` has run green on the VPS,
+"runs unattended for four days" is a claim rather than a fact.

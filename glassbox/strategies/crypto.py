@@ -6,10 +6,15 @@ Two jobs:
      makes four days of genuinely continuous autonomous operation visible in
      the journal rather than merely claimed.
 
-  2. Carry the payrolls window. The release lands Friday 08:30 ET and the
-     equity market does not open until 09:30. Alpaca runs its own crypto
-     venue, so for that hour this sleeve is the only thing that can trade the
-     reaction while every equity-only book is frozen at Thursday's close.
+  2. Carry the pre-open catalysts. Alpaca runs its own crypto venue, so in the
+     hour after an 08:15 or 08:30 ET release this sleeve is the only thing that
+     can trade the reaction while every equity-only book is still shut.
+
+     This job was originally written around the Friday payrolls print. Alpaca's
+     guidelines put the measurement at EOD Thu 3 Sep, which moves payrolls
+     outside the scored window entirely -- so the catalysts that matter here are
+     now Wednesday's ADP (08:15) and Thursday's jobless claims (08:30), and the
+     sleeve stands down once the measurement has passed.
 
 Honest sizing note, because it belongs in the pitch rather than in a footnote:
 at 1x on a $10,000 sleeve, a 1% move is $100. This is not where the P&L comes
@@ -106,10 +111,20 @@ class CryptoStrategy:
 
     @staticmethod
     def _event_window(now):
-        """True in the minutes just after a tier-1 release, before measurement."""
+        """True in the minutes just after an in-window release, before measurement.
+
+        AUDIT NOTE: this used to require tier == 1. When the measurement moved to
+        EOD Thu 3 Sep, the only tier-1 event in the calendar (payrolls, Fri 4 Sep)
+        fell outside the scored window -- which made this branch unreachable and
+        silently turned the crypto sleeve into a static allocation. The whole
+        stated reason for the sleeve is to express a pre-open reaction while
+        equities are shut, so it now triggers on the catalysts that actually
+        fall inside the window: Wednesday's ADP and Thursday's claims, both
+        tier 2. The `now < MEASUREMENT_ET` guard is what keeps it honest.
+        """
         from ..macro import CALENDAR
         for e in CALENDAR:
-            if e.tier != 1:
+            if e.tier > C.EVENT_MIN_TIER:
                 continue
             delta = (now - e.when).total_seconds() / 60
             if 0 <= delta <= EVENT_WINDOW_MINUTES and now < MEASUREMENT_ET:
