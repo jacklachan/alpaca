@@ -79,9 +79,21 @@ def select_expiry(
         max_spread_pct = C.MAX_ATM_SPREAD_PCT
 
     ordered = sorted(candidates, key=lambda c: c.expiry)
-    # Baseline = the longest candidate's IV, taken as the "clean" vol level
-    # against which shorter-dated event premium is measured.
-    base = baseline_iv if baseline_iv is not None else ordered[-1].atm_iv
+
+    # Baseline = the longest expiry still inside our measurement window, taken
+    # as the "clean" vol level against which shorter-dated event premium is
+    # measured. It must come from inside the window, or the premium figure that
+    # lands in the journal is quoted against an expiry we never considered.
+    in_window = [o for o in ordered
+                 if C.OPTION_MIN_DTE_AT_MEASUREMENT
+                 <= sessions_remaining_at_measurement(o.expiry, measurement)
+                 <= C.OPTION_MAX_SESSIONS_AT_MEASUREMENT]
+    if baseline_iv is not None:
+        base = baseline_iv
+    elif in_window:
+        base = in_window[-1].atm_iv
+    else:
+        return None
 
     viable: list[tuple[Decimal, ExpiryQuote, Decimal]] = []
 
