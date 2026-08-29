@@ -60,6 +60,29 @@ class TestRequireChoice:
         assert env.require_choice("ALPACA_ENV", {"dev", "scored"}, default="dev") == "dev"
 
 
+class TestExpectedAccountIdentity:
+    def test_returns_the_explicit_id_for_the_selected_environment(self, monkeypatch):
+        monkeypatch.setenv("ALPACA_EXPECTED_DEV_ACCOUNT_ID", "DEV-123")
+        monkeypatch.setenv("ALPACA_EXPECTED_SCORED_ACCOUNT_ID", "SCORED-456")
+
+        assert env.expected_account_id("dev") == "DEV-123"
+        assert env.expected_account_id("scored") == "SCORED-456"
+
+    def test_rejects_a_missing_expected_id(self, monkeypatch):
+        monkeypatch.delenv("ALPACA_EXPECTED_DEV_ACCOUNT_ID", raising=False)
+        monkeypatch.setenv("ALPACA_EXPECTED_SCORED_ACCOUNT_ID", "SCORED-456")
+
+        with pytest.raises(env.EnvError, match="ALPACA_EXPECTED_DEV_ACCOUNT_ID"):
+            env.expected_account_id("dev")
+
+    def test_rejects_equal_dev_and_scored_ids(self, monkeypatch):
+        monkeypatch.setenv("ALPACA_EXPECTED_DEV_ACCOUNT_ID", "SAME-123")
+        monkeypatch.setenv("ALPACA_EXPECTED_SCORED_ACCOUNT_ID", "SAME-123")
+
+        with pytest.raises(env.EnvError, match="must be different"):
+            env.expected_account_id("dev")
+
+
 class TestParity:
     def _write(self, tmp_path, body):
         p = tmp_path / ".env"

@@ -152,9 +152,16 @@ class Broker:
         catch 'submitted from the wrong account' before it costs the week.
         """
         acct = self._call(self.trading.get_account, "get_account")
+        actual_account_id = str(acct.account_number)
+        expected_account_id = env.expected_account_id(self.env)
+        if actual_account_id != expected_account_id:
+            raise RuntimeError(
+                f"Alpaca returned account {actual_account_id}, expected "
+                f"{expected_account_id} for ALPACA_ENV={self.env}; refusing "
+                "to continue")
         info = {
             "env": self.env,
-            "account_number": str(acct.account_number),
+            "account_number": actual_account_id,
             "status": str(acct.status),
             "equity": str(acct.equity),
             "cash": str(acct.cash),

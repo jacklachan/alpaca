@@ -93,6 +93,21 @@ def require_choice(name: str, allowed: set[str], default: str | None = None) -> 
     return v
 
 
+def expected_account_id(environment: str) -> str:
+    """Return the explicit Alpaca account ID for one configured environment."""
+    if environment not in {"dev", "scored"}:
+        raise EnvError(f"unknown Alpaca environment {environment!r}")
+
+    selected = f"ALPACA_EXPECTED_{environment.upper()}_ACCOUNT_ID"
+    other = ("ALPACA_EXPECTED_SCORED_ACCOUNT_ID" if environment == "dev"
+             else "ALPACA_EXPECTED_DEV_ACCOUNT_ID")
+    expected = require(selected)
+    other_id = require(other)
+    if expected == other_id:
+        raise EnvError("dev and scored account IDs must be different")
+    return expected
+
+
 def _systemd_values(path: Path) -> dict[str, str]:
     """Replicate systemd EnvironmentFile semantics exactly."""
     out: dict[str, str] = {}
