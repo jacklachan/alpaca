@@ -78,6 +78,23 @@ def main() -> int:
     setup_logging(args.verbose)
     log = logging.getLogger("glassbox")
 
+    # Verify the audit trail FIRST, before anything that needs credentials.
+    #
+    # This used to run after build(), which constructs the Broker -- so on a
+    # machine without a .env the process exited 1 ("credentials not set") and
+    # never reached the chain check at all. The integrity of the journal is a
+    # property of local state and needs no broker, so gating it behind
+    # credentials was backwards: it made the guard untestable on a clean
+    # checkout and silently unreachable in CI. Cheapest and most fundamental
+    # check goes first.
+    journal = Journal(C.JOURNAL_PATH)
+    ok, why = journal.verify()
+    log.info("journal: %s", why)
+    if not ok:
+        log.critical("JOURNAL CHAIN BROKEN: %s", why)
+        discord(f":rotating_light: glassbox journal chain broken: {why}")
+        return 3
+
     try:
         agent, journal, broker = build(thesis_enabled=not args.no_thesis)
     except NotPaperTrading as exc:
@@ -86,13 +103,6 @@ def main() -> int:
     except Exception as exc:
         log.critical("startup failed: %s", exc)
         return 1
-
-    ok, why = journal.verify()
-    log.info("journal: %s", why)
-    if not ok:
-        log.critical("JOURNAL CHAIN BROKEN: %s", why)
-        discord(f":rotating_light: glassbox journal chain broken: {why}")
-        return 3
 
     if args.dry_run:
         try:
