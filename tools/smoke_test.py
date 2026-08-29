@@ -170,7 +170,7 @@ def main() -> int:
 
         # Group ATM implied vol by expiry -- this is the expiry question,
         # answered with data rather than reasoning.
-        by_exp: dict[date, list[tuple[float, float]]] = {}
+        by_exp: dict[date, list[tuple[float, float, float]]] = {}
         for sym, c in chain.items():
             iv = getattr(c, "implied_volatility", None)
             if iv is None:
@@ -180,20 +180,36 @@ def main() -> int:
                 strike = int(sym[10:]) / 1000
             except Exception:
                 continue
-            if abs(strike - spot) / spot < 0.01:      # near the money
-                by_exp.setdefault(exp, []).append((strike, float(iv)))
+            if abs(strike - spot) / spot >= 0.01:      # near the money only
+                continue
+
+            # Relative bid/ask spread. This decides whether a mark means
+            # anything on an indicative feed -- a holiday-spanning expiry can
+            # be cheap in vol terms and still be untradeable.
+            spread = float("nan")
+            q = getattr(c, "latest_quote", None)
+            if q is not None:
+                bid, ask = float(getattr(q, "bid_price", 0) or 0), float(getattr(q, "ask_price", 0) or 0)
+                if bid > 0 and ask > 0:
+                    spread = (ask - bid) / ((ask + bid) / 2)
+            by_exp.setdefault(exp, []).append((strike, float(iv), spread))
 
         if not by_exp:
             warn("no implied vols in the chain -- the free tier feed is indicative; "
                  "compute IV locally if this stays empty")
         else:
-            print("\n   ATM implied vol by expiry:")
+            print("\n   ATM implied vol and quote width by expiry:")
+            print(f"     {'expiry':<12}{'dte':>5}{'IV':>8}{'spread':>9}   n")
             today = date.today()
-            for exp in sorted(by_exp)[:8]:
-                ivs = [v for _, v in by_exp[exp]]
-                avg = sum(ivs) / len(ivs)
+            for exp in sorted(by_exp)[:10]:
+                rows = by_exp[exp]
+                avg = sum(v for _, v, _ in rows) / len(rows)
+                sp = [s for _, _, s in rows if s == s]     # drop NaN
+                spread_txt = f"{sum(sp)/len(sp):7.1%}" if sp else "      -"
                 dte = (exp - today).days
-                print(f"     {exp}  {dte:>3}d   IV {avg:6.1%}   n={len(ivs)}")
+                print(f"     {exp}  {dte:>4}d {avg:7.1%} {spread_txt}   {len(rows)}")
+            print("\n     A spread above ~6% disqualifies an expiry: the mark stops")
+            print("     meaning anything and the fill costs more than the edge.")
             print("\n   Read this before choosing an expiry:")
             print("     If the short expiries show materially HIGHER IV than the")
             print("     later ones, you are paying an event premium and will eat")
