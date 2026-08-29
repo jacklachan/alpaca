@@ -13,7 +13,6 @@ it.
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -24,6 +23,7 @@ from . import config as C
 from .kernel import PortfolioState, Position
 from .macro import MEASUREMENT_ET
 from .schema import OptionContract
+from .state import StateCorrupt, atomic_write_json, read_json
 
 log = logging.getLogger("glassbox.manage")
 
@@ -51,27 +51,32 @@ class KillSwitch:
 
     @property
     def tripped(self) -> bool:
-        if not self.path.exists():
-            return False
         try:
-            return bool(json.loads(self.path.read_text()).get("tripped"))
-        except Exception:
-            return True   # unreadable state is treated as tripped, not as safe
+            return bool(self._read_state()["tripped"])
+        except StateCorrupt:
+            return True
 
     def state(self) -> dict:
-        if not self.path.exists():
-            return {"tripped": False}
         try:
-            return json.loads(self.path.read_text())
-        except Exception:
+            return self._read_state()
+        except StateCorrupt:
             return {"tripped": True, "reason": "state file unreadable"}
+
+    def _read_state(self) -> dict:
+        def validate(raw) -> dict:
+            if not isinstance(raw, dict) or not isinstance(raw.get("tripped"), bool):
+                raise StateCorrupt(f"{self.path}: invalid kill-switch state")
+            return raw
+
+        return read_json(
+            self.path, default={"tripped": False}, validate=validate)
 
     def trip(self, reason: str, detail: dict | None = None) -> None:
         if self.tripped:
             return
         rec = {"tripped": True, "reason": reason,
                "at": datetime.now(C.ET).isoformat(), "detail": detail or {}}
-        self.path.write_text(json.dumps(rec, indent=2))
+        atomic_write_json(self.path, rec)
         log.critical("KILL SWITCH TRIPPED: %s", reason)
         if self.journal:
             self.journal.append("risk.kill_switch", "KILL_SWITCH_TRIPPED", rec)
@@ -80,7 +85,7 @@ class KillSwitch:
         """Human only. Never called by any automated path."""
         rec = {"tripped": False, "rearmed_by": who, "why": why,
                "at": datetime.now(C.ET).isoformat()}
-        self.path.write_text(json.dumps(rec, indent=2))
+        atomic_write_json(self.path, rec)
         if self.journal:
             self.journal.append("human", "KILL_SWITCH_REARMED", rec)
 
@@ -111,33 +116,44 @@ class PositionManager:
     # -- persistence -----------------------------------------------------------
 
     def _load_targets(self) -> dict[str, dict]:
-        try:
-            raw = json.loads(self._targets_path.read_text())
-        except Exception:
-            return {}
-        out: dict[str, dict] = {}
-        for sym, t in raw.items():
-            out[sym] = {
-                "stop": Decimal(t["stop"]) if t.get("stop") else None,
-                "target": Decimal(t["target"]) if t.get("target") else None,
-                "time_exit": (datetime.fromisoformat(t["time_exit"])
-                              if t.get("time_exit") else None),
-                "entry": Decimal(t["entry"]) if t.get("entry") else None,
-            }
-        return out
+        def validate(raw) -> dict[str, dict]:
+            if not isinstance(raw, dict):
+                raise StateCorrupt(
+                    f"{self._targets_path}: exit targets must be an object")
+            out: dict[str, dict] = {}
+            try:
+                for symbol, target in raw.items():
+                    if not isinstance(symbol, str) or not isinstance(target, dict):
+                        raise ValueError("each target must map a symbol to an object")
+                    out[symbol] = {
+                        "stop": (Decimal(target["stop"])
+                                 if target.get("stop") else None),
+                        "target": (Decimal(target["target"])
+                                   if target.get("target") else None),
+                        "time_exit": (datetime.fromisoformat(target["time_exit"])
+                                      if target.get("time_exit") else None),
+                        "entry": (Decimal(target["entry"])
+                                  if target.get("entry") else None),
+                    }
+            except Exception as exc:
+                raise StateCorrupt(
+                    f"{self._targets_path}: invalid exit targets: {exc}") from exc
+            return out
+
+        return read_json(self._targets_path, default={}, validate=validate)
 
     def _save_targets(self) -> None:
-        try:
-            self._targets_path.write_text(json.dumps({
-                sym: {
-                    "stop": str(t["stop"]) if t.get("stop") is not None else None,
-                    "target": str(t["target"]) if t.get("target") is not None else None,
-                    "time_exit": (t["time_exit"].isoformat()
-                                  if t.get("time_exit") else None),
-                    "entry": str(t["entry"]) if t.get("entry") is not None else None,
-                } for sym, t in self._targets.items()}, indent=2))
-        except Exception as exc:      # bookkeeping must never stop trading
-            log.warning("could not persist exit targets: %s", exc)
+        atomic_write_json(self._targets_path, {
+            symbol: {
+                "stop": str(target["stop"])
+                if target.get("stop") is not None else None,
+                "target": str(target["target"])
+                if target.get("target") is not None else None,
+                "time_exit": (target["time_exit"].isoformat()
+                              if target.get("time_exit") else None),
+                "entry": str(target["entry"])
+                if target.get("entry") is not None else None,
+            } for symbol, target in self._targets.items()})
 
     def register(self, symbol: str, *, stop=None, target=None, time_exit=None,
                  entry_price: Decimal | None = None) -> None:

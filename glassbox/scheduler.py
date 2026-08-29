@@ -28,6 +28,7 @@ from . import config as C
 from . import env
 from .macro import MEASUREMENT_ET
 from .manage import measurement_countdown
+from .state import StateCorrupt, StateError, atomic_write_json, read_json
 
 log = logging.getLogger("glassbox.scheduler")
 
@@ -69,6 +70,7 @@ class Agent:
         self.manager = manager
         self.strategies = strategies
         self.thesis = thesis
+        self._state_faulted = False
         self.scheduler = BackgroundScheduler(
             timezone="UTC", job_defaults=JOB_DEFAULTS)
         # Persisted, not in-memory. An in-memory set is empty after any
@@ -82,10 +84,20 @@ class Agent:
     # -- catalyst de-duplication -----------------------------------------------
 
     def _load_positioned(self) -> set[str]:
-        try:
-            data = json.loads(self._positioned_path.read_text())
-        except Exception:
-            return set()
+        def validate(raw) -> dict:
+            valid = (isinstance(raw, dict)
+                     and isinstance(raw.get("day"), str)
+                     and isinstance(raw.get("keys"), list)
+                     and all(isinstance(key, str) for key in raw["keys"]))
+            if not valid:
+                raise StateCorrupt(
+                    f"{self._positioned_path}: invalid positioned state")
+            return raw
+
+        data = read_json(
+            self._positioned_path, default={
+                "day": datetime.now(C.ET).date().isoformat(), "keys": []},
+            validate=validate)
         # Scoped to the trading day: a catalyst traded yesterday must not block
         # a different one today.
         if data.get("day") != datetime.now(C.ET).date().isoformat():
@@ -94,12 +106,9 @@ class Agent:
 
     def _mark_positioned(self, key: str) -> None:
         self._positioned_for.add(key)
-        try:
-            self._positioned_path.write_text(json.dumps({
-                "day": datetime.now(C.ET).date().isoformat(),
-                "keys": sorted(self._positioned_for)}, indent=2))
-        except Exception as exc:      # never let bookkeeping stop trading
-            log.warning("could not persist positioned-for set: %s", exc)
+        atomic_write_json(self._positioned_path, {
+            "day": datetime.now(C.ET).date().isoformat(),
+            "keys": sorted(self._positioned_for)})
 
     # -- safety wrapper --------------------------------------------------------
 
@@ -107,6 +116,13 @@ class Agent:
         def wrapped():
             try:
                 fn()
+            except StateError as exc:
+                self._state_faulted = True
+                log.exception("%s failed closed on durable state", name)
+                self.journal.append("scheduler", "STATE_FAULT_LATCHED", {
+                    "job": name, "error": str(exc),
+                    "impact": "new entries disabled; management continues"})
+                discord(f":rotating_light: glassbox state fault in `{name}`: {exc}")
             except Exception as exc:
                 log.exception("%s failed", name)
                 self.journal.append("scheduler", "JOB_FAILED",
@@ -121,7 +137,8 @@ class Agent:
         state = self.broker.reconcile(kill_switch_tripped=self.manager.kill.tripped)
         self.manager.tick(state)
 
-        if self.manager.kill.tripped or not state.market_open:
+        if (getattr(self, "_state_faulted", False)
+                or self.manager.kill.tripped or not state.market_open):
             return
 
         for name, strategy in self.strategies.items():
@@ -159,7 +176,7 @@ class Agent:
         state = self.broker.reconcile(kill_switch_tripped=self.manager.kill.tripped)
         self.manager.tick(state)
 
-        if self.manager.kill.tripped:
+        if getattr(self, "_state_faulted", False) or self.manager.kill.tripped:
             return
 
         strategy = self.strategies.get("crypto")

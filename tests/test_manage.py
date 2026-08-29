@@ -231,3 +231,13 @@ def test_every_exit_is_journalled_with_its_reason(mgr, journal):
     assert "expiry close-out" in entry["payload"]["reason"]
     ok, why = journal.verify()
     assert ok, why
+
+
+def test_corrupt_exit_targets_stop_manager_construction(tmp_path, journal):
+    targets = tmp_path / "targets.json"
+    targets.write_text('{"SPY": {"stop": ["not", "decimal"]}}',
+                       encoding="utf-8")
+    kill = KillSwitch(tmp_path / "kill.json", journal)
+
+    with pytest.raises(RuntimeError, match="targets"):
+        PositionManager(FakeBroker(), journal, kill, targets_path=targets)
