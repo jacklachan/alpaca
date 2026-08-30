@@ -1,8 +1,8 @@
 PYTHON ?= python
 
-.PHONY: verify format-check lint type test kernel crash env-parity compile dashboard-check
+.PHONY: verify format-check lint type test kernel crash env-parity compile dashboard-check notices
 
-verify: format-check lint type test kernel crash env-parity compile dashboard-check
+verify: format-check lint type test kernel crash env-parity compile dashboard-check notices
 
 format-check:
 	$(PYTHON) -m ruff format --check .
@@ -31,3 +31,6 @@ compile:
 
 dashboard-check:
 	$(PYTHON) -m pytest tests/test_dashboard.py -q
+
+notices:
+	$(PYTHON) tools/build_notices.py --check

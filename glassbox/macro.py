@@ -89,9 +89,24 @@ CALENDAR: tuple[MacroEvent, ...] = (
 #      the specific settlement concern that pushed us out to later expiries.
 #      We still close at 14:30 ET (OPTION_FORCE_CLOSE_ET) rather than rely on
 #      it, because a realised close is worth more than a settlement promise.
+# Re-verified 30 Aug against the archived guidelines document itself, because
+# the public event page shows only the 4 September deadline and a reference
+# audit therefore recorded this cutoff as unconfirmed. The document carries
+# both dates, and they describe the same number rather than disagreeing:
+#
+#   "The measurement window ends at 9:30 a.m. ET on Friday, September 4, when
+#    a snapshot of total account equity will be taken."
+#
+# The market is shut between Thursday's close and that Friday snapshot, so
+# equity at EOD Thursday Sep 3 is the equity the snapshot photographs. Taking
+# the earlier of the two as the operative deadline is both correct and the
+# conservative reading: it means stop taking risk by Thursday's close.
 MEASUREMENT_ET = _et(2026, 9, 3, 16, 0)
 MEASUREMENT_IS_CONFIRMED = True
-MEASUREMENT_SOURCE = "Alpaca official guidelines doc, 'Timeline' and FAQ rows"
+MEASUREMENT_SOURCE = (
+    "Alpaca official guidelines doc, 'Timeline' and FAQ rows; "
+    "re-verified against the archived document 2026-08-30"
+)
 
 # Alpaca stops accepting options orders at 15:30 ET on expiration day.
 OPTION_ORDER_CUTOFF_ET = (15, 30)
