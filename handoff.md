@@ -1,11 +1,16 @@
 # Alpaca Hackathon Implementation Handoff
 
-**Prepared:** 2026-08-30  
-**Repository:** `C:\Users\Utkarsh\Desktop\Project\Trading\alpaca`  
-**Branch:** `review`  
-**Starting point:** `f2d25c7`  
+**Prepared:** 2026-08-30
+
+**Repository:** `C:\Users\Utkarsh\Desktop\Project\Trading\alpaca`
+
+**Branch:** `review`
+
+**Starting point:** `f2d25c7`
+
 **Completed implementation checkpoint:**
-`3fac4c60b127aae196d0c44fec7b0536712d5f80`  
+`3fac4c60b127aae196d0c44fec7b0536712d5f80`
+
 **Remote state at checkpoint:** local `review` was 11 commits ahead of
 `origin/review`; nothing was pushed or merged
 
@@ -253,8 +258,8 @@ git rev-parse HEAD
 ```
 
 Expected after this handoff is committed: branch `review`, clean working tree,
-with the handoff documentation commit at `HEAD` and implementation checkpoint
-`3fac4c60b127aae196d0c44fec7b0536712d5f80` immediately below it.
+with documentation-only handoff commits at `HEAD` and implementation checkpoint
+`3fac4c60b127aae196d0c44fec7b0536712d5f80` reachable directly beneath them.
 
 ### Re-run the target-runtime proof
 

@@ -1,8 +1,11 @@
 # Alpaca Hackathon — Options-Only Proof-First Master Plan
 
-**Status date:** 2026-08-30  
-**Repository:** `C:\Users\Utkarsh\Desktop\Project\Trading\alpaca`  
-**Branch:** `review`  
+**Status date:** 2026-08-30
+
+**Repository:** `C:\Users\Utkarsh\Desktop\Project\Trading\alpaca`
+
+**Branch:** `review`
+
 **Approved direction:** Approach A — proof-first, options-only scored execution with bounded AI
 
 This is the execution-level status document for the approved design. The detailed
