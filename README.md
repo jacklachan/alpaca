@@ -209,6 +209,11 @@ ledger checksums, dependency pinning, and whether the CLI/MCP proof bundles
 exist. A `SKIP` means the evidence does not exist yet - it is never a waived
 check. The same command runs in CI on every commit.
 
+## Operations
+
+`docs/OPERATIONS.md` is the runbook: exit codes, what each latch means,
+how to capture integration evidence, and what not to do to a state file.
+
 ## Submission write-up
 
 `docs/WRITEUP.md` is the one-page write-up covering AI logic, risk gates, and
