@@ -20,6 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
+from types import SimpleNamespace
 
 from .. import config as C
 from ..candidates import (
@@ -255,6 +256,24 @@ class EventVolStrategy:
             return []
 
         premium = pair_cost * qty
+
+        # Read the surface before committing. Greeks are supplementary rather
+        # than primary -- quote validation, exact max loss and the kernel are
+        # the hard gates -- but when the venue does publish them, a position
+        # that is not net long gamma and vega, or whose decay outruns the
+        # event, is refused here rather than discovered afterwards.
+        #
+        # When Greeks are absent the candidate is not blocked. Refusing to
+        # trade whenever Alpaca omits a surface would convert missing data
+        # into a permanent outage, and the primary gates still apply. The
+        # absence is recorded in the evidence either way.
+        surface_evidence, surface_refusal = self._surface_assessment(
+            call, put, qty=qty, premium=premium, spot=spot
+        )
+        if surface_refusal is not None:
+            self._journal_surface_refusal(event, surface_refusal)
+            return []
+
         return [
             TradePlan(
                 sleeve="convex",
@@ -285,6 +304,7 @@ class EventVolStrategy:
                     f"event_premium_vol_pts={choice.event_premium_vol_pts:+.4f}",
                     f"spot={spot} call_strike={call.strike} put_strike={put.strike}",
                     f"premium_at_risk={premium} max_loss={premium}",
+                    *surface_evidence,
                 ),
                 confidence=0.6,
                 candidate_schema_version=CANDIDATE_SCHEMA_VERSION,
@@ -292,6 +312,58 @@ class EventVolStrategy:
                 quote_snapshots=(call.quote_snapshot, put.quote_snapshot),
             )
         ]
+
+    def _surface_assessment(
+        self, call, put, *, qty: int, premium: Decimal, spot: Decimal
+    ) -> tuple[tuple[str, ...], object | None]:
+        """Assess the option surface. Returns (evidence, refusal_or_None)."""
+        gateway = getattr(self.data, "options", None)
+        fetch = getattr(gateway, "option_surface", None)
+        if fetch is None:
+            return (("option_surface=unavailable (no gateway)",), None)
+
+        try:
+            surface = fetch(self.underlying, [call.symbol, put.symbol])
+        except Exception as exc:
+            return ((f"option_surface=unavailable ({type(exc).__name__})",), None)
+
+        if not surface:
+            return (("option_surface=unavailable (venue published no greeks)",), None)
+
+        from ..greeks import assess_long_convexity
+
+        legs = (
+            SimpleNamespace(symbol=call.symbol, side="buy", qty=qty),
+            SimpleNamespace(symbol=put.symbol, side="buy", qty=qty),
+        )
+        verdict = assess_long_convexity(
+            legs,
+            surface,
+            premium_paid=premium,
+            spot=spot,
+            contracts=Decimal(qty),
+        )
+        if not verdict.approved:
+            return (tuple(verdict.evidence), verdict)
+        return (tuple(f"surface: {line}" for line in verdict.evidence), None)
+
+    def _journal_surface_refusal(self, event, verdict) -> None:
+        journal = getattr(self.data, "journal", None)
+        if journal is None:
+            return
+        try:
+            journal.append(
+                "strategy.event_vol",
+                "CANDIDATE_SURFACE_REFUSED",
+                {
+                    "underlying": self.underlying,
+                    "event": getattr(event, "name", ""),
+                    "reason": verdict.reason,
+                    "position": verdict.position.as_dict() if verdict.position else None,
+                },
+            )
+        except Exception:  # pragma: no cover - evidence must not break a tick
+            pass
 
     @staticmethod
     def _nearest(legs: list[ChainLeg], right: str, target: Decimal) -> ChainLeg | None:

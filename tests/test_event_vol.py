@@ -187,6 +187,32 @@ def chain_for(exp: date, *, verified: bool = True) -> dict[date, list[ChainLeg]]
     return {exp: legs}
 
 
+def _propose(option_surface=None, journal=None):
+    """Propose through the real strategy, optionally with a surface source.
+
+    Mirrors how MarketData exposes the gateway, so the wiring under test is
+    the wiring that runs.
+    """
+    from types import SimpleNamespace
+
+    data = None
+    if option_surface is not None or journal is not None:
+        data = SimpleNamespace(
+            options=SimpleNamespace(option_surface=option_surface) if option_surface else None,
+            journal=journal,
+        )
+    strategy = EventVolStrategy(data=data)
+    return strategy.propose(
+        now=WED,
+        spot=SPOT,
+        iv_vs_rv=Decimal("1.05"),
+        expiry_candidates=FLAT,
+        chain=chain_for(date(2026, 9, 4)),
+        measurement=MEASUREMENT_ET,
+        remaining_budget=Decimal("18000"),
+    )
+
+
 def test_proposes_a_strangle_into_the_catalyst():
     s = EventVolStrategy()
     plans = s.propose(
@@ -378,3 +404,71 @@ def test_the_event_plan_is_approved_by_the_kernel():
     verdict = RiskKernel().review(plan, state)
     assert verdict.approved, verdict.reason
     assert verdict.checks_passed == 13
+
+
+# -- option-surface gating -----------------------------------------------------
+
+
+def test_a_candidate_records_that_no_surface_was_published(monkeypatch):
+    """Missing Greeks must not silently look like healthy Greeks."""
+    plans = _propose()
+    assert plans, "fixture produced no candidate"
+    assert any("option_surface=unavailable" in e for e in plans[0].evidence)
+
+
+def test_a_surface_that_is_net_short_gamma_refuses_the_candidate(monkeypatch):
+    """The venue says this 'strangle' is short gamma. It is not the trade the
+    thesis describes, so it is refused before an order exists."""
+    from decimal import Decimal as D
+
+    from glassbox.greeks import LegGreeks
+
+    def bad_surface(underlying, symbols):
+        return {
+            s: LegGreeks(
+                symbol=s,
+                delta=D("0.3") if "C" in s[-9:] else D("-0.3"),
+                gamma=D("-0.05"),
+                theta=D("-0.10"),
+                vega=D("0.40"),
+                implied_volatility=D("0.40"),
+            )
+            for s in symbols
+        }
+
+    plans = _propose(option_surface=bad_surface)
+    assert plans == [], "a short-gamma strangle was proposed"
+
+
+def test_a_healthy_surface_is_recorded_as_evidence():
+    from decimal import Decimal as D
+
+    from glassbox.greeks import LegGreeks
+
+    def good_surface(underlying, symbols):
+        return {
+            s: LegGreeks(
+                symbol=s,
+                delta=D("0.30") if "C" in s[-9:] else D("-0.28"),
+                gamma=D("0.02"),
+                theta=D("-0.05"),
+                vega=D("0.40"),
+                implied_volatility=D("0.35"),
+            )
+            for s in symbols
+        }
+
+    plans = _propose(option_surface=good_surface)
+    assert plans, "a healthy surface blocked the candidate"
+    assert any(e.startswith("surface: net delta") for e in plans[0].evidence)
+
+
+def test_a_surface_lookup_that_raises_does_not_block_trading():
+    """A data outage must cost evidence, not the whole strategy."""
+
+    def broken(underlying, symbols):
+        raise RuntimeError("option chain unavailable")
+
+    plans = _propose(option_surface=broken)
+    assert plans, "a surface outage stopped the agent trading"
+    assert any("option_surface=unavailable (RuntimeError)" in e for e in plans[0].evidence)
