@@ -68,7 +68,7 @@ separate, development-account connectivity proof only.
 | A | Preserve and attest Approach A boundary | Complete | Audit focus suite: 43 passed on 2026-08-30 |
 | B | Candidate provenance and canonical manifest | Complete | 56 focused and 257 full locked tests; committed rollback boundary |
 | C | Typed Alpaca failures and ambiguity discipline | Complete | 42 focused, 83 boundary-regression, and 267 full locked tests |
-| D | Pure order-lifecycle reducer | Complete | 48 focused and 92 boundary-regression tests; pure reducer integrated |
+| D | Pure order-lifecycle reducer | Complete | 48 focused, 92 boundary-regression, and 276 full locked tests |
 | E | Strategy-owned ledger and restart-safe exits | Pending | Begins only after lifecycle semantics stabilize |
 | G | Release/account/evidence manifest | Pending | Built on stable candidate, lifecycle, and state schemas |
 | H | Genuine read-only Alpaca CLI proof | Pending external executable/profile proof | No CLI integration claim until captured evidence exists |
@@ -310,6 +310,7 @@ Run every item from a cleanly understood working tree and record the output in
 
 - Lifecycle/executor/broker focus: `48 passed`.
 - Lifecycle through scheduler/state/kernel regression: `92 passed`.
+- Full exact-lock Python 3.12 suite: `276 passed`.
 - Ruff format/lint and mypy (34 source files) passed.
 - Cancel uncertainty now raises the durable `ExecutionStateUncertain` fault
   instead of returning while a venue entry order may remain live.
