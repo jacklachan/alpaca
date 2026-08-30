@@ -5,7 +5,7 @@
 **Last verified commit:** `feeacf108fb52d9896cdcdfa5feb3bb944df1eb1` (CI green,
 run 33311898521; a later docs commit may update this file itself)
 **Starting point for this session:** `eea74d0` (Task B, candidate provenance)
-**Verification:** `make verify` exits 0; **395 tests pass**; crash drill 13/13;
+**Verification:** `make verify` exits 0; **458 tests pass**; crash drill 13/13;
 GitHub Actions green (both `Tests and drills` and `Competition guards`)
 
 This session continued the audit-derived backlog in
@@ -80,6 +80,11 @@ Each item is one commit and one rollback boundary.
 | `73d2307` | K | Notices gate in `make verify`; measurement date closed |
 | `74e6b90` | - | This handoff |
 | `feeacf1` | - | Test fixtures no longer trip CI's credential scan |
+| `1ba0eea` | 5.1/5.2 | Ledger + release gate connected to the scored path |
+| `ed03442` | - | Equity performance metrics and decision-lineage UX |
+| `592cbf2` | 5.5 | CI actions SHA-pinned; `.gitattributes` |
+| `d71bbc4` | F | Trade-update stream (hint only, unwired) |
+| `af12646` | - | Required one-page submission write-up |
 
 ### C -- typed Alpaca failures (`glassbox/broker.py`, `glassbox/execute.py`)
 
@@ -181,26 +186,21 @@ window closes Friday 4 September 09:30 ET.
 
 ## 5. Next task, in dependency order
 
-1. **Wire the ledger into the scored path.** `PositionManager` accepts
-   `ledger=`/`ledger_path=` but `main.py:68` still constructs it without one,
-   so the scored account would still take the development symbol-wide close.
-   Build the ledger at startup, feed `record_entry_fill` from confirmed
-   executor fills, and call `reconcile()` in the scheduler's pre-entry gate so
-   a fault blocks new entries. This is the highest-value remaining change.
-2. **Gate scored start on the release manifest.** `assert_scored_startable()`
-   exists and is tested but nothing calls it. Add `GLASSBOX_RELEASE_GATE=1`
-   handling in `main.py`.
-3. **Task F, trade-update stream** (`glassbox/trade_stream.py`) -- Should, and
-   explicitly only after polling/restart correctness is proven. REST stays
+Items 1, 2, 3 and 5 from the previous handoff are done. What remains:
+
+1. **Capture real CLI proof.** This is the highest-value remaining item and
+   the only one touching a stated event requirement ("projects must utilize
+   either Alpaca's MCP server or its CLI tools"). The tool is built, allowlisted
+   and tested, but has never run against the real binary. Pin a reviewed CLI
+   release, run `tools/capture_alpaca_proof.py`, and archive the bundle.
+2. **Wire the trade stream in, behind its flag.** `glassbox/trade_stream.py`
+   is complete and tested but deliberately not attached to the scheduler. Only
+   attach after a paper soak proves the polling path, and keep REST
    authoritative.
-4. **Evidence UX** -- the read-only proof drawer showing candidate -> select or
-   abstain -> kernel -> intent -> lifecycle -> reconciliation.
-5. **Pin GitHub Actions by SHA.** `.github/workflows/ci.yml` still uses
-   `@v4`/`@v5` tags. Deliberately not guessed here; resolve the real digests.
-   GitHub also warns on every run that `actions/checkout@v4` and
-   `actions/setup-python@v5` target deprecated Node 20 and are being forced
-   onto Node 24. It is a warning, not a failure, and bumping to current major
-   versions resolves it at the same time as the pinning.
+3. **Feed the stream/ledger from live fills during soak**, then confirm the
+   ledger's venue reconciliation against a real account.
+4. **Submission assets** the repository cannot produce: video, slide deck,
+   cover image, demo URL, and the social posts.
 
 ## 6. Open gates -- do not close these on your own authority
 
@@ -226,7 +226,7 @@ Run on Python 3.13.12 via `.venv-mac`. **Re-run on 3.12 before release.**
 ruff format --check .                72 files already formatted
 ruff check .                         All checks passed
 mypy glassbox dashboard tools main.py  Success: no issues in 38 source files
-pytest -q                            395 passed
+pytest -q                            458 passed
 pytest tests/test_kernel.py -q       33 passed
 tools/crash_drill.py -n 8 --seed 1   DRILL PASSED 13/13
 tools/env_parity.py .env.example     PARITY OK, 9 variables
@@ -250,6 +250,8 @@ has never run against an account.
 glassbox/
   broker.py           Alpaca boundary, typed failures, identity, reconciliation
   order_lifecycle.py  pure reducer over observed order states
+  performance.py      equity metrics, caveated by sample size
+  trade_stream.py     optional latency hint; REST wins (unwired)
   position_ledger.py  per-contract ownership, exact venue reconciliation
   release.py          release/account identity manifest
   candidates.py       canonical candidate sets, manifests, selection receipts
@@ -261,6 +263,8 @@ glassbox/
 tools/capture_alpaca_proof.py  read-only CLI evidence capture
 tools/build_notices.py         regenerates THIRD_PARTY_NOTICES.md
 ```
+
+Submission write-up: `docs/WRITEUP.md` (claims enforced by tests).
 
 Governing plan: `GLASSBOX-REFERENCE-MASTER-PLAN.md` (Tasks B-K).
 Approved design: `docs/superpowers/`.
