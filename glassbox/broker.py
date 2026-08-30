@@ -14,6 +14,7 @@ Three things this file exists to guarantee:
 from __future__ import annotations
 
 import logging
+import random
 import threading
 import time
 from datetime import date, datetime, timezone
@@ -86,22 +87,139 @@ class TokenBucket:
             time.sleep(min(wait, 1.0))
 
 
-_RETRYABLE = (
-    "429",
-    "500",
-    "502",
-    "503",
-    "504",
+# -- typed failure classification ---------------------------------------------
+#
+# The distinction this section exists to protect: "the venue answered, and that
+# order does not exist" is a fact. "We could not reach the venue" is an absence
+# of information. Collapsing the second into the first is what lets a caller
+# conclude an order was never placed when it may be live and filling.
+
+
+class BrokerError(RuntimeError):
+    """Base for a classified Alpaca failure."""
+
+    #: Safe to retry, but only for an idempotent operation.
+    retryable = False
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        retry_after: float | None = None,
+    ):
+        super().__init__(message)
+        self.status_code = status_code
+        self.retry_after = retry_after
+
+
+class OrderNotFound(BrokerError):
+    """Verified absence: the venue responded 404. The order does not exist."""
+
+
+class BrokerAuthError(BrokerError):
+    """401/403. Terminal -- the same credentials cannot succeed on a retry."""
+
+
+class BrokerValidationError(BrokerError):
+    """400/422. Terminal -- the request itself was refused."""
+
+
+class BrokerRateLimited(BrokerError):
+    """429. Retryable for idempotent operations, honouring Retry-After."""
+
+    retryable = True
+
+
+class BrokerUnavailable(BrokerError):
+    """5xx, connection failure, or timeout. Retryable for idempotent reads."""
+
+    retryable = True
+
+
+class BrokerUnknownState(BrokerError):
+    """Unclassifiable or malformed. Never retried, never read as absence."""
+
+
+MAX_BACKOFF_SECONDS = 8.0
+
+_NOT_FOUND_MARKERS = ("not found", "does not exist")
+_UNAVAILABLE_MARKERS = (
     "timeout",
     "timed out",
     "connection",
+    "connect",
+    "network",
+    "unreachable",
+    "reset by peer",
     "temporarily",
+    "unavailable",
 )
 
 
+def _is_api_error(exc: Exception) -> bool:
+    """True for an Alpaca APIError, i.e. the venue answered with an error."""
+    return any(base.__name__ == "APIError" for base in type(exc).__mro__)
+
+
+def _status_code_of(exc: Exception) -> int | None:
+    """APIError.status_code is None unless an HTTP error was attached."""
+    try:
+        code = getattr(exc, "status_code", None)
+    except Exception:  # a property that raises is not a status code
+        return None
+    return code if isinstance(code, int) else None
+
+
+def _retry_after_of(exc: Exception) -> float | None:
+    try:
+        response = getattr(exc, "response", None)
+        headers = getattr(response, "headers", None) or {}
+        raw = headers.get("Retry-After")
+    except Exception:
+        return None
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def classify_broker_error(exc: Exception) -> BrokerError:
+    """Map any exception raised by the SDK onto exactly one typed outcome.
+
+    Anything that cannot be positively identified becomes BrokerUnknownState,
+    which is neither retryable nor absence. Unknown fails closed.
+    """
+    if isinstance(exc, BrokerError):
+        return exc
+
+    text = str(exc).lower()
+    code = _status_code_of(exc)
+    detail = str(exc)
+
+    if code == 404:
+        return OrderNotFound(detail, status_code=404)
+    # An APIError carrying a not-found message is still the venue answering,
+    # even when no HTTP response object was attached to it.
+    if code is None and _is_api_error(exc) and any(m in text for m in _NOT_FOUND_MARKERS):
+        return OrderNotFound(detail)
+    if code in (401, 403):
+        return BrokerAuthError(detail, status_code=code)
+    if code in (400, 422):
+        return BrokerValidationError(detail, status_code=code)
+    if code == 429:
+        return BrokerRateLimited(detail, status_code=429, retry_after=_retry_after_of(exc))
+    if code is not None and 500 <= code <= 599:
+        return BrokerUnavailable(detail, status_code=code)
+    if code is None and any(m in text for m in _UNAVAILABLE_MARKERS):
+        return BrokerUnavailable(detail)
+    return BrokerUnknownState(detail, status_code=code)
+
+
 def _is_retryable(exc: Exception) -> bool:
-    s = str(exc).lower()
-    return any(t in s for t in _RETRYABLE)
+    return classify_broker_error(exc).retryable
 
 
 class Broker:
@@ -148,21 +266,39 @@ class Broker:
 
     # -- plumbing --------------------------------------------------------------
 
-    def _call(self, fn: Callable[[], T], what: str, attempts: int = 4) -> T:
-        """Rate-limited, retried with backoff. Never retries a submit -- see
-        `submit` for why that would be unsafe without idempotency."""
-        last: Exception | None = None
+    def _call(
+        self,
+        fn: Callable[[], T],
+        what: str,
+        attempts: int = 4,
+        *,
+        idempotent: bool = True,
+    ) -> T:
+        """Rate-limited, with bounded jittered backoff.
+
+        Retries are for idempotent operations only. A non-idempotent call is
+        classified and re-raised on its first failure: replaying a mutation
+        whose outcome is unknown is how one intent becomes two orders. Submit
+        does not come through here at all -- see `submit`.
+        """
+        last: BrokerError | None = None
         for i in range(attempts):
             if not self.bucket.take():
                 raise RuntimeError(f"rate limit budget exhausted calling {what}")
             try:
                 return fn()
             except Exception as exc:
-                last = exc
-                if not _is_retryable(exc) or i == attempts - 1:
-                    raise
-                wait = 2**i
-                log.warning("%s failed (%s), retrying in %ss", what, exc, wait)
+                error = classify_broker_error(exc)
+                last = error
+                if not idempotent or not error.retryable or i == attempts - 1:
+                    raise error from exc
+                wait = min(2.0**i, MAX_BACKOFF_SECONDS)
+                if error.retry_after is not None:
+                    wait = min(max(error.retry_after, 0.0), MAX_BACKOFF_SECONDS)
+                # Jitter so that several loops recovering from one 429 do not
+                # resynchronise and reproduce the burst that caused it.
+                wait = random.uniform(wait / 2.0, wait) if wait > 0 else 0.0
+                log.warning("%s failed (%s), retrying in %.2fs", what, error, wait)
                 time.sleep(wait)
         if last is None:  # pragma: no cover - the loop always runs at least once
             raise RuntimeError(f"no attempt made calling {what}")
@@ -538,13 +674,19 @@ class Broker:
         return order
 
     def get_order_by_coid(self, coid: str):
+        """Return the order, or None only when the venue verified its absence.
+
+        Every other failure raises a typed BrokerError. A caller that cannot
+        distinguish "no such order" from "could not ask" will eventually submit
+        a second order for an intent that already has one.
+        """
         try:
             return self._call(
                 lambda: self.trading.get_order_by_client_id(coid),
                 "get_order_by_client_id",
-                attempts=2,
+                attempts=3,
             )
-        except Exception:
+        except OrderNotFound:
             return None
 
     def cancel(self, order_id: str) -> None:
@@ -570,8 +712,18 @@ class Broker:
 
         deadline = time.monotonic() + timeout
         last_status = "not_found"
+        lookup_error: str | None = None
         while True:
-            order = self.get_order_by_coid(client_order_id)
+            try:
+                order = self.get_order_by_coid(client_order_id)
+            except BrokerError as exc:
+                # Could not ask. That is not evidence of cancellation, so keep
+                # polling and let the deadline decide.
+                lookup_error = str(exc)
+                last_status = "unknown"
+                order = None
+            else:
+                lookup_error = None
             if order is not None:
                 last_status = _order_status(order)
                 if last_status in _TERMINAL_ORDER_STATES:
@@ -593,6 +745,7 @@ class Broker:
                     "client_order_id": client_order_id,
                     "last_status": last_status,
                     "cancel_error": cancel_error,
+                    "lookup_error": lookup_error,
                 }
                 self._log("broker", "ORDER_CANCEL_UNCERTAIN", detail)
                 raise OrderStateUncertain(
@@ -602,6 +755,10 @@ class Broker:
             time.sleep(poll_seconds)
 
     def close_position(self, symbol: str) -> Any:
-        order = self._call(lambda: self.trading.close_position(symbol), "close_position")
+        order = self._call(
+            lambda: self.trading.close_position(symbol),
+            "close_position",
+            idempotent=False,
+        )
         self._log("broker", "POSITION_CLOSED", {"symbol": symbol})
         return order

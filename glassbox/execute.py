@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from . import config as C
+from .broker import BrokerError
 from .ids import client_order_id
 from .schema import TradePlan, Verdict
 
@@ -139,12 +140,14 @@ class ExecutionEngine:
         poll_seconds: float = 3.0,
         fill_wait_seconds: float = 45.0,
         max_reprice: int = 2,
+        unknown_lookup_tolerance: int = 3,
     ):
         self.broker = broker
         self.journal = journal
         self.poll_seconds = poll_seconds
         self.fill_wait_seconds = fill_wait_seconds
         self.max_reprice = max_reprice
+        self.unknown_lookup_tolerance = unknown_lookup_tolerance
 
     # -- entry point -----------------------------------------------------------
 
@@ -537,12 +540,37 @@ class ExecutionEngine:
         if not legs:
             return
         deadline = time.monotonic() + self.fill_wait_seconds
+        unknown: dict[str, int] = {}
         while time.monotonic() < deadline:
             pending = False
             for r in legs:
                 if r.complete or r.order_state_uncertain or not r.client_order_id:
                     continue
-                o = self.broker.get_order_by_coid(r.client_order_id)
+                try:
+                    o = self.broker.get_order_by_coid(r.client_order_id)
+                except BrokerError as exc:
+                    # We could not ask. That is not "no fill yet": the order may
+                    # be working and filling right now. Tolerate a few transient
+                    # failures, then fault the leg and stop touching it.
+                    seen = unknown[r.client_order_id] = unknown.get(r.client_order_id, 0) + 1
+                    if seen >= self.unknown_lookup_tolerance:
+                        r.order_state_uncertain = True
+                        r.status = "state_unknown"
+                        self.journal.append(
+                            "execute",
+                            "ORDER_STATE_UNKNOWN",
+                            {
+                                "symbol": r.symbol,
+                                "client_order_id": r.client_order_id,
+                                "broker_order_id": r.broker_order_id,
+                                "consecutive_failures": seen,
+                                "error": str(exc),
+                            },
+                        )
+                    else:
+                        pending = True
+                    continue
+                unknown.pop(r.client_order_id, None)
                 if o is None:
                     pending = True
                     continue

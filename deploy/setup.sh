@@ -7,7 +7,7 @@ if [[ $# -ne 1 || ! "$1" =~ ^[0-9a-fA-F]{40}$ ]]; then
   exit 64
 fi
 
-REVIEWED_SHA="${1,,}"
+REVIEWED_SHA="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
 APP="${GLASSBOX_APP:-/opt/glassbox}"
 REPO_DIR="$APP/repo"
 REPO_URL="${GLASSBOX_REPO_URL:-https://github.com/jacklachan/alpaca.git}"

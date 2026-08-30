@@ -143,3 +143,129 @@ def test_cancel_and_confirm_accepts_terminal_state_after_cancel_error():
     final = broker.cancel_and_confirm("broker-1", "client-1", timeout=0.1, poll_seconds=0)
 
     assert final.status == "canceled"
+
+
+# -- typed failure classification (Task C) ------------------------------------
+
+
+def _api_error(message: str, status: int | None = None, retry_after: str | None = None):
+    """Build a real alpaca APIError with an attached HTTP response."""
+    from alpaca.common.exceptions import APIError
+
+    if status is None:
+        return APIError(message)
+    headers = {} if retry_after is None else {"Retry-After": retry_after}
+    http_error = SimpleNamespace(
+        response=SimpleNamespace(status_code=status, headers=headers),
+        request=None,
+    )
+    return APIError(message, http_error)
+
+
+def _lookup_broker(raiser):
+    """A Broker whose only wired behaviour is get_order_by_client_id."""
+    broker = Broker.__new__(Broker)
+    broker.journal = None
+    broker.trading = SimpleNamespace(get_order_by_client_id=raiser)
+    broker.bucket = broker_module.TokenBucket(rate_per_min=10_000)
+    broker._log = lambda actor, event, payload: None
+    return broker
+
+
+def test_get_order_by_client_id_returns_absent_only_for_verified_not_found():
+    def not_found(coid):
+        raise _api_error('{"code":40410000,"message":"order not found"}', status=404)
+
+    assert _lookup_broker(not_found).get_order_by_coid("client-1") is None
+
+
+@pytest.mark.parametrize(
+    ("exc_factory", "expected"),
+    [
+        (lambda: _api_error("unauthorized", status=401), broker_module.BrokerAuthError),
+        (lambda: _api_error("forbidden", status=403), broker_module.BrokerAuthError),
+        (lambda: _api_error("bad request", status=422), broker_module.BrokerValidationError),
+        (lambda: _api_error("slow down", status=429), broker_module.BrokerRateLimited),
+        (lambda: _api_error("server error", status=500), broker_module.BrokerUnavailable),
+        (lambda: ConnectionError("connection reset by peer"), broker_module.BrokerUnavailable),
+        (lambda: TimeoutError("read timed out"), broker_module.BrokerUnavailable),
+        (lambda: ValueError("could not decode response"), broker_module.BrokerUnknownState),
+    ],
+)
+def test_lookup_transport_error_is_unknown_not_absent(exc_factory, expected, monkeypatch):
+    """Every non-404 failure must raise. Returning None here would let a caller
+    conclude 'no such order' from 'we could not ask'."""
+    monkeypatch.setattr(broker_module.time, "sleep", lambda s: None)
+
+    def failing(coid):
+        raise exc_factory()
+
+    with pytest.raises(broker_module.BrokerError) as caught:
+        _lookup_broker(failing).get_order_by_coid("client-1")
+
+    assert isinstance(caught.value, expected)
+    assert not isinstance(caught.value, broker_module.OrderNotFound)
+
+
+def test_auth_and_validation_errors_are_terminal_non_retryable():
+    for exc in (_api_error("unauthorized", status=401), _api_error("invalid", status=422)):
+        assert broker_module.classify_broker_error(exc).retryable is False
+
+
+def test_rate_limit_and_server_errors_are_retryable():
+    for exc in (_api_error("slow down", status=429), _api_error("boom", status=500)):
+        assert broker_module.classify_broker_error(exc).retryable is True
+
+
+def test_rate_limit_classification_carries_retry_after():
+    err = broker_module.classify_broker_error(_api_error("slow down", status=429, retry_after="7"))
+    assert isinstance(err, broker_module.BrokerRateLimited)
+    assert err.retry_after == 7.0
+
+
+def test_rate_limit_retry_is_bounded_jittered_and_read_only(monkeypatch):
+    """Idempotent reads back off and retry; a non-idempotent mutation never does."""
+    sleeps: list[float] = []
+    monkeypatch.setattr(broker_module.time, "sleep", lambda s: sleeps.append(s))
+
+    broker = Broker.__new__(Broker)
+    broker.journal = None
+    broker.bucket = broker_module.TokenBucket(rate_per_min=10_000)
+
+    attempts = {"n": 0}
+
+    def flaky():
+        attempts["n"] += 1
+        if attempts["n"] < 3:
+            raise _api_error("slow down", status=429)
+        return "ok"
+
+    assert broker._call(flaky, "read", attempts=4) == "ok"
+    assert attempts["n"] == 3
+    assert len(sleeps) == 2
+    assert all(0 < s <= broker_module.MAX_BACKOFF_SECONDS for s in sleeps)
+
+    # A non-idempotent call is classified and raised on the first failure.
+    mutations = {"n": 0}
+
+    def mutating():
+        mutations["n"] += 1
+        raise _api_error("slow down", status=429)
+
+    with pytest.raises(broker_module.BrokerRateLimited):
+        broker._call(mutating, "mutate", attempts=4, idempotent=False)
+    assert mutations["n"] == 1
+
+
+def test_cancel_and_confirm_surfaces_unknown_lookup_rather_than_assuming_absent():
+    broker = Broker.__new__(Broker)
+    broker.cancel = lambda order_id: None
+    broker._log = lambda actor, event, payload: None
+
+    def unknown(coid):
+        raise broker_module.BrokerUnavailable("venue unreachable")
+
+    broker.get_order_by_coid = unknown
+
+    with pytest.raises(broker_module.OrderStateUncertain, match="client-1"):
+        broker.cancel_and_confirm("broker-1", "client-1", timeout=0.01, poll_seconds=0)

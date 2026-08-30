@@ -12,7 +12,7 @@ from decimal import Decimal
 
 import pytest
 
-from glassbox.broker import OrderStateUncertain, TokenBucket
+from glassbox.broker import BrokerUnavailable, OrderStateUncertain, TokenBucket
 from glassbox.execute import ExecutionEngine
 from glassbox.journal import Journal
 from glassbox.schema import OptionLeg, TradePlan, Verdict
@@ -400,3 +400,64 @@ def test_token_bucket_refills():
         b.take()
     t.sleep(0.25)
     assert b.take()
+
+
+# -- unknown venue state (Task C) ---------------------------------------------
+
+
+class UnknownLookupBroker(FakeBroker):
+    """A broker whose order lookup cannot answer.
+
+    This is the case that must never be read as "the order does not exist".
+    """
+
+    def __init__(self, *args, fail_submit: bool = False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fail_submit = fail_submit
+        self.lookups = 0
+
+    def submit(self, **kwargs):
+        if self.fail_submit:
+            self.submitted.append({"coid": kwargs["client_order_id"]})
+            raise TimeoutError("response lost after broker acceptance")
+        return super().submit(**kwargs)
+
+    def get_order_by_coid(self, coid):
+        self.lookups += 1
+        raise BrokerUnavailable("venue unreachable")
+
+
+def test_submit_timeout_and_failed_lookup_latches_state_and_never_retries(journal):
+    """Submit once. If the outcome cannot be established, fault -- do not
+    submit again, and do not report success."""
+    plan = single("equity")
+    broker = UnknownLookupBroker(fail_submit=True)
+
+    result = engine(broker, journal).execute(plan, APPROVED(plan))
+
+    assert not result.ok
+    assert len(broker.submitted) == 1, "an ambiguous submit was replayed"
+
+    entries = list(journal.read())
+    events = [entry["event"] for entry in entries]
+    assert "ORDER_SUBMIT_INTENT" in events
+    assert "ORDER_SUBMIT_AMBIGUOUS" in events
+    assert "ORDER_SUBMIT_RECONCILED" not in events
+
+    ambiguous = next(e for e in entries if e["event"] == "ORDER_SUBMIT_AMBIGUOUS")
+    assert ambiguous["payload"]["lookup_error"], "the real lookup failure was not recorded"
+
+
+def test_unknown_lookup_while_polling_fills_marks_the_leg_uncertain(journal):
+    """A lookup that cannot answer is not 'no fill yet'. After the tolerance is
+    spent the leg is uncertain, which blocks the residual-cancel path."""
+    plan = single("equity")
+    broker = UnknownLookupBroker(fill={plan.symbol: 0.0})
+
+    result = engine(broker, journal).execute(plan, APPROVED(plan))
+
+    assert not result.ok
+    assert "uncertain" in result.reason.lower()
+    events = [entry["event"] for entry in journal.read()]
+    assert "ORDER_STATE_UNKNOWN" in events
+    assert plan.symbol not in broker.closed, "a symbol-wide close ran on unknown state"
