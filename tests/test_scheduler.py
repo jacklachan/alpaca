@@ -426,3 +426,118 @@ def test_foreign_equity_on_the_scored_account_blocks_the_tick(tmp_path, monkeypa
     assert not offered
     reasons = [p for _, e, p in agent.journal.events if e == "POSITION_RECONCILE_FAULT"]
     assert any("SPY" in str(r) for r in reasons)
+
+
+# -- verifiable evidence: offered set and counterfactual verdicts --------------
+
+
+def test_the_offered_candidate_set_is_recorded_with_its_ids(tmp_path, monkeypatch):
+    """The set the model was allowed to choose from must be on the record, or
+    a selection naming something else is deniable rather than detectable."""
+    spy, qqq = _option("spy-a", "SPY"), _option("qqq-a", "QQQ")
+    agent, journal, _, _ = _agent(
+        tmp_path,
+        monkeypatch,
+        {"event_spy": Strategy([spy]), "event_qqq": Strategy([qqq])},
+        Thesis(qqq),
+    )
+
+    agent.equity_tick()
+
+    built = [p for _, e, p in journal.events if e == "CANDIDATE_SET_BUILT"]
+    assert len(built) == 1
+    assert built[0]["count"] == 2
+    assert set(built[0]["candidate_ids"]) == {"spy-a", "qqq-a"}
+    # These fixtures are bare TradePlans with no candidate provenance, so the
+    # manifest builder correctly refuses them -- and the refusal is recorded
+    # rather than silently degraded to an empty hash.
+    assert built[0]["manifest_unavailable"], "a manifest failure was hidden"
+    assert "schema" in built[0]["manifest_unavailable"]
+
+
+def test_an_abstention_still_records_what_was_offered(tmp_path, monkeypatch):
+    spy = _option("spy-a", "SPY")
+    agent, journal, kernel, submitted = _agent(
+        tmp_path, monkeypatch, {"event_spy": Strategy([spy])}, Thesis(None)
+    )
+
+    agent.equity_tick()
+
+    assert [e for _, e, _ in journal.events].count("CANDIDATE_SET_BUILT") == 1
+    assert submitted == []
+    # An abstention must remain a cycle in which the deciding kernel never ran.
+    assert kernel.reviewed == []
+
+
+def test_candidates_the_model_did_not_take_get_their_own_kernel_verdict(tmp_path, monkeypatch):
+    """This is the evidence that the model chose inside a pre-vetted set
+    rather than being trusted with the outcome."""
+    spy, qqq = _option("spy-a", "SPY"), _option("qqq-a", "QQQ")
+    agent, journal, kernel, submitted = _agent(
+        tmp_path,
+        monkeypatch,
+        {"event_spy": Strategy([spy]), "event_qqq": Strategy([qqq])},
+        Thesis(qqq),
+    )
+
+    agent.equity_tick()
+
+    shadow = [p for a, e, p in journal.events if e == "CANDIDATE_KERNEL_VERDICT"]
+    assert [s["plan_id"] for s in shadow] == ["spy-a"], "the unchosen candidate has no verdict"
+    assert shadow[0]["selected"] is False
+    assert "approved" in shadow[0]
+
+    # The deciding kernel still saw only the selected object.
+    assert kernel.reviewed == [qqq]
+    assert submitted == [qqq]
+
+
+def test_evidence_gathering_cannot_break_a_tick(tmp_path, monkeypatch):
+    """A failure while recording evidence must cost evidence, never the trade
+    decision."""
+    spy, qqq = _option("spy-a", "SPY"), _option("qqq-a", "QQQ")
+    agent, _, _, submitted = _agent(
+        tmp_path,
+        monkeypatch,
+        {"event_spy": Strategy([spy]), "event_qqq": Strategy([qqq])},
+        Thesis(qqq),
+    )
+
+    class Exploding:
+        def review(self, plan, state):
+            raise RuntimeError("shadow kernel blew up")
+
+    agent._shadow = Exploding()
+
+    agent.equity_tick()
+
+    assert submitted == [qqq], "an evidence failure changed the trading outcome"
+
+
+def test_a_real_provenance_carrying_candidate_set_is_content_addressed(tmp_path, monkeypatch):
+    """The bare fixtures above cannot be manifested by design. A real
+    candidate, carrying its quote provenance, must produce a stable hash --
+    otherwise the evidence trail claims determinism it cannot show."""
+    import tests.test_candidates as fixtures
+
+    spy = fixtures._candidate("SPY")
+    qqq = fixtures._candidate("QQQ")
+    agent, journal, _, _ = _agent(
+        tmp_path,
+        monkeypatch,
+        {"event_spy": Strategy([spy]), "event_qqq": Strategy([qqq])},
+        Thesis(qqq),
+    )
+
+    agent.equity_tick()
+
+    built = [p for _, e, p in journal.events if e == "CANDIDATE_SET_BUILT"][0]
+    assert built["manifest_unavailable"] is None
+    assert len(built["manifest_hash"]) == 64, "the offered set is not content-addressed"
+    assert set(built["candidate_ids"]) == {spy.plan_id, qqq.plan_id}
+
+    # Determinism: the same set, offered again, hashes identically.
+    agent.journal.events.clear()
+    agent.equity_tick()
+    again = [p for _, e, p in agent.journal.events if e == "CANDIDATE_SET_BUILT"][0]
+    assert again["manifest_hash"] == built["manifest_hash"]

@@ -20,7 +20,7 @@ import urllib.request
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -90,6 +90,8 @@ class Agent:
         if self.environment not in {"dev", "scored"}:
             raise ValueError(f"unknown broker environment {self.environment!r}")
         self._state_faulted = False
+        # Built lazily; typed loosely because tests inject a stand-in.
+        self._shadow: Any = None
         self.scheduler = BackgroundScheduler(timezone="UTC", job_defaults=JOB_DEFAULTS)
         # Persisted, not in-memory. An in-memory set is empty after any
         # restart, and the agent would happily buy the same catalyst a second
@@ -201,6 +203,8 @@ class Agent:
                 candidates.append(plan)
                 candidate_sources[id(plan)] = name
 
+        self._journal_candidate_set(candidates, state)
+
         if self.thesis is None:
             self.journal.append(
                 "thesis.llm",
@@ -227,7 +231,89 @@ class Agent:
             )
             return
 
+        self._journal_counterfactuals(candidates, selected, state)
         self._review_and_execute(selected, state, candidate_sources[id(selected)])
+
+    def _journal_candidate_set(self, candidates: list, state) -> None:
+        """Record exactly which ids the model was allowed to choose from.
+
+        This is what makes the central claim checkable afterwards rather than
+        deniable: a recorded selection naming anything outside this set means
+        the model authored a trade. No kernel call here -- an abstention must
+        remain a cycle in which the kernel was never consulted.
+        """
+        if not candidates:
+            return
+        manifest_unavailable = ""
+        try:
+            from .candidates import build_candidate_manifest
+
+            manifest = build_candidate_manifest(candidates)
+            manifest_hash = manifest.manifest_hash
+            candidate_ids = list(manifest.candidate_ids)
+        except Exception as exc:
+            # Say why rather than quietly emitting an empty hash. A candidate
+            # without provenance is a real condition worth seeing in the
+            # evidence, not something to paper over.
+            manifest_unavailable = f"{type(exc).__name__}: {exc}"[:200]
+            log.warning("candidate manifest unavailable: %s", manifest_unavailable)
+            manifest_hash = ""
+            candidate_ids = [getattr(c, "plan_id", "") for c in candidates]
+
+        self.journal.append(
+            "scheduler",
+            "CANDIDATE_SET_BUILT",
+            {
+                "count": len(candidates),
+                "candidate_ids": candidate_ids,
+                "manifest_hash": manifest_hash,
+                "manifest_unavailable": manifest_unavailable or None,
+            },
+        )
+
+    def _shadow_kernel(self):
+        """A kernel used only for evidence, never for a decision."""
+        if getattr(self, "_shadow", None) is None:
+            from .kernel import RiskKernel
+
+            self._shadow = RiskKernel()
+        return self._shadow
+
+    def _journal_counterfactuals(self, candidates: list, selected, state) -> None:
+        """What the kernel says about the candidates the model did NOT take.
+
+        A selection on its own shows which trade happened. These verdicts show
+        the alternatives were independently risk-reviewed too, which is the
+        evidence that the model was choosing inside a pre-vetted set rather
+        than being trusted with the outcome.
+
+        Deliberately uses its own kernel instance, not the one that gates
+        execution. The guarantee that only the selected object reaches the
+        deciding kernel is worth more than the convenience of sharing an
+        object, and a separate instance makes evidence gathering unable to
+        touch that path even by accident. The kernel is pure, so a fresh one
+        is equivalent; any failure here is swallowed, because gathering
+        evidence must never be able to break a tick.
+        """
+        for candidate in candidates:
+            if candidate is selected:
+                continue
+            try:
+                verdict = self._shadow_kernel().review(candidate, state)
+            except Exception as exc:  # pragma: no cover - defensive only
+                log.debug("counterfactual review failed for %s: %s", candidate.plan_id, exc)
+                continue
+            self.journal.append(
+                "kernel.shadow",
+                "CANDIDATE_KERNEL_VERDICT",
+                {
+                    "plan_id": candidate.plan_id,
+                    "selected": False,
+                    "approved": bool(getattr(verdict, "approved", False)),
+                    "reason": str(getattr(verdict, "reason", ""))[:200],
+                    "failed_invariant": getattr(verdict, "failed_invariant", None),
+                },
+            )
 
     def _scored_policy_refusal(self, plan, source: str, reason: str) -> None:
         self.journal.append(
