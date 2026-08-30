@@ -21,9 +21,13 @@ gates are deliberately still open:
 - **VPS soak pending.** No host target was supplied, so no deployment or
   multi-day soak has been performed.
 
-Do not describe either gate as complete until its broker or VPS evidence is in
-the journal. The repository uses Alpaca's Trading/Data APIs and local CLI
-tools. No additional broker integration is claimed.
+- **CLI proof pending.** `tools/capture_alpaca_proof.py` builds and captures
+  read-only Alpaca CLI evidence and is tested against fakes, but no proof
+  bundle has been captured from a real CLI against a real account.
+
+Do not describe any gate as complete until its broker or VPS evidence is in
+the journal. The programmatic integration is `alpaca-py` against the Alpaca
+paper Trading and Data APIs. No MCP integration exists or is claimed.
 
 ## Scored data flow
 
@@ -67,9 +71,31 @@ candidate, or attempts to add trade fields, the scored cycle abstains.
   flush/fsync/replace persistence and fail closed on corruption.
 - Deployments require a full reviewed 40-character commit SHA and install the
   exact runtime lock.
+- Alpaca failures are classified, not collapsed. An order lookup returns
+  absent only for a verified 404; auth, validation, rate-limit, server, and
+  transport failures raise typed errors, so "no such order" is never inferred
+  from "we could not ask". Retries are bounded, jittered, and applied only to
+  idempotent operations.
+- Order state is folded from observations by a pure reducer. Cumulative fill
+  never decreases, a cancel acknowledgement is never terminal, and an
+  unrecognised status fails closed.
+- Positions are owned per contract. Expected signed quantity is derived only
+  from confirmed fills and reconciled exactly against the venue; unknown or
+  foreign exposure blocks new entries. Exits sell the exact owned quantity
+  under a deterministic client order ID registered on disk before the
+  mutation. Symbol-wide liquidation is not used as an exit or as proof of
+  flatness, and flat is reported only from a terminal order plus a zero venue
+  quantity.
+- A release manifest binds commit, lock hashes, policy hash, resolved paper
+  endpoint, environment, and a redacted expected-account suffix. It refuses a
+  scored start that is dirty, live-endpoint, unbound, or not options-only, and
+  fails before writing if any credential value appears in it.
+- Only one scheduler may own a state directory; a lock is reclaimed only when
+  its recorded process is verifiably gone.
 - The journal is append-only and SHA-256 chained. This detects edits to the
   recorded file; it is not called tamper-proof. Broker IDs and timestamps make
-  order claims reconcilable against records we do not control.
+  order claims reconcilable against records we do not control. A local hash
+  chain is not third-party attestation.
 
 ## Local setup and verification
 
@@ -129,13 +155,27 @@ glassbox/
   thesis.py       bounded select-or-abstain AI plus read-only daily summary
   kernel.py       deterministic 13-invariant risk review
   execute.py      intent journal, reconciliation, fill/cancel/reprice state machine
-  state.py        atomic fail-closed JSON persistence
+  order_lifecycle.py  pure reducer over observed order states
+  position_ledger.py  per-contract ownership and exact venue reconciliation
+  candidates.py   canonical candidate sets, manifests, selection receipts
+  option_data.py  Alpaca option contract and quote acquisition
+  release.py      release/account identity manifest
+  state.py        atomic fail-closed JSON persistence, singleton process lock
   scheduler.py    options-only scored policy and development schedule
   strategies/     deterministic option generators plus dev-only fixtures
 dashboard/app.py  credential-free, read-only journal dashboard
-tools/live_check.py  bounded dev venue proof
+tools/live_check.py           bounded dev venue proof
+tools/capture_alpaca_proof.py read-only Alpaca CLI evidence capture
+tools/build_notices.py        regenerates THIRD_PARTY_NOTICES.md from the lock
 deploy/setup.sh   exact-SHA deployment
 ```
+
+## License
+
+MIT, in `LICENSE`. Dependency licensing is recorded in
+`THIRD_PARTY_NOTICES.md`, generated from `requirements.lock` by
+`tools/build_notices.py`. No code, UI, prompt, or asset from any reviewed
+third-party trading project is present in this repository.
 
 The approved design and task-level implementation plan are preserved under
 `docs/superpowers/`.
