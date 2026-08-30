@@ -61,7 +61,7 @@ separate, development-account connectivity proof only.
 | C3 | Bounded AI and options-only scored policy | Complete | Selection/abstention and scored scheduler policy tests |
 | C4 | Reproducible release and deploy discipline | Complete | Exact locks, quality gates, SHA-pinned deploy harness tests |
 | C5 | Truthful product, UI, demo, and practice artifacts | Complete | Dashboard assertions, claim scan, read-only practice regression, deeply immutable candidate test |
-| C6 | Full local verification and hostile self-review | Verified; checkpoint commit pending | Fresh verification matrix recorded below |
+| C6 | Full local verification and hostile self-review | Complete | Fresh verification matrix recorded below; committed at `3fac4c6` |
 | C7 | Minimal development live venue proof | External gate | Needs dev-only credentials and explicit expected dev/scored account IDs |
 | C8 | Exact-SHA VPS deployment and soak | External gate | Needs VPS/SSH target after C7 and reviewed SHA |
 | C9 | Scored-account activation | Pending | Requires C7–C8 evidence and explicit user direction |
@@ -194,8 +194,8 @@ Run every item from a cleanly understood working tree and record the output in
 - [x] mypy production-source check.
 - [x] `git diff --check` and secret/claim scans.
 - [x] Confirm no order, deployment, push, merge, or submission occurred.
-- [ ] Commit the completed C5/C6 checkpoint.
-- [ ] Create and commit `handoff.md` with exact final state and next commands.
+- [x] Commit the completed C5/C6 checkpoint (`3fac4c6`).
+- [x] Create and commit `handoff.md` with exact final state and next commands.
 
 **Fresh local evidence (2026-08-30):**
 
@@ -278,10 +278,5 @@ not “deployed” or “live-tested.”
 
 ## 6. Immediate Next Actions
 
-1. Complete the C6 verification matrix.
-2. Update this document with exact evidence and mark C6 complete.
-3. Commit C5/C6 as one reviewable checkpoint.
-4. Create `handoff.md` from the committed state.
-5. Commit the handoff and leave `review` clean.
-6. Wait for dev credentials/account IDs or VPS details; do not improvise those
+1. Wait for dev credentials/account IDs or VPS details; do not improvise those
    external inputs.
