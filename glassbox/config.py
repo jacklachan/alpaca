@@ -183,6 +183,10 @@ TARGETS_STATE_FILE = _os.getenv("GLASSBOX_TARGETS_FILE", "state/targets.json")
 # development sleeves are equity/crypto and do not own option contracts.
 LEDGER_STATE_FILE = _os.getenv("GLASSBOX_LEDGER_FILE", "state/position_ledger.json")
 
+# Exit attempt counts and the uncertainty latch. Durable because a restart
+# is exactly when a lost latch would resume a rejected submit loop.
+EXIT_STATE_FILE = _os.getenv("GLASSBOX_EXIT_STATE_FILE", "state/exit_state.json")
+
 # --- Circuit breakers ---------------------------------------------------------
 # AUDIT NOTE: invariant #11 (idempotency) stops the *same* plan being sent twice.
 # Nothing in the original twelve stopped the agent generating 500 *distinct*

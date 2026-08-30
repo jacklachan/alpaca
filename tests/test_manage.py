@@ -46,7 +46,13 @@ def mgr(tmp_path, journal):
     ks = KillSwitch(tmp_path / "kill.json", journal=journal)
     # Exit targets are persisted so they survive a restart; point each test at
     # its own file so they do not leak into one another.
-    return PositionManager(FakeBroker(), journal, ks, targets_path=tmp_path / "targets.json")
+    return PositionManager(
+        FakeBroker(),
+        journal,
+        ks,
+        targets_path=tmp_path / "targets.json",
+        exit_state_path=tmp_path / "exit_state.json",
+    )
 
 
 def state(now: datetime, positions=None, **kw) -> PortfolioState:
@@ -349,6 +355,7 @@ def _ledger_manager(tmp_path, journal, broker, *, owned: str | None = "10"):
         targets_path=tmp_path / "targets.json",
         ledger=book,
         ledger_path=tmp_path / "ledger.json",
+        exit_state_path=tmp_path / "exit_state.json",
     )
     return manager, book
 
@@ -510,3 +517,73 @@ def test_a_transient_close_failure_stays_retryable(tmp_path, journal):
     manager._close(order)
     assert broker.attempts == 2, "a transient failure was not retried"
     assert book.entries[occ()].signed_qty == Decimal(0)
+
+
+def test_the_uncertainty_latch_survives_a_restart(tmp_path, journal):
+    """An in-memory latch is empty after a restart, and the restart is exactly
+    when the agent would resume submitting under a client id the venue has
+    already rejected as a duplicate."""
+
+    class UncertainBroker(ExitBroker):
+        def cancel_and_confirm(self, order_id, client_order_id, **kw):
+            from glassbox.broker import OrderStateUncertain
+
+            raise OrderStateUncertain("never reached a terminal state")
+
+    broker = UncertainBroker(fill="6")
+    manager, book = _ledger_manager(tmp_path, journal, broker)
+    order = ExitOrder(symbol=occ(), qty=Decimal(10), reason="target")
+    manager._close(order)
+    assert len(broker.submitted) == 1
+
+    # A fresh manager over the same state directory: the restart.
+    restarted = PositionManager(
+        broker,
+        journal,
+        KillSwitch(tmp_path / "kill.json", journal=journal),
+        targets_path=tmp_path / "targets.json",
+        ledger=book,
+        ledger_path=tmp_path / "ledger.json",
+        exit_state_path=tmp_path / "exit_state.json",
+    )
+    assert occ() in restarted._exit_uncertain, "the latch did not survive the restart"
+
+    restarted._close(order)
+    assert len(broker.submitted) == 1, "a restart resumed the rejected submit loop"
+
+
+def test_exit_attempt_counts_survive_a_restart(tmp_path, journal):
+    """Attempt counts drive the deterministic exit id. Resetting them on
+    restart would silently reuse an id whose order already exists."""
+    broker = ExitBroker(fill="6", terminal_filled="6")
+    manager, book = _ledger_manager(tmp_path, journal, broker)
+    manager._close(ExitOrder(symbol=occ(), qty=Decimal(10), reason="target"))
+    assert manager._exit_attempts[occ()] == 1
+
+    restarted = PositionManager(
+        broker,
+        journal,
+        KillSwitch(tmp_path / "kill.json", journal=journal),
+        targets_path=tmp_path / "targets.json",
+        ledger=book,
+        ledger_path=tmp_path / "ledger.json",
+        exit_state_path=tmp_path / "exit_state.json",
+    )
+    assert restarted._exit_attempts.get(occ()) == 1
+
+    restarted._close(ExitOrder(symbol=occ(), qty=Decimal(4), reason="target"))
+    assert broker.submitted[1]["coid"] != broker.submitted[0]["coid"]
+
+
+def test_a_corrupt_exit_state_file_fails_closed(tmp_path, journal):
+    from glassbox.state import StateCorrupt
+
+    (tmp_path / "exit_state.json").write_text("{not json")
+    with pytest.raises(StateCorrupt):
+        PositionManager(
+            ExitBroker(),
+            journal,
+            KillSwitch(tmp_path / "kill.json", journal=journal),
+            targets_path=tmp_path / "targets.json",
+            exit_state_path=tmp_path / "exit_state.json",
+        )

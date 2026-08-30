@@ -114,6 +114,7 @@ class PositionManager:
         targets_path: str | Path | None = None,
         ledger: PositionLedger | None = None,
         ledger_path: str | Path | None = None,
+        exit_state_path: str | Path | None = None,
     ):
         self.broker = broker
         self.journal = journal
@@ -139,12 +140,44 @@ class PositionManager:
         # one-minute loop, the 14:30 expiry close-out could issue ~90 duplicate
         # market orders for one contract.
         self._exits_sent: set[str] = set()
-        self._exit_attempts: dict[str, int] = {}
-        # Symbols whose exit order reached an unprovable state. Latched:
-        # resubmitting under the same deterministic id cannot succeed.
-        self._exit_uncertain: set[str] = set()
+        # Attempt counts and the uncertainty latch are persisted, not held in
+        # memory. An in-memory latch is empty after any restart, and the
+        # restart is exactly when the agent would resume submitting an exit
+        # under a client id the venue has already rejected as a duplicate --
+        # the loop this latch exists to stop. Same reasoning as _targets.
+        self._exit_state_path = Path(exit_state_path or C.EXIT_STATE_FILE)
+        self._exit_state_path.parent.mkdir(parents=True, exist_ok=True)
+        loaded = self._load_exit_state()
+        self._exit_attempts: dict[str, int] = loaded["attempts"]
+        self._exit_uncertain: set[str] = loaded["uncertain"]
 
     # -- persistence -----------------------------------------------------------
+
+    def _load_exit_state(self) -> dict:
+        def validate(raw) -> dict:
+            if not isinstance(raw, dict):
+                raise StateCorrupt(f"{self._exit_state_path}: exit state must be an object")
+            try:
+                attempts = {str(k): int(v) for k, v in (raw.get("attempts") or {}).items()}
+                uncertain = {str(v) for v in (raw.get("uncertain") or [])}
+            except Exception as exc:
+                raise StateCorrupt(f"{self._exit_state_path}: invalid exit state: {exc}") from exc
+            return {"attempts": attempts, "uncertain": uncertain}
+
+        return read_json(
+            self._exit_state_path,
+            default={"attempts": {}, "uncertain": set()},
+            validate=validate,
+        )
+
+    def _save_exit_state(self) -> None:
+        atomic_write_json(
+            self._exit_state_path,
+            {
+                "attempts": dict(self._exit_attempts),
+                "uncertain": sorted(self._exit_uncertain),
+            },
+        )
 
     def _load_targets(self) -> dict[str, dict]:
         def validate(raw) -> dict[str, dict]:
@@ -365,6 +398,7 @@ class PositionManager:
             # while the real fill stays unrecorded. Latch instead and let
             # reconciliation resolve it.
             self._exit_uncertain.add(e.symbol)
+            self._save_exit_state()
             self.journal.append(
                 "manage",
                 "EXIT_STATE_UNCERTAIN",
@@ -448,6 +482,7 @@ class PositionManager:
                 side="sell",
             )
         self._exit_attempts[e.symbol] = self._exit_attempts.get(e.symbol, 0) + 1
+        self._save_exit_state()
         if self._ledger_path is not None:
             self.ledger.save(self._ledger_path)
 
