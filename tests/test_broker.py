@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 import glassbox.broker as broker_module
-from glassbox.broker import Broker
+from glassbox.broker import Broker, BrokerRequestRejected, BrokerStateUnknown, TokenBucket
 from glassbox.macro import trading_days_between
 
 
@@ -143,3 +143,127 @@ def test_cancel_and_confirm_accepts_terminal_state_after_cancel_error():
     final = broker.cancel_and_confirm("broker-1", "client-1", timeout=0.1, poll_seconds=0)
 
     assert final.status == "canceled"
+
+
+class FakeHTTPError(Exception):
+    def __init__(self, status_code: int, *, retry_after: str | None = None):
+        super().__init__(f"HTTP {status_code}")
+        self.status_code = status_code
+        self.response = SimpleNamespace(
+            status_code=status_code,
+            headers={"Retry-After": retry_after} if retry_after is not None else {},
+        )
+
+
+def _lookup_broker(outcome) -> Broker:
+    broker = Broker.__new__(Broker)
+    broker.bucket = TokenBucket(10_000)
+    broker.journal = None
+
+    def lookup(_coid):
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    broker.trading = SimpleNamespace(get_order_by_client_id=lookup)
+    return broker
+
+
+def test_get_order_by_client_id_returns_absent_only_for_verified_not_found():
+    assert _lookup_broker(FakeHTTPError(404)).get_order_by_coid("missing") is None
+
+    with pytest.raises(BrokerRequestRejected) as rejected:
+        _lookup_broker(FakeHTTPError(401)).get_order_by_coid("unknown")
+
+    assert rejected.value.status_code == 401
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        TimeoutError("read timeout"),
+        ConnectionError("connect timeout"),
+        FakeHTTPError(429),
+        FakeHTTPError(500),
+    ],
+)
+def test_lookup_transport_error_is_unknown_not_absent(monkeypatch, failure):
+    monkeypatch.setattr(broker_module.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(BrokerStateUnknown, match="lookup outcome unknown"):
+        _lookup_broker(failure).get_order_by_coid("unknown")
+
+
+def test_malformed_lookup_response_is_unknown_not_absent():
+    malformed = SimpleNamespace(status="new", client_order_id="unknown")
+
+    with pytest.raises(BrokerStateUnknown, match="malformed"):
+        _lookup_broker(malformed).get_order_by_coid("unknown")
+
+
+@pytest.mark.parametrize("status_code", [401, 403, 422])
+def test_auth_and_validation_errors_are_terminal_non_retryable(status_code):
+    broker = Broker.__new__(Broker)
+    broker.bucket = TokenBucket(10_000)
+    broker.journal = None
+    calls = []
+
+    def submit_order(request):
+        calls.append(request)
+        raise FakeHTTPError(status_code)
+
+    broker.trading = SimpleNamespace(submit_order=submit_order)
+
+    with pytest.raises(BrokerRequestRejected) as rejected:
+        broker.submit(
+            symbol="SPY",
+            qty=Decimal("1"),
+            side="buy",
+            client_order_id="gbx-test",
+            limit_price=Decimal("1.25"),
+        )
+
+    assert rejected.value.status_code == status_code
+    assert len(calls) == 1
+
+
+def test_rate_limit_retry_is_bounded_jittered_and_read_only(monkeypatch):
+    broker = Broker.__new__(Broker)
+    broker.bucket = TokenBucket(10_000)
+    sleeps = []
+    calls = 0
+
+    def read_call():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise FakeHTTPError(429, retry_after="0.5")
+        return "ok"
+
+    monkeypatch.setattr(broker_module.time, "sleep", sleeps.append)
+    monkeypatch.setattr(broker_module.random, "uniform", lambda lower, upper: upper)
+
+    assert broker._call(read_call, "read_only", attempts=3) == "ok"
+    assert calls == 2
+    assert len(sleeps) == 1
+    assert Decimal("0.5") <= Decimal(str(sleeps[0])) <= Decimal("0.75")
+
+
+def test_rate_limit_never_retries_cancel_mutation(monkeypatch):
+    broker = Broker.__new__(Broker)
+    broker.bucket = TokenBucket(10_000)
+    broker.journal = None
+    calls = 0
+
+    def cancel_order(_order_id):
+        nonlocal calls
+        calls += 1
+        raise FakeHTTPError(429)
+
+    broker.trading = SimpleNamespace(cancel_order_by_id=cancel_order)
+    monkeypatch.setattr(broker_module.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(FakeHTTPError):
+        broker.cancel("broker-1")
+
+    assert calls == 1

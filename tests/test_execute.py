@@ -12,8 +12,13 @@ from decimal import Decimal
 
 import pytest
 
-from glassbox.broker import OrderStateUncertain, TokenBucket
-from glassbox.execute import ExecutionEngine
+from glassbox.broker import (
+    BrokerRequestRejected,
+    BrokerStateUnknown,
+    OrderStateUncertain,
+    TokenBucket,
+)
+from glassbox.execute import ExecutionEngine, ExecutionStateUncertain
 from glassbox.journal import Journal
 from glassbox.schema import OptionLeg, TradePlan, Verdict
 
@@ -278,7 +283,7 @@ def test_failed_replacement_submit_does_not_bank_predecessor_twice(journal):
     class ReplacementFails(FakeBroker):
         def submit(self, **kwargs):
             if len(self.submitted) == 2:
-                raise RuntimeError("replacement rejected")
+                raise BrokerRequestRejected("order submit rejected (HTTP 422)", status_code=422)
             return super().submit(**kwargs)
 
     broker = ReplacementFails(fill={put: 0.3})
@@ -323,6 +328,57 @@ def test_submit_timeout_adopts_the_existing_client_order_without_resubmit(journa
     events = [entry["event"] for entry in journal.read()]
     assert "ORDER_SUBMIT_INTENT" in events
     assert "ORDER_SUBMIT_RECONCILED" in events
+
+
+def test_submit_timeout_and_failed_lookup_latches_state_and_never_retries(journal):
+    class UnknownBroker(FakeBroker):
+        def __init__(self):
+            super().__init__()
+            self.submit_attempts = 0
+            self.lookup_attempts = 0
+
+        def submit(self, **kwargs):
+            self.submit_attempts += 1
+            raise BrokerStateUnknown("order submit outcome unknown")
+
+        def get_order_by_coid(self, coid):
+            self.lookup_attempts += 1
+            raise BrokerStateUnknown("order lookup outcome unknown")
+
+    broker = UnknownBroker()
+
+    with pytest.raises(ExecutionStateUncertain):
+        engine(broker, journal).execute(single("equity"), APPROVED(single("equity")))
+
+    assert broker.submit_attempts == 1
+    assert broker.lookup_attempts >= 1
+    assert "ORDER_SUBMIT_AMBIGUOUS" in [entry["event"] for entry in journal.read()]
+
+
+def test_auth_and_validation_submit_rejection_is_not_reconciled_or_retried(journal):
+    class RejectedBroker(FakeBroker):
+        def __init__(self):
+            super().__init__()
+            self.submit_attempts = 0
+            self.lookup_attempts = 0
+
+        def submit(self, **kwargs):
+            self.submit_attempts += 1
+            raise BrokerRequestRejected("order submit rejected (HTTP 422)", status_code=422)
+
+        def get_order_by_coid(self, coid):
+            self.lookup_attempts += 1
+            return None
+
+    broker = RejectedBroker()
+    plan = single("equity")
+
+    result = engine(broker, journal).execute(plan, APPROVED(plan))
+
+    assert not result.ok
+    assert broker.submit_attempts == 1
+    assert broker.lookup_attempts == 0
+    assert "ORDER_SUBMIT_REJECTED" in [entry["event"] for entry in journal.read()]
 
 
 def test_nothing_filled_needs_no_unwind(journal):

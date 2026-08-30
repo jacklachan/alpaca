@@ -32,8 +32,10 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from . import config as C
+from .broker import BrokerFailure, BrokerRequestRejected
 from .ids import client_order_id
 from .schema import TradePlan, Verdict
+from .state import StateError
 
 log = logging.getLogger("glassbox.execute")
 
@@ -47,6 +49,10 @@ TERMINAL_DEAD = {
     "done_for_day",
     "replaced",
 }
+
+
+class ExecutionStateUncertain(StateError):
+    """An order mutation cannot be reconciled; new risk must remain latched."""
 
 
 @dataclass
@@ -223,6 +229,17 @@ class ExecutionEngine:
                 limit_price=limit_price,
                 instrument=instrument,
             )
+        except BrokerRequestRejected as rejected:
+            self.journal.append(
+                "execute",
+                "ORDER_SUBMIT_REJECTED",
+                {
+                    **intent,
+                    "error_type": type(rejected).__name__,
+                    "status_code": rejected.status_code,
+                },
+            )
+            raise
         except Exception as submit_error:
             deadline = time.monotonic() + min(self.fill_wait_seconds, 5.0)
             lookup_error: Exception | None = None
@@ -240,7 +257,7 @@ class ExecutionEngine:
                             **intent,
                             "broker_order_id": str(existing.id),
                             "status": str(getattr(existing, "status", "")),
-                            "submit_error": str(submit_error),
+                            "submit_error_type": type(submit_error).__name__,
                         },
                     )
                     return existing
@@ -250,14 +267,14 @@ class ExecutionEngine:
                         "ORDER_SUBMIT_AMBIGUOUS",
                         {
                             **intent,
-                            "submit_error": str(submit_error),
-                            "lookup_error": (
-                                str(lookup_error) if lookup_error is not None else None
+                            "submit_error_type": type(submit_error).__name__,
+                            "lookup_error_type": (
+                                type(lookup_error).__name__ if lookup_error is not None else None
                             ),
                         },
                     )
-                    raise RuntimeError(
-                        f"submit outcome ambiguous for {client_order_id}: {submit_error}"
+                    raise ExecutionStateUncertain(
+                        f"submit outcome ambiguous for {client_order_id}"
                     ) from submit_error
                 time.sleep(self.poll_seconds)
 
@@ -283,6 +300,8 @@ class ExecutionEngine:
                 )
                 r.broker_order_id = str(order.id)
                 r.status = "submitted"
+            except ExecutionStateUncertain:
+                raise
             except Exception as exc:
                 r.status = f"submit_failed: {exc}"
                 self.journal.append(
@@ -428,6 +447,8 @@ class ExecutionEngine:
             r.broker_order_id = str(order.id)
             r.client_order_id = coid
             r.status = "repriced"
+        except ExecutionStateUncertain:
+            raise
         except Exception as exc:
             r.status = f"reprice_failed: {exc}"
 
@@ -508,6 +529,8 @@ class ExecutionEngine:
             )
             r.broker_order_id = str(order.id)
             r.status = "submitted"
+        except ExecutionStateUncertain:
+            raise
         except Exception as exc:
             r.status = f"submit_failed: {exc}"
             return ExecutionResult(plan.plan_id, False, f"submit failed: {exc}", [r], multiplier=1)
@@ -542,7 +565,12 @@ class ExecutionEngine:
             for r in legs:
                 if r.complete or r.order_state_uncertain or not r.client_order_id:
                     continue
-                o = self.broker.get_order_by_coid(r.client_order_id)
+                try:
+                    o = self.broker.get_order_by_coid(r.client_order_id)
+                except BrokerFailure as exc:
+                    raise ExecutionStateUncertain(
+                        f"order observation unknown for {r.client_order_id}"
+                    ) from exc
                 if o is None:
                     pending = True
                     continue

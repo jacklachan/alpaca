@@ -14,6 +14,7 @@ Three things this file exists to guarantee:
 from __future__ import annotations
 
 import logging
+import random
 import threading
 import time
 from datetime import date, datetime, timezone
@@ -52,9 +53,35 @@ class OrderStateUncertain(RuntimeError):
     """A cancellation could not be observed in a terminal broker state."""
 
 
+class BrokerFailure(RuntimeError):
+    """Redacted, typed failure at the Alpaca boundary."""
+
+    def __init__(self, message: str, *, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+class BrokerRequestRejected(BrokerFailure):
+    """The venue definitively rejected a request; replay is not allowed."""
+
+
+class BrokerStateUnknown(BrokerFailure):
+    """The venue outcome cannot be proved and must fail closed."""
+
+
 def _order_status(order: Any) -> str:
     """Normalize Alpaca enum and string order statuses."""
     return str(getattr(order, "status", "")).lower().split(".")[-1]
+
+
+def _status_code(exc: Exception) -> int | None:
+    value = getattr(exc, "status_code", None)
+    if value is None:
+        value = getattr(getattr(exc, "response", None), "status_code", None)
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 class TokenBucket:
@@ -100,8 +127,23 @@ _RETRYABLE = (
 
 
 def _is_retryable(exc: Exception) -> bool:
+    status_code = _status_code(exc)
+    if status_code is not None:
+        return status_code == 429 or 500 <= status_code <= 599
     s = str(exc).lower()
     return any(t in s for t in _RETRYABLE)
+
+
+def _retry_delay(exc: Exception, attempt: int) -> float:
+    headers = getattr(getattr(exc, "response", None), "headers", {}) or {}
+    retry_after = headers.get("Retry-After") if hasattr(headers, "get") else None
+    try:
+        base = float(retry_after) if retry_after is not None else float(2**attempt)
+    except (TypeError, ValueError):
+        base = float(2**attempt)
+    base = max(0.0, min(base, 8.0))
+    jitter = random.uniform(0.0, min(base * 0.1, 0.25))
+    return min(base + jitter, 8.25)
 
 
 class Broker:
@@ -161,8 +203,14 @@ class Broker:
                 last = exc
                 if not _is_retryable(exc) or i == attempts - 1:
                     raise
-                wait = 2**i
-                log.warning("%s failed (%s), retrying in %ss", what, exc, wait)
+                wait = _retry_delay(exc, i)
+                log.warning(
+                    "%s failed (%s, status=%s), retrying in %.2fs",
+                    what,
+                    type(exc).__name__,
+                    _status_code(exc),
+                    wait,
+                )
                 time.sleep(wait)
         if last is None:  # pragma: no cover - the loop always runs at least once
             raise RuntimeError(f"no attempt made calling {what}")
@@ -521,7 +569,39 @@ class Broker:
             },
         )
 
-        order: Any = self.trading.submit_order(req)
+        try:
+            order: Any = self.trading.submit_order(req)
+        except Exception as exc:
+            if isinstance(exc, BrokerFailure):
+                raise
+            status_code = _status_code(exc)
+            if (
+                status_code is not None
+                and 400 <= status_code <= 499
+                and status_code
+                not in {
+                    408,
+                    409,
+                    425,
+                    429,
+                }
+            ):
+                raise BrokerRequestRejected(
+                    f"order submit rejected (HTTP {status_code})",
+                    status_code=status_code,
+                ) from exc
+            raise BrokerStateUnknown(
+                "order submit outcome unknown",
+                status_code=status_code,
+            ) from exc
+
+        if (
+            order is None
+            or not getattr(order, "id", None)
+            or not getattr(order, "status", None)
+            or str(getattr(order, "client_order_id", "")) != client_order_id
+        ):
+            raise BrokerStateUnknown("order submit returned malformed response")
 
         # Broker-side identity and timestamp. This is the part of the journal a
         # third party can verify, because we do not control either value.
@@ -539,16 +619,39 @@ class Broker:
 
     def get_order_by_coid(self, coid: str):
         try:
-            return self._call(
+            order = self._call(
                 lambda: self.trading.get_order_by_client_id(coid),
                 "get_order_by_client_id",
                 attempts=2,
             )
-        except Exception:
-            return None
+        except Exception as exc:
+            status_code = _status_code(exc)
+            if status_code == 404:
+                return None
+            if status_code in {400, 401, 403, 409, 422}:
+                raise BrokerRequestRejected(
+                    f"order lookup rejected (HTTP {status_code})",
+                    status_code=status_code,
+                ) from exc
+            raise BrokerStateUnknown(
+                "order lookup outcome unknown",
+                status_code=status_code,
+            ) from exc
+        if (
+            order is None
+            or not getattr(order, "id", None)
+            or not getattr(order, "status", None)
+            or str(getattr(order, "client_order_id", "")) != coid
+        ):
+            raise BrokerStateUnknown("order lookup returned malformed response")
+        return order
 
     def cancel(self, order_id: str) -> None:
-        self._call(lambda: self.trading.cancel_order_by_id(order_id), "cancel_order")
+        self._call(
+            lambda: self.trading.cancel_order_by_id(order_id),
+            "cancel_order",
+            attempts=1,
+        )
         self._log("broker", "ORDER_CANCEL_REQUESTED", {"broker_order_id": str(order_id)})
 
     def cancel_and_confirm(
@@ -566,7 +669,7 @@ class Broker:
         except Exception as exc:
             # The order may already be terminal. The read below, not the cancel
             # response, is authoritative.
-            cancel_error = str(exc)
+            cancel_error = type(exc).__name__
 
         deadline = time.monotonic() + timeout
         last_status = "not_found"
@@ -602,6 +705,10 @@ class Broker:
             time.sleep(poll_seconds)
 
     def close_position(self, symbol: str) -> Any:
-        order = self._call(lambda: self.trading.close_position(symbol), "close_position")
+        order = self._call(
+            lambda: self.trading.close_position(symbol),
+            "close_position",
+            attempts=1,
+        )
         self._log("broker", "POSITION_CLOSED", {"symbol": symbol})
         return order

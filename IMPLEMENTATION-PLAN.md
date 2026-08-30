@@ -67,7 +67,7 @@ separate, development-account connectivity proof only.
 | C6 | Full local verification and hostile self-review | Complete | Fresh verification matrix recorded below; committed at `3fac4c6` |
 | A | Preserve and attest Approach A boundary | Complete | Audit focus suite: 43 passed on 2026-08-30 |
 | B | Candidate provenance and canonical manifest | Complete | 56 focused and 257 full locked tests; committed rollback boundary |
-| C | Typed Alpaca failures and ambiguity discipline | Pending | Begins only after B is committed |
+| C | Typed Alpaca failures and ambiguity discipline | Complete | 42 focused, 83 boundary-regression, and 267 full locked tests |
 | D | Pure order-lifecycle reducer | Pending | Begins only after typed outcomes in C |
 | E | Strategy-owned ledger and restart-safe exits | Pending | Begins only after lifecycle semantics stabilize |
 | G | Release/account/evidence manifest | Pending | Built on stable candidate, lifecycle, and state schemas |
@@ -273,14 +273,26 @@ Run every item from a cleanly understood working tree and record the output in
 
 ### Audit Task C — Typed Alpaca Failures and Ambiguity Discipline
 
-- [ ] Return absent only for verified order-not-found.
-- [ ] Distinguish auth, validation, rate-limit, server, network, timeout, and
+- [x] Return absent only for verified order-not-found.
+- [x] Distinguish auth, validation, rate-limit, server, network, timeout, and
   decode failures from absence.
-- [ ] Attempt every mutation once and reconcile ambiguous acceptance only by
+- [x] Attempt every mutation once and reconcile ambiguous acceptance only by
   its original deterministic client-order ID.
-- [ ] Latch unresolved ambiguity and block new risk.
-- [ ] Add the audit's 404/401/403/422/429/500/connect/read-timeout/malformed
+- [x] Latch unresolved ambiguity through the durable-state fault path and block
+  new risk.
+- [x] Add the audit's 404/401/403/422/429/500/connect/read-timeout/malformed
   boundary tests and commit C atomically with executor handling.
+
+**Verification evidence (2026-08-30):**
+
+- Broker/executor focus: `42 passed`.
+- Broker/executor/scheduler/state/kernel boundary regression: `83 passed`.
+- Full exact-lock Python 3.12 suite: `267 passed`.
+- Ruff format/lint and mypy (33 source files) passed.
+- The Windows host emitted its previously observed native access-violation
+  diagnostics during some imports/pytest cleanup, but pytest completed all
+  assertions and exited zero; no diagnostic was treated as test evidence by
+  itself.
 
 ### Audit Task D — Pure Order-Lifecycle Reducer
 
@@ -387,8 +399,9 @@ not “deployed” or “live-tested.”
 
 ## 6. Immediate Next Actions
 
-1. Begin audit Task C with typed Alpaca failure tests before implementation.
-2. Continue C → D → E → G in dependency order with focused tests and review at
+1. Begin audit Task D with the pure lifecycle reducer tests before refactoring
+   executor call sites.
+2. Continue D → E → G in dependency order with focused tests and review at
    every boundary.
 3. Record the license holder/year and operational proofs as external gates;
    continue only safe local work while they are absent.
