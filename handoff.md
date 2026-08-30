@@ -5,8 +5,8 @@
 **Audited base:** `c45b23fdf6cb51be1092ea2b0c76d1e7f0128c69`
 **Preserved branches:** `utk` at `5414498`, teammate `origin/review` at
 `c45b23f`, and `main` at `363808c`
-**Completed checkpoint:** C0 - audited branch and planning artifacts
-**Next checkpoint:** C1 - mandatory scored release gate
+**Completed checkpoint:** C1 - mandatory scored release gate
+**Next checkpoint:** C2 - idempotent fill and ledger replay
 
 The independent readiness audit scores this base at 47/100 and says it is not
 safe for scored activation yet. Its blocking findings and the complete staged
@@ -16,14 +16,23 @@ program are in:
 - `docs/superpowers/specs/2026-08-31-profit-win-readiness-design.md`
 - `docs/superpowers/plans/2026-08-31-profit-win-readiness-master-plan.md`
 
-Fresh local verification used managed CPython 3.12.11. The suite passed 532
-tests outside `tests/test_position_ledger.py` and 22 of 23 tests in that file;
-the one deselected test is the existing unbounded Windows dead-PID probe. Ruff
-format/lint, mypy, 33 kernel tests, 22 dashboard tests, crash drill 13/13,
-environment parity, compileall, dependency integrity, notices, claim, license,
-and secret checks passed. The exact base also remains green on its authoritative
-Python 3.12 GitHub Actions run. C4 owns the bounded cross-platform regression;
-no gate will be weakened to hide it.
+C0 is committed at `f23b24b` and its full Python 3.12 GitHub Actions run passed.
+C1 now makes scored startup fail closed before broker construction: a scored run
+cannot disable the release gate and must load an externally approved manifest
+whose full SHA matches `HEAD`, tree and lock/policy/candidate identity match the
+current checkout, endpoint is the exact normalized Alpaca paper URL, no gate is
+pending, evidence is less than 24 hours old, every mandatory check is `PASS`,
+and every proof has a valid SHA-256. Development dry-run remains available but
+receives no scored authority.
+
+C1 local verification used managed CPython 3.12.11. The repository collects 576
+tests. It passed 553 tests outside `tests/test_position_ledger.py` and 22 of 23
+tests in that file; the one deselected test is the existing unbounded Windows
+dead-PID probe. Ruff format/lint, mypy across 46 source files, 33 kernel tests,
+crash drill 13/13, environment parity for 12 variables, compileall, dependency
+integrity, claim/secret checks, and `git diff --check` passed. C4 owns the bounded
+cross-platform dead-PID regression; remote Python 3.12 Linux CI remains the
+authoritative all-tests gate.
 
 No credentials are present. No order, deployment, activation, merge,
 default-branch change, or submission is authorized. Ordinary checkpoint pushes

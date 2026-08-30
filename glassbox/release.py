@@ -14,10 +14,10 @@ credentials, keys, or webhook URLs. `assert_no_secrets` is executable rather
 than advisory because a redaction rule that is only written down is a rule that
 eventually gets skipped.
 
-A manifest is a local self-description, not an attestation. It proves that the
-code, locks, and policy match what it recorded; it does not prove a third party
-observed anything. The Alpaca order ids in the evidence are what an outside
-party can independently verify -- not this file's hashes.
+`build()` creates only a local self-description; it cannot approve itself. A
+scored start gains authority only when an external approved SHA and a fresh,
+hashed evidence bundle match that description exactly. Alpaca order ids and
+captured proof remain the independently verifiable facts behind those hashes.
 """
 
 from __future__ import annotations
@@ -25,18 +25,36 @@ from __future__ import annotations
 import hashlib
 import json
 import platform
+import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 from .state import atomic_write_json
 
 SCHEMA_VERSION = 1
 
-#: Only the paper endpoint may ever appear in a manifest.
-PAPER_ENDPOINT_MARKER = "paper-api"
+#: Only this exact normalized endpoint may ever appear in a scored manifest.
+PAPER_ENDPOINT = "https://paper-api.alpaca.markets"
+
+#: External evidence that must be present before the scored process can start.
+REQUIRED_RELEASE_CHECKS = (
+    "journal_chain",
+    "account_identity",
+    "cli_proof",
+    "development_venue_proof",
+    "deployment_soak",
+)
+
+RELEASE_EVIDENCE_MAX_AGE = timedelta(hours=24)
+RELEASE_EVIDENCE_CLOCK_SKEW = timedelta(minutes=5)
+
+_FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
+_FULL_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 #: Environment variables whose values must never be written anywhere.
 SECRET_ENV_KEYS = (
@@ -96,6 +114,38 @@ def config_policy_hash(policy: Mapping[str, Any]) -> str:
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
+def normalize_paper_endpoint(value: str) -> str:
+    """Return the one allowed paper endpoint or fail on lookalike URLs."""
+    try:
+        parsed = urlsplit(value.strip())
+        port = parsed.port
+    except ValueError as exc:
+        raise ReleaseError(f"endpoint is not the paper endpoint: {value}") from exc
+    if (
+        parsed.scheme.lower() != "https"
+        or (parsed.hostname or "").lower() != "paper-api.alpaca.markets"
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in (None, 443)
+        or parsed.path not in ("", "/")
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ReleaseError(f"endpoint is not the paper endpoint: {value}")
+    return PAPER_ENDPOINT
+
+
+def _parse_utc(value: Any, *, field_name: str) -> datetime:
+    text = str(value or "")
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ReleaseError(f"verification {field_name} is not an ISO-8601 timestamp") from exc
+    if parsed.tzinfo is None:
+        raise ReleaseError(f"verification {field_name} has no timezone")
+    return parsed.astimezone(timezone.utc)
+
+
 def assert_no_secrets(payload: Mapping[str, Any], environment: Mapping[str, str]) -> None:
     """Fail if any live credential value appears anywhere in the manifest."""
     body = json.dumps(payload, sort_keys=True, default=str)
@@ -135,16 +185,21 @@ class ReleaseManifest:
 
     def validate(self) -> None:
         """Refuse anything that could point at the wrong account or venue."""
-        if PAPER_ENDPOINT_MARKER not in self.resolved_endpoint:
-            raise ReleaseError(f"endpoint is not the paper endpoint: {self.resolved_endpoint}")
+        normalize_paper_endpoint(self.resolved_endpoint)
         if not self.expected_account_suffix:
             raise ReleaseError("manifest has no expected account binding")
-        if not self.commit or len(self.commit) != 40:
+        if not _FULL_SHA.fullmatch(self.commit):
             raise ReleaseError(f"commit is not a full sha: {self.commit!r}")
         if not self.strategy_allowlist:
             raise ReleaseError("manifest has an empty strategy allowlist")
 
-    def assert_scored_startable(self) -> None:
+    def assert_scored_startable(
+        self,
+        *,
+        approved_commit: str = "",
+        now: datetime | None = None,
+        evidence_max_age: timedelta = RELEASE_EVIDENCE_MAX_AGE,
+    ) -> None:
         """The gate a scored run must pass before it may place anything."""
         self.validate()
         if self.dirty:
@@ -154,6 +209,59 @@ class ReleaseManifest:
         forbidden = {s for s in self.strategy_allowlist if s not in {"event_vol"}}
         if forbidden:
             raise ReleaseError(f"scored allowlist is not options-only: {sorted(forbidden)}")
+        if not _FULL_SHA.fullmatch(approved_commit) or approved_commit != self.commit:
+            raise ReleaseError(
+                "approved commit must be an explicit full SHA matching the release manifest"
+            )
+        if self.pending_gates:
+            raise ReleaseError(f"pending release gates: {', '.join(self.pending_gates)}")
+
+        proof = self.verification
+        if not isinstance(proof, Mapping) or not proof:
+            raise ReleaseError("release verification evidence is missing")
+        if proof.get("status") != "RELEASE VERIFIED":
+            raise ReleaseError("release verification evidence is not RELEASE VERIFIED")
+
+        bindings: dict[str, Any] = {
+            "commit": self.commit,
+            "runtime_lock_sha256": self.runtime_lock_sha256,
+            "dev_lock_sha256": self.dev_lock_sha256,
+            "config_policy_hash": self.config_policy_hash,
+            "expected_account_suffix": self.expected_account_suffix,
+            "candidate_schema_version": self.candidate_schema_version,
+        }
+        for name, expected in bindings.items():
+            if proof.get(name) != expected:
+                raise ReleaseError(f"verification {name} does not match the release manifest")
+        try:
+            proof_endpoint = normalize_paper_endpoint(str(proof.get("resolved_endpoint", "")))
+        except ReleaseError as exc:
+            raise ReleaseError(
+                "verification resolved_endpoint does not match the release manifest"
+            ) from exc
+        if proof_endpoint != normalize_paper_endpoint(self.resolved_endpoint):
+            raise ReleaseError("verification resolved_endpoint does not match the release manifest")
+
+        checked_at = _parse_utc(proof.get("verified_at"), field_name="verified_at")
+        current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        age = current_time - checked_at
+        if age < -RELEASE_EVIDENCE_CLOCK_SKEW:
+            raise ReleaseError("release verification timestamp is in the future")
+        if age > evidence_max_age:
+            raise ReleaseError("release verification evidence is stale")
+
+        checks = proof.get("checks")
+        artifacts = proof.get("artifact_sha256")
+        if not isinstance(checks, Mapping) or not isinstance(artifacts, Mapping):
+            raise ReleaseError(
+                "release verification evidence has no required checks or artifact hashes"
+            )
+        for name in REQUIRED_RELEASE_CHECKS:
+            if checks.get(name) != "PASS":
+                raise ReleaseError(f"required release check {name} is missing, skipped, or failed")
+            digest = artifacts.get(name)
+            if not isinstance(digest, str) or not _FULL_SHA256.fullmatch(digest):
+                raise ReleaseError(f"required release check {name} has no valid artifact SHA-256")
 
     # -- serialisation ---------------------------------------------------------
 
@@ -219,10 +327,10 @@ class ReleaseManifest:
         drift = []
         for name in (
             "commit",
+            "dirty",
             "runtime_lock_sha256",
             "dev_lock_sha256",
             "config_policy_hash",
-            "resolved_endpoint",
             "environment",
             "expected_account_suffix",
         ):
@@ -230,6 +338,14 @@ class ReleaseManifest:
                 drift.append(name)
         if tuple(self.strategy_allowlist) != tuple(other.strategy_allowlist):
             drift.append("strategy_allowlist")
+        if normalize_paper_endpoint(self.resolved_endpoint) != normalize_paper_endpoint(
+            other.resolved_endpoint
+        ):
+            drift.append("resolved_endpoint")
+        if tuple(self.option_underlyings) != tuple(other.option_underlyings):
+            drift.append("option_underlyings")
+        if self.candidate_schema_version != other.candidate_schema_version:
+            drift.append("candidate_schema_version")
         return tuple(drift)
 
 
@@ -266,3 +382,25 @@ def build(
         pending_gates=tuple(pending_gates),
         verification=dict(verification or {}),
     )
+
+
+def load_approved(
+    path: str | Path,
+    *,
+    current: ReleaseManifest,
+    approved_commit: str,
+    now: datetime | None = None,
+) -> ReleaseManifest:
+    """Load external release approval and bind it to the checkout on disk."""
+    manifest_path = Path(path)
+    try:
+        raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+        approved = ReleaseManifest.from_json(raw)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise ReleaseError(f"cannot load approved release manifest {manifest_path}: {exc}") from exc
+
+    approved.assert_scored_startable(approved_commit=approved_commit, now=now)
+    drift = approved.detect_drift(current)
+    if drift:
+        raise ReleaseError(f"current checkout drift: {', '.join(drift)}")
+    return approved

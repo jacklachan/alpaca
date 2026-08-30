@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,14 @@ from glassbox.release import ReleaseError, ReleaseManifest
 ROOT = Path(__file__).resolve().parents[1]
 
 POLICY = {"max_loss": "2000", "underlyings": ["SPY", "QQQ"]}
+NOW = datetime(2026, 8, 31, 12, 0, tzinfo=timezone.utc)
+REQUIRED_CHECKS = (
+    "journal_chain",
+    "account_identity",
+    "cli_proof",
+    "development_venue_proof",
+    "deployment_soak",
+)
 
 # Assembled at runtime so no key-shaped literal is ever committed. CI scans
 # tracked files for PK-shaped strings; a fixture that trips that scan would
@@ -28,6 +37,8 @@ FAKE_ALPACA_KEY = "PK" + "TESTONLYNOTAREALKEY01"
 
 
 def manifest(**overrides) -> ReleaseManifest:
+    verification_supplied = "verification" in overrides
+    supplied_verification = overrides.pop("verification", None)
     base = ReleaseManifest(
         commit="a" * 40,
         dirty=False,
@@ -42,9 +53,27 @@ def manifest(**overrides) -> ReleaseManifest:
         strategy_allowlist=("event_vol",),
         option_underlyings=("SPY", "QQQ"),
         candidate_schema_version=1,
-        built_at="2026-09-03T18:00:00Z",
+        built_at="2026-08-31T11:30:00Z",
     )
-    return replace(base, **overrides)
+    built = replace(base, **overrides)
+    verification = (
+        supplied_verification
+        if verification_supplied
+        else {
+            "status": "RELEASE VERIFIED",
+            "verified_at": "2026-08-31T11:30:00Z",
+            "commit": built.commit,
+            "runtime_lock_sha256": built.runtime_lock_sha256,
+            "dev_lock_sha256": built.dev_lock_sha256,
+            "config_policy_hash": built.config_policy_hash,
+            "expected_account_suffix": built.expected_account_suffix,
+            "resolved_endpoint": "https://paper-api.alpaca.markets",
+            "candidate_schema_version": built.candidate_schema_version,
+            "checks": {name: "PASS" for name in REQUIRED_CHECKS},
+            "artifact_sha256": {name: "e" * 64 for name in REQUIRED_CHECKS},
+        }
+    )
+    return replace(built, verification=verification or {})
 
 
 # -- account and venue binding -------------------------------------------------
@@ -55,6 +84,24 @@ def test_manifest_refuses_live_endpoint_or_missing_expected_account():
         manifest(resolved_endpoint="https://api.alpaca.markets").validate()
     with pytest.raises(ReleaseError, match="expected account"):
         manifest(expected_account_suffix="").validate()
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    (
+        "https://paper-api.alpaca.markets.evil.example",
+        "https://evil.example/paper-api.alpaca.markets",
+        "http://paper-api.alpaca.markets",
+        "https://paper-api.alpaca.markets/v2",
+        "https://user@paper-api.alpaca.markets",
+    ),
+)
+def test_manifest_requires_the_exact_normalized_paper_endpoint(endpoint):
+    with pytest.raises(ReleaseError, match="paper endpoint"):
+        manifest(resolved_endpoint=endpoint).validate()
+
+    trailing_slash = manifest(resolved_endpoint="https://paper-api.alpaca.markets/")
+    trailing_slash.validate()
 
 
 def test_manifest_requires_a_full_commit_sha():
@@ -72,22 +119,115 @@ def test_account_id_is_reduced_to_a_suffix():
 
 
 def test_scored_start_refuses_dirty_or_wrong_commit_when_release_gate_enabled():
-    manifest().assert_scored_startable()  # clean baseline passes
+    manifest().assert_scored_startable(approved_commit="a" * 40, now=NOW)
 
     with pytest.raises(ReleaseError, match="dirty"):
-        manifest(dirty=True).assert_scored_startable()
+        manifest(dirty=True).assert_scored_startable(approved_commit="a" * 40, now=NOW)
 
     with pytest.raises(ReleaseError, match="not 'scored'"):
-        manifest(environment="dev").assert_scored_startable()
+        manifest(environment="dev").assert_scored_startable(approved_commit="a" * 40, now=NOW)
+
+    with pytest.raises(ReleaseError, match="approved commit"):
+        manifest().assert_scored_startable(approved_commit="", now=NOW)
+    with pytest.raises(ReleaseError, match="approved commit"):
+        manifest().assert_scored_startable(approved_commit="b" * 40, now=NOW)
+
+
+def test_scored_start_refuses_pending_or_incomplete_release_evidence():
+    with pytest.raises(ReleaseError, match="pending release gates"):
+        manifest(pending_gates=("deployment soak",)).assert_scored_startable(
+            approved_commit="a" * 40, now=NOW
+        )
+
+    with pytest.raises(ReleaseError, match="verification evidence"):
+        manifest(verification={}).assert_scored_startable(approved_commit="a" * 40, now=NOW)
+
+    skipped = manifest()
+    skipped.verification["checks"]["cli_proof"] = "SKIP"
+    with pytest.raises(ReleaseError, match="cli_proof"):
+        skipped.assert_scored_startable(approved_commit="a" * 40, now=NOW)
+
+    no_hash = manifest()
+    del no_hash.verification["artifact_sha256"]["deployment_soak"]
+    with pytest.raises(ReleaseError, match="deployment_soak"):
+        no_hash.assert_scored_startable(approved_commit="a" * 40, now=NOW)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("commit", "b" * 40),
+        ("runtime_lock_sha256", "x" * 64),
+        ("dev_lock_sha256", "y" * 64),
+        ("config_policy_hash", "z" * 64),
+        ("expected_account_suffix", "...0000"),
+        ("candidate_schema_version", 99),
+    ),
+)
+def test_scored_start_refuses_evidence_bound_to_another_release(field, value):
+    candidate = manifest()
+    candidate.verification[field] = value
+    with pytest.raises(ReleaseError, match=field):
+        candidate.assert_scored_startable(approved_commit="a" * 40, now=NOW)
+
+
+def test_scored_start_refuses_stale_or_future_dated_evidence():
+    stale = manifest()
+    stale.verification["verified_at"] = "2026-08-30T11:59:59Z"
+    with pytest.raises(ReleaseError, match="stale"):
+        stale.assert_scored_startable(approved_commit="a" * 40, now=NOW)
+
+    future = manifest()
+    future.verification["verified_at"] = "2026-08-31T12:06:00Z"
+    with pytest.raises(ReleaseError, match="future"):
+        future.assert_scored_startable(approved_commit="a" * 40, now=NOW)
+
+
+def test_approved_manifest_must_match_the_current_checkout(tmp_path):
+    path = tmp_path / "release.json"
+    manifest().write(path, environment={})
+
+    loaded = R.load_approved(
+        path,
+        current=manifest(),
+        approved_commit="a" * 40,
+        now=NOW,
+    )
+    assert loaded.commit == "a" * 40
+
+    with pytest.raises(ReleaseError, match="current checkout drift"):
+        R.load_approved(
+            path,
+            current=manifest(runtime_lock_sha256="x" * 64),
+            approved_commit="a" * 40,
+            now=NOW,
+        )
+
+
+def test_approved_manifest_compares_the_endpoint_after_normalization(tmp_path):
+    path = tmp_path / "release.json"
+    manifest(resolved_endpoint="https://paper-api.alpaca.markets/").write(path, environment={})
+
+    loaded = R.load_approved(
+        path,
+        current=manifest(resolved_endpoint="https://paper-api.alpaca.markets"),
+        approved_commit="a" * 40,
+        now=NOW,
+    )
+    assert loaded.resolved_endpoint.endswith("/")
 
 
 def test_manifest_binds_options_only_strategy_allowlist():
     with pytest.raises(ReleaseError, match="options-only"):
-        manifest(strategy_allowlist=("event_vol", "core")).assert_scored_startable()
+        manifest(strategy_allowlist=("event_vol", "core")).assert_scored_startable(
+            approved_commit="a" * 40, now=NOW
+        )
     with pytest.raises(ReleaseError, match="options-only"):
-        manifest(strategy_allowlist=("event_vol", "crypto")).assert_scored_startable()
+        manifest(strategy_allowlist=("event_vol", "crypto")).assert_scored_startable(
+            approved_commit="a" * 40, now=NOW
+        )
     with pytest.raises(ReleaseError, match="empty strategy allowlist"):
-        manifest(strategy_allowlist=()).assert_scored_startable()
+        manifest(strategy_allowlist=()).assert_scored_startable(approved_commit="a" * 40, now=NOW)
 
 
 # -- secrets -------------------------------------------------------------------

@@ -17,6 +17,19 @@ CLI proof.
 
 **Spec:** `docs/superpowers/specs/2026-08-31-profit-win-readiness-design.md`
 
+## Progress ledger
+
+| Checkpoint | Status | Evidence / next action |
+| --- | --- | --- |
+| C0 | Complete | `f23b24b`; remote Python 3.12 CI passed |
+| C1 | Complete | Mandatory external scored-release approval; 576 tests collected |
+| C2 | Next | Idempotent cumulative-fill ledger replay |
+| C3-C6 | Pending | Mutation/reconciliation, runtime boundary, verification, data truth |
+| C7-C10 | Pending | Point-in-time data, replay, candidates, promotion |
+| C11-C12 | Pending | Shadow evaluation and offline release candidate |
+| X1-X4 | Externally gated | Credentials, order authority, VPS, scored activation |
+| C13 | Pending | Canonical evidence-derived submission package |
+
 ## Global constraints
 
 - Base exactly on `c45b23fdf6cb51be1092ea2b0c76d1e7f0128c69`.

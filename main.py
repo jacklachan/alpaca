@@ -30,7 +30,10 @@ from glassbox.journal import Journal  # noqa: E402
 from glassbox.kernel import RiskKernel  # noqa: E402
 from glassbox.manage import KillSwitch, PositionManager  # noqa: E402
 from glassbox.position_ledger import PositionLedger  # noqa: E402
-from glassbox.release import ReleaseError  # noqa: E402
+from glassbox.release import (
+    ReleaseError,  # noqa: E402
+    load_approved,  # noqa: E402
+)
 from glassbox.release import build as build_release  # noqa: E402
 from glassbox.scheduler import Agent, discord  # noqa: E402
 from glassbox.strategies.core import CoreStrategy  # noqa: E402
@@ -104,7 +107,30 @@ def release_manifest():
             "option_underlyings": list(C.SCORED_OPTION_UNDERLYINGS),
         },
         built_at=datetime.now(timezone.utc).isoformat(),
-        pending_gates=("development venue proof", "CLI proof capture", "deployment soak"),
+    )
+
+
+def approved_release_manifest():
+    """Return scored authority or fail before broker construction.
+
+    Development runs have no scored authority and therefore need no release
+    evidence. A scored run cannot turn this gate off: a missing or false flag
+    is itself a refusal.
+    """
+    environment = env.require_choice("ALPACA_ENV", {"dev", "scored"}, default="dev")
+    if environment == "dev":
+        return None
+    if env.get("GLASSBOX_RELEASE_GATE", "") != "1":
+        raise ReleaseError("scored mode requires GLASSBOX_RELEASE_GATE=1")
+
+    approved_commit = env.get("GLASSBOX_APPROVED_COMMIT_SHA", "")
+    path = Path(env.get("GLASSBOX_RELEASE_MANIFEST_PATH", "state/release.json"))
+    if not path.is_absolute():
+        path = Path(__file__).resolve().parent / path
+    return load_approved(
+        path,
+        current=release_manifest(),
+        approved_commit=approved_commit,
     )
 
 
@@ -186,17 +212,15 @@ def main() -> int:
         discord(f":rotating_light: glassbox journal chain broken: {why}")
         return 3
 
-    # Release identity, before credentials are used for anything. When the
-    # gate is on, a scored run must be a clean, reviewed, options-only,
-    # paper-bound commit -- evidence attributed to an unidentified build is
-    # not evidence.
-    if env.get("GLASSBOX_RELEASE_GATE", "0") == "1":
-        try:
-            manifest = release_manifest()
-            manifest.assert_scored_startable()
-        except ReleaseError as exc:
-            log.critical("RELEASE GATE REFUSED START: %s", exc)
-            return 6
+    # Release identity, before credentials are used for anything. Scored mode
+    # cannot disable this gate; development remains available without claiming
+    # scored authority.
+    try:
+        manifest = approved_release_manifest()
+    except (ReleaseError, env.EnvError) as exc:
+        log.critical("RELEASE GATE REFUSED START: %s", exc)
+        return 6
+    if manifest is not None:
         log.info("release gate: commit %s, options-only, paper", manifest.commit[:12])
 
     try:

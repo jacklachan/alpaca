@@ -87,6 +87,15 @@ def test_readme_keeps_the_external_gates_visible():
     assert "no live paper order" in lowered or "no paper order" in lowered
 
 
+def test_scored_release_gate_is_documented_as_mandatory_and_external():
+    example = _doc(".env.example")
+    operations = _doc("docs/OPERATIONS.md")
+    assert "Required in scored mode" in example
+    assert "GLASSBOX_APPROVED_COMMIT_SHA=" in example
+    assert "GLASSBOX_RELEASE_MANIFEST_PATH=" in example
+    assert "always requires `GLASSBOX_RELEASE_GATE=1`" in operations
+
+
 # -- claims that must match the code -------------------------------------------
 
 

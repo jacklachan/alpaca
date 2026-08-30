@@ -25,9 +25,15 @@ python main.py             # run the schedule
 `--dry-run` contacts Alpaca and asserts account identity but never starts the
 clock. Normal and `--once` modes are order-capable.
 
-Set `GLASSBOX_RELEASE_GATE=1` for a scored run. The process then refuses to
-start unless the working tree is clean, the endpoint is the paper endpoint, the
-expected account is bound, and the strategy set is options-only. Expect:
+Scored mode always requires `GLASSBOX_RELEASE_GATE=1`; an absent, false, or
+mistyped value refuses startup before broker construction. Also set
+`GLASSBOX_APPROVED_COMMIT_SHA` to the externally reviewed full commit SHA and
+`GLASSBOX_RELEASE_MANIFEST_PATH` to its evidence-complete manifest. The process
+refuses a dirty or drifted checkout, a non-exact paper endpoint, pending gates,
+stale evidence, non-PASS mandatory checks, invalid proof hashes, wrong account,
+or mismatched commit/lock/policy/candidate identity. Development dry runs do not
+gain scored authority and remain usable without these scored-release inputs.
+Expect:
 
 ```
 release gate: commit f8821cf17009, options-only, paper
