@@ -1,4 +1,37 @@
-# Glassbox implementation handoff
+# Glassbox `utk-review` implementation handoff
+
+**Current program opened:** 2026-08-31
+**Implementation branch:** `utk-review`
+**Audited base:** `c45b23fdf6cb51be1092ea2b0c76d1e7f0128c69`
+**Preserved branches:** `utk` at `5414498`, teammate `origin/review` at
+`c45b23f`, and `main` at `363808c`
+**Completed checkpoint:** C0 - audited branch and planning artifacts
+**Next checkpoint:** C1 - mandatory scored release gate
+
+The independent readiness audit scores this base at 47/100 and says it is not
+safe for scored activation yet. Its blocking findings and the complete staged
+program are in:
+
+- `docs/reviews/2026-08-31-review-branch-audit.md`
+- `docs/superpowers/specs/2026-08-31-profit-win-readiness-design.md`
+- `docs/superpowers/plans/2026-08-31-profit-win-readiness-master-plan.md`
+
+Fresh local verification used managed CPython 3.12.11. The suite passed 532
+tests outside `tests/test_position_ledger.py` and 22 of 23 tests in that file;
+the one deselected test is the existing unbounded Windows dead-PID probe. Ruff
+format/lint, mypy, 33 kernel tests, 22 dashboard tests, crash drill 13/13,
+environment parity, compileall, dependency integrity, notices, claim, license,
+and secret checks passed. The exact base also remains green on its authoritative
+Python 3.12 GitHub Actions run. C4 owns the bounded cross-platform regression;
+no gate will be weakened to hide it.
+
+No credentials are present. No order, deployment, activation, merge,
+default-branch change, or submission is authorized. Ordinary checkpoint pushes
+are authorized only to `origin/utk-review` after their complete gates pass.
+
+---
+
+## Historical teammate handoff at the audited base
 
 **Prepared:** 2026-08-30
 **Branch:** `review` (pushed to `origin/review`; `main` untouched at `363808c`)
