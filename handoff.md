@@ -197,6 +197,10 @@ window closes Friday 4 September 09:30 ET.
    abstain -> kernel -> intent -> lifecycle -> reconciliation.
 5. **Pin GitHub Actions by SHA.** `.github/workflows/ci.yml` still uses
    `@v4`/`@v5` tags. Deliberately not guessed here; resolve the real digests.
+   GitHub also warns on every run that `actions/checkout@v4` and
+   `actions/setup-python@v5` target deprecated Node 20 and are being forced
+   onto Node 24. It is a warning, not a failure, and bumping to current major
+   versions resolves it at the same time as the pinning.
 
 ## 6. Open gates -- do not close these on your own authority
 
@@ -207,6 +211,7 @@ window closes Friday 4 September 09:30 ET.
 | MCP | **Not claimed** | No MCP integration exists. `tests/test_claims.py` fails the build if the docs start claiming one |
 | Deployment / soak | **Open** | Named VPS/SSH target, reviewed full SHA, secret delivery, successful dev proof |
 | Scored activation | **Open** | All of the above, a fresh dedicated $100,000 paper account, exact identity proof, explicit direction |
+| Python 3.12 re-verification | **Open** | Everything here was verified on 3.13.12 because 3.12 was unavailable on the host. CI runs 3.12 and is green, which covers it for now, but re-run the matrix locally on 3.12 before any release claim |
 | Legal -- copyright line | **Needs your confirmation** | `LICENSE` reads `Copyright (c) 2026 The Glassbox Contributors`. You chose "a team name" but did not give the exact string, so a collective holder was used rather than guessing between the repo owner, the audit docs' author, and the account running the build. **Change the single line if a specific legal entity is wanted.** |
 
 No claim of completed paper execution, realized P&L, deployment, soak, MCP, or
