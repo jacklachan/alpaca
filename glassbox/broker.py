@@ -598,6 +598,28 @@ class Broker:
         )
         return state
 
+    def portfolio_history(self, *, period: str = "1W", timeframe: str = "1D"):
+        """Alpaca's own equity curve for the account. Read-only.
+
+        The competition scores total account equity, so the scorer's number is
+        the one worth reporting. Reconstructing equity from our fill log would
+        be rebuilding a figure the venue already publishes, and any drift
+        between the two would be ours to explain.
+        """
+        from alpaca.trading.requests import GetPortfolioHistoryRequest
+
+        request = GetPortfolioHistoryRequest(period=period, timeframe=timeframe)
+        return self._call(
+            lambda: self.trading.get_portfolio_history(request),
+            "get_portfolio_history",
+        )
+
+    def performance(self, *, period: str = "1W", timeframe: str = "1D"):
+        """Equity curve reduced to a reportable, caveated summary."""
+        from .performance import summarize_history
+
+        return summarize_history(self.portfolio_history(period=period, timeframe=timeframe))
+
     # -- writes ----------------------------------------------------------------
 
     def submit(

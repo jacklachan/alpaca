@@ -21,6 +21,8 @@ from __future__ import annotations
 import json
 import os
 from collections import Counter
+from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -161,6 +163,115 @@ def _equity_series(records: list[dict]) -> list[dict]:
     return pts
 
 
+#: The decision chain, in the order a reader should follow it. Judges are
+#: asking "what actually decided this trade?", and the answer is only
+#: convincing if the whole path is visible -- including the abstentions and
+#: refusals, which are the steps that prove the AI could not act alone.
+LINEAGE_STAGES = (
+    ("CANDIDATE_SET_BUILT", "deterministic candidates built"),
+    ("CANDIDATE_SELECTED", "AI selected one candidate id"),
+    ("CANDIDATE_ABSTAINED", "AI abstained"),
+    ("CANDIDATE_SELECTION_INVALID", "AI response refused"),
+    ("SCORED_POLICY_REFUSED", "policy refused before the kernel"),
+    ("PLAN_APPROVED", "risk kernel approved"),
+    ("PLAN_REFUSED", "risk kernel refused"),
+    ("ORDER_SUBMIT_INTENT", "intent journalled before submit"),
+    ("ORDER_ACCEPTED", "venue accepted the order"),
+    ("ORDER_SUBMIT_RECONCILED", "ambiguous submit reconciled by client id"),
+    ("ORDER_SUBMIT_AMBIGUOUS", "submit outcome unknown; faulted"),
+    ("EXECUTION_FINISHED", "execution terminal"),
+    ("EXIT_INTENT", "exit intent journalled"),
+    ("EXIT_ORDER_TERMINAL", "exit order terminal"),
+    ("POSITION_RECONCILED", "positions reconciled with the venue"),
+    ("POSITION_RECONCILE_FAULT", "reconciliation faulted; entries blocked"),
+)
+_STAGE_LABEL = dict(LINEAGE_STAGES)
+_STAGE_ORDER = {name: i for i, (name, _) in enumerate(LINEAGE_STAGES)}
+
+
+def _performance(records: list[dict]) -> dict:
+    """Risk-adjusted view of the equity curve the journal recorded.
+
+    Journal-derived on purpose: the dashboard must stay credential-free. The
+    authoritative curve is Alpaca's own portfolio history, which the agent
+    reads separately -- this is the same measurement over what we observed.
+    """
+    from glassbox.performance import EquityPoint, summarize
+
+    # Read the recorded string, not _equity_series' float: a float round-trip
+    # turns "100000" into "100000.0" and quietly loses the exactness the rest
+    # of this system is built on.
+    points = []
+    for record in records:
+        if record.get("event") != "HEARTBEAT":
+            continue
+        raw = (record.get("payload") or {}).get("equity")
+        if raw is None:
+            continue
+        try:
+            points.append(
+                EquityPoint(
+                    at=datetime.fromisoformat(str(record["ts"]).replace("Z", "+00:00")),
+                    equity=Decimal(str(raw)),
+                )
+            )
+        except Exception:
+            continue
+    summary = summarize(points).as_dict()
+    summary["source"] = "journal heartbeats"
+    return summary
+
+
+def _lineage(records: list[dict], limit: int = 12) -> list[dict]:
+    """Group the journal into per-plan decision chains, newest first."""
+    chains: dict[str, dict] = {}
+    for record in records:
+        event = record.get("event", "")
+        if event not in _STAGE_ORDER:
+            continue
+        payload = record.get("payload") or {}
+        plan_id = str(payload.get("plan_id") or payload.get("candidate_id") or "") or "(no plan)"
+        chain = chains.setdefault(
+            plan_id, {"plan_id": plan_id, "steps": [], "first_ts": record.get("ts")}
+        )
+        chain["steps"].append(
+            {
+                "event": event,
+                "label": _STAGE_LABEL.get(event, event),
+                "ts": record.get("ts"),
+                "detail": _lineage_detail(event, payload),
+            }
+        )
+        chain["last_ts"] = record.get("ts")
+    ordered = sorted(chains.values(), key=lambda c: c.get("last_ts") or "", reverse=True)
+    return ordered[:limit]
+
+
+def _lineage_detail(event: str, payload: dict) -> str:
+    """One short, safe line per step. Never raw provider or model text."""
+    if event == "CANDIDATE_SET_BUILT":
+        return f"{payload.get('count', '?')} candidates, set hash {str(payload.get('manifest_hash', ''))[:12]}"
+    if event == "CANDIDATE_SELECTED":
+        return f"candidate {str(payload.get('candidate_id', ''))[:20]}"
+    if event in ("CANDIDATE_ABSTAINED", "CANDIDATE_SELECTION_INVALID"):
+        return str(payload.get("reason", ""))[:120]
+    if event in ("PLAN_REFUSED", "SCORED_POLICY_REFUSED"):
+        return str(payload.get("reason") or payload.get("failed_invariant", ""))[:120]
+    if event == "PLAN_APPROVED":
+        return str(payload.get("reason", ""))[:120]
+    if event in ("ORDER_SUBMIT_INTENT", "EXIT_INTENT"):
+        return f"{payload.get('side', '')} {payload.get('qty', '')} {payload.get('symbol', '')}"
+    if event == "ORDER_ACCEPTED":
+        return f"venue order {str(payload.get('broker_order_id', ''))[:18]}"
+    if event == "EXIT_ORDER_TERMINAL":
+        return f"{payload.get('status', '')}, filled {payload.get('filled_qty', '')}, remaining {payload.get('remaining_qty', '')}"
+    if event == "POSITION_RECONCILE_FAULT":
+        return "; ".join(str(r) for r in (payload.get("reasons") or []))[:160]
+    if event == "POSITION_RECONCILED":
+        return f"{len(payload.get('symbols') or [])} contracts exact"
+    return ""
+
+
 # ----------------------------------------------------------------- JSON API
 
 
@@ -180,6 +291,16 @@ def api_journal(limit: int = 300, all_events: bool = False) -> JSONResponse:
 @app.get("/api/equity")
 def api_equity() -> JSONResponse:
     return JSONResponse(_equity_series(_load()))
+
+
+@app.get("/api/performance")
+def api_performance() -> JSONResponse:
+    return JSONResponse(_performance(_load()))
+
+
+@app.get("/api/lineage")
+def api_lineage(limit: int = 12) -> JSONResponse:
+    return JSONResponse(_lineage(_load(), limit=max(1, min(limit, 50))))
 
 
 @app.get("/api/verify")
@@ -293,8 +414,20 @@ td{padding:8px 10px;border-bottom:1px solid var(--rule)}
   <h2>Account equity</h2>
   <div class="card"><div id="chart"></div></div>
 
+  <h2>Risk-adjusted performance</h2>
+  <div class="card">
+    <div class="grid g4" id="perf"></div>
+    <p class="n2" id="perf-note" style="margin:12px 0 0"></p>
+  </div>
+
   <h2>Scored window</h2>
   <div class="card"><table id="cal"></table></div>
+
+  <h2>Decision lineage</h2>
+  <p class="sub" style="margin:0 0 10px">Every step from deterministic candidate
+  to venue reconciliation, including the abstentions and refusals. The AI appears
+  at exactly one step and can only name an id already in the set.</p>
+  <div class="card" id="lineage"><div class="empty">loading&hellip;</div></div>
 
   <h2>Decision journal</h2>
   <div class="controls">
@@ -442,10 +575,51 @@ function wire(){
   document.getElementById("f-raw").onclick=()=>set(FILTER,!RAW);
 }
 
+function perf(p){
+  const sign = v => (v>=0?"+":"")+Number(v).toFixed(2);
+  const cls  = v => v>=0 ? "pos" : "neg";
+  // Ratios built from a handful of daily points are noise with a Greek letter
+  // attached. Render them, but never without the caveat that produced them.
+  const hedge = p.ratios_are_indicative ? ' <span class="pill">indicative</span>' : "";
+  document.getElementById("perf").innerHTML = `
+    <div class="card"><div class="k">Total return</div>
+      <div class="v ${cls(p.total_return_pct)}">${sign(p.total_return_pct)}%</div>
+      <div class="n2">${money(Number(p.absolute_pnl))} on total account equity</div></div>
+    <div class="card"><div class="k">Max drawdown</div>
+      <div class="v neg">${Number(p.max_drawdown_pct).toFixed(2)}%</div>
+      <div class="n2">peak to trough, not start to finish</div></div>
+    <div class="card"><div class="k">Sharpe${hedge}</div>
+      <div class="v">${Number(p.sharpe_ratio).toFixed(2)}</div>
+      <div class="n2">annualised from ${p.observations} observation(s)</div></div>
+    <div class="card"><div class="k">Sortino${hedge}</div>
+      <div class="v">${Number(p.sortino_ratio).toFixed(2)}</div>
+      <div class="n2">downside deviation only; upside is not risk</div></div>`;
+  const notes = (p.notes||[]).map(esc).join(" &middot; ");
+  document.getElementById("perf-note").innerHTML = notes ||
+    `Volatility ${Number(p.volatility_pct).toFixed(1)}% annualised &middot; source: ${esc(p.source||"journal")}`;
+}
+
+function lineage(rows){
+  const el = document.getElementById("lineage");
+  if(!rows.length){ el.innerHTML = '<div class="empty">no decisions recorded yet</div>'; return; }
+  el.innerHTML = rows.map(c=>`
+    <div style="padding:10px 0;border-bottom:1px solid var(--rule)">
+      <div class="mono" style="font-size:12px;color:var(--muted)">${esc(c.plan_id)}</div>
+      <ol style="margin:8px 0 0;padding-left:18px">
+        ${c.steps.map(st=>`<li style="margin:3px 0">
+            <b>${esc(st.label)}</b>
+            ${st.detail?`<span class="n2"> &mdash; ${esc(st.detail)}</span>`:""}
+          </li>`).join("")}
+      </ol>
+    </div>`).join("");
+}
+
 async function tick(){
   try{
-    const [s,v,e]=await Promise.all([j("/api/summary"),j("/api/verify"),j("/api/equity")]);
-    stats(s); chain(v,s); chart(e); await timeline();
+    const [s,v,e,p,l]=await Promise.all([
+      j("/api/summary"),j("/api/verify"),j("/api/equity"),
+      j("/api/performance"),j("/api/lineage")]);
+    stats(s); chain(v,s); chart(e); perf(p); lineage(l); await timeline();
   }catch(err){ console.error(err); }
 }
 wire(); calendar(); tick(); setInterval(tick, 20000);

@@ -269,3 +269,33 @@ def test_cancel_and_confirm_surfaces_unknown_lookup_rather_than_assuming_absent(
 
     with pytest.raises(broker_module.OrderStateUncertain, match="client-1"):
         broker.cancel_and_confirm("broker-1", "client-1", timeout=0.01, poll_seconds=0)
+
+
+# -- performance reporting -----------------------------------------------------
+
+
+def test_portfolio_history_is_read_only_and_summarised():
+    broker = Broker.__new__(Broker)
+    broker.journal = None
+    broker.bucket = broker_module.TokenBucket(rate_per_min=10_000)
+    calls: list[object] = []
+
+    def get_portfolio_history(request):
+        calls.append(request)
+        base = 1_756_650_000
+        return SimpleNamespace(
+            timestamp=[base, base + 86400, base + 172800],
+            equity=["100000", "101500", "99500"],
+        )
+
+    broker.trading = SimpleNamespace(get_portfolio_history=get_portfolio_history)
+
+    summary = broker.performance()
+
+    assert len(calls) == 1, "the equity curve must be fetched exactly once"
+    assert summary.starting_equity == Decimal("100000")
+    assert summary.ending_equity == Decimal("99500")
+    assert summary.absolute_pnl == Decimal("-500")
+    # Peak 101500 -> trough 99500 is a larger decline than start-to-finish.
+    assert summary.max_drawdown_pct < summary.total_return_pct
+    assert summary.ratios_are_indicative is True

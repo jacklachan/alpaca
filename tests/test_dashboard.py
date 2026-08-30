@@ -175,3 +175,141 @@ class TestSafety:
         seed(path)
         for r in ROUTES:
             assert "SUPERSECRETVALUE" not in c.get(r).text
+
+
+# -- performance and lineage (evidence UX) ------------------------------------
+
+
+def _journal_with(tmp_path, monkeypatch, records):
+    """Point the dashboard at a journal containing exactly these events."""
+    import dashboard.app as app_module
+    from glassbox.journal import Journal
+
+    path = tmp_path / "journal.jsonl"
+    journal = Journal(path)
+    for actor, event, payload in records:
+        journal.append(actor, event, payload)
+    monkeypatch.setattr(app_module, "JOURNAL_PATH", str(path))
+    return app_module
+
+
+def test_performance_endpoint_measures_the_heartbeat_equity_curve(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    app_module = _journal_with(
+        tmp_path,
+        monkeypatch,
+        [
+            ("scheduler", "HEARTBEAT", {"equity": "100000"}),
+            ("scheduler", "HEARTBEAT", {"equity": "103000"}),
+            ("scheduler", "HEARTBEAT", {"equity": "101000"}),
+        ],
+    )
+    body = TestClient(app_module.app).get("/api/performance").json()
+
+    assert body["starting_equity"] == "100000"
+    assert body["ending_equity"] == "101000"
+    assert body["absolute_pnl"] == "1000"
+    # Peak 103000 -> trough 101000 is a real decline the total return hides.
+    assert body["max_drawdown_pct"] < 0
+    assert body["source"] == "journal heartbeats"
+
+
+def test_performance_endpoint_marks_a_short_window_indicative(tmp_path, monkeypatch):
+    """The panel must never show a confident Sharpe from three heartbeats."""
+    from fastapi.testclient import TestClient
+
+    app_module = _journal_with(
+        tmp_path,
+        monkeypatch,
+        [("scheduler", "HEARTBEAT", {"equity": str(100000 + i * 500)}) for i in range(3)],
+    )
+    body = TestClient(app_module.app).get("/api/performance").json()
+
+    assert body["ratios_are_indicative"] is True
+    assert body["notes"], "a ratio was published with no caveat attached"
+
+
+def test_lineage_shows_the_whole_decision_chain_for_one_plan(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    app_module = _journal_with(
+        tmp_path,
+        monkeypatch,
+        [
+            ("scheduler", "CANDIDATE_SET_BUILT", {"plan_id": "gbp-1", "count": 2}),
+            ("thesis", "CANDIDATE_SELECTED", {"plan_id": "gbp-1", "candidate_id": "gbp-1"}),
+            ("kernel", "PLAN_APPROVED", {"plan_id": "gbp-1", "reason": "all invariants"}),
+            ("execute", "ORDER_SUBMIT_INTENT", {"plan_id": "gbp-1", "symbol": "SPY", "qty": "2"}),
+            ("broker", "ORDER_ACCEPTED", {"plan_id": "gbp-1", "broker_order_id": "abc"}),
+        ],
+    )
+    rows = TestClient(app_module.app).get("/api/lineage").json()
+
+    assert len(rows) == 1
+    events = [step["event"] for step in rows[0]["steps"]]
+    assert events == [
+        "CANDIDATE_SET_BUILT",
+        "CANDIDATE_SELECTED",
+        "PLAN_APPROVED",
+        "ORDER_SUBMIT_INTENT",
+        "ORDER_ACCEPTED",
+    ]
+    assert all(step["label"] for step in rows[0]["steps"])
+
+
+def test_lineage_keeps_abstentions_and_refusals_visible(tmp_path, monkeypatch):
+    """The steps that prove the AI could not act alone are the ones a judge
+    most needs to see, so they must never be filtered out as noise."""
+    from fastapi.testclient import TestClient
+
+    app_module = _journal_with(
+        tmp_path,
+        monkeypatch,
+        [
+            ("scheduler", "CANDIDATE_SET_BUILT", {"plan_id": "gbp-2", "count": 2}),
+            ("thesis", "CANDIDATE_ABSTAINED", {"plan_id": "gbp-2", "reason": "model timeout"}),
+        ],
+    )
+    rows = TestClient(app_module.app).get("/api/lineage").json()
+
+    labels = [s["event"] for s in rows[0]["steps"]]
+    assert "CANDIDATE_ABSTAINED" in labels
+    assert "model timeout" in rows[0]["steps"][-1]["detail"]
+
+
+def test_lineage_detail_never_carries_raw_untrusted_text_unbounded(tmp_path, monkeypatch):
+    """Model and provider text is untrusted. It is truncated here and escaped
+    in the page; an unbounded passthrough would be a stored-XSS surface."""
+    from fastapi.testclient import TestClient
+
+    app_module = _journal_with(
+        tmp_path,
+        monkeypatch,
+        [
+            (
+                "thesis",
+                "CANDIDATE_ABSTAINED",
+                {"plan_id": "gbp-3", "reason": "<script>alert(1)</script>" + "A" * 500},
+            )
+        ],
+    )
+    rows = TestClient(app_module.app).get("/api/lineage").json()
+    detail = rows[0]["steps"][0]["detail"]
+
+    assert len(detail) <= 120
+    page = TestClient(app_module.app).get("/").text
+    assert "esc(st.detail)" in page, "lineage detail is rendered without escaping"
+
+
+def test_lineage_limit_is_bounded(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    app_module = _journal_with(
+        tmp_path,
+        monkeypatch,
+        [("scheduler", "CANDIDATE_SET_BUILT", {"plan_id": f"gbp-{i}"}) for i in range(80)],
+    )
+    client = TestClient(app_module.app)
+    assert len(client.get("/api/lineage?limit=5").json()) == 5
+    assert len(client.get("/api/lineage?limit=9999").json()) <= 50
