@@ -1,341 +1,249 @@
-# Alpaca Hackathon Implementation Handoff
+# Glassbox implementation handoff
 
 **Prepared:** 2026-08-30
-
-**Repository:** `C:\Users\Utkarsh\Desktop\Project\Trading\alpaca`
-
-**Branch:** `review`
-
-**Starting point:** `f2d25c7`
-
-**Completed implementation checkpoint:**
-`3fac4c60b127aae196d0c44fec7b0536712d5f80`
-
-**Remote state at checkpoint:** local `review` was 11 commits ahead of
-`origin/review`; nothing was pushed or merged
-
-## 1. Executive Status
-
-The approved Approach A implementation is complete through the final local
-verification checkpoint.
-
-Glassbox now has one scored execution contract: deterministic code creates
-immutable, fully priced SPY/QQQ option candidates; bounded AI may select exactly
-one supplied candidate ID or abstain; the selected original candidate still
-passes through the deterministic risk kernel and hardened executor. Equity and
-crypto sleeves are not registered on the scored account. Crypto remains a
-separate development connectivity proof only.
-
-All implementation, test, release, documentation, dashboard, and demo-truth
-work is complete and committed. The remaining work is operational and is
-correctly blocked on external inputs:
-
-1. Development Alpaca credentials plus explicit expected dev/scored account
-   IDs for the bounded venue proof.
-2. Explicit direction to make the reviewed commit available remotely, because
-   the current commits are local only.
-3. A VPS/SSH target for exact-SHA deployment and soak.
-4. Explicit user direction before any live paper order, push, deployment, or
-   scored activation.
-
-No live order, deployment, push, merge, or hackathon submission was performed.
-
-## 2. Governing Documents
-
-- Master status and checkpoint plan: `IMPLEMENTATION-PLAN.md`
-- Approved architecture:
-  `docs/superpowers/specs/2026-08-29-options-only-proof-first-design.md`
-- Detailed TDD implementation plan:
-  `docs/superpowers/plans/2026-08-29-options-only-proof-first.md`
-- Current product overview: `README.md`
-- Current operating decisions: `DECISIONS.md`
-- Current operational plan: `PLAN.md`
-
-Treat those files as current. `HANDOVER.md` and `HANDOVER-2.md` were reconciled
-to the same truthful product state, but this lowercase `handoff.md` is the most
-precise continuation record.
-
-## 3. Exact Commit Ledger
-
-All implementation commits are descendants of `f2d25c7` in this order:
-
-| Commit | Purpose |
-| --- | --- |
-| `5d807ee` | Record the approved design and detailed TDD plan |
-| `6c58dac` | Bind credentials to explicit expected account IDs |
-| `3e6e7c3` | Add terminal cancellation confirmation |
-| `ff29e4b` | Bound and exactly reconcile the live venue proof |
-| `75cca48` | Prevent residual and overlapping entry orders |
-| `8b5b9fd` | Add deterministic IDs, submission intent, and ambiguous-submit reconciliation |
-| `9810390` | Add atomic fail-closed safety-state persistence |
-| `6c0ea74` | Bound AI to selecting or abstaining among supplied candidates |
-| `a225c80` | Enforce the options-only scored scheduler |
-| `973edf8` | Pin dependencies, reviewed releases, and verification gates |
-| `3fac4c6` | Finalize immutable candidates, truthful artifacts, safe practice, and the final proof checkpoint |
-
-The documentation-only commit containing this handoff should be `HEAD` when
-this file is read. The exact implementation checkpoint remains `3fac4c6`.
-
-## 4. Audit Findings — Resolution Map
-
-### Finding 1 — Environment labels did not bind account identity
-
-**Resolved.** `glassbox/env.py` requires explicit expected development and
-scored account IDs and refuses equal IDs. `glassbox/broker.py` compares the
-broker-returned account number with the expected ID during readiness checks.
-
-### Finding 2 — Live check could affect pre-existing holdings or exit zero on uncertainty
-
-**Resolved in code and tests.** `tools/live_check.py` now:
-
-- enforces `0 < notional <= $50.00` before submit;
-- requires an exact clean position/open-order baseline;
-- settles entry cancellation to terminal state;
-- sells only the exact quantity filled by the test entry;
-- never calls symbol-wide `close_position`;
-- terminally settles the exit;
-- proves exact flat state and no residual test orders; and
-- returns nonzero for timeouts, cleanup warnings, or uncertain state.
-
-The live proof itself remains unperformed because credentials and expected IDs
-were not supplied.
-
-### Findings 3–4 — Cancel/reprice race and residual GTC orders
-
-**Resolved.** `glassbox/broker.py` exposes terminal cancellation polling.
-`glassbox/execute.py` refreshes late fills from the terminal order before
-calculating remaining quantity, refuses a replacement when cancellation is
-uncertain, and cleans up incomplete equity, crypto, and option entry orders.
-
-### Finding 5 — Random IDs made restart reconciliation ambiguous
-
-**Resolved.** `glassbox/ids.py` creates stable IDs from canonical semantic
-inputs. Strategies create deterministic plan IDs. The executor journals
-`ORDER_SUBMIT_INTENT` before submission and adopts only an order observed under
-the original client-order ID after an ambiguous broker exception.
-
-### Finding 6 — Direct JSON writes and fail-open corruption
-
-**Resolved.** `glassbox/state.py` implements same-directory temporary writes,
-file fsync, atomic replace, and directory fsync where supported. Manage and
-scheduler state validate on read and fail closed on corruption/write errors.
-
-### Finding 7 — Default-branch deployment and unpinned dependencies
-
-**Resolved in release tooling.** Runtime and development dependencies have
-exact transitive locks. `deploy/setup.sh` requires a full 40-character reviewed
-SHA, fetches and detaches that exact object, verifies `HEAD`, and installs the
-runtime lock. An executable command-stubbed harness covers refusal, checkout,
-verification, and lock behavior.
-
-Operational deployment is still blocked because the commits are not pushed and
-no VPS target was supplied.
-
-### Finding 8 — AI/integration claims exceeded implementation
-
-**Resolved.** `glassbox/thesis.py` has no plan-proposal path. AI output may name
-one existing candidate ID or abstain. Invalid output, unknown IDs, missing
-credentials, and model failures abstain. The exact original candidate is
-returned; model output cannot author trade fields. Public artifacts describe
-the Alpaca Trading/Data APIs and CLI actually used and make no unimplemented
-integration claim.
-
-### Finding 9 — Scored path included equity/crypto sleeves
-
-**Resolved.** `glassbox/scheduler.py` registers deterministic SPY and QQQ event
-option strategies only in scored mode, omits the crypto job, selects at most one
-candidate, and refuses any injected non-option candidate before kernel review.
-
-### Finding 10 — Documentation, UI, demo, and submission claims diverged
-
-**Resolved.** README, plans, decisions, handovers, social copy, dashboard, CLI
-help, schema commentary, and practice flow now agree on the actual system and
-show the live/deploy gates. `tools/practice.py` is read-only; the only
-write-capable development proof is the separately authorized bounded
-`tools/live_check.py` flow.
-
-## 5. Important Code Map
-
-| Area | Primary files | Contract |
-| --- | --- | --- |
-| Account boundary | `glassbox/env.py`, `glassbox/broker.py` | Expected account ID must match broker account |
-| Live venue proof | `tools/live_check.py`, `tests/test_live_check.py` | `$50` cap, clean baseline, exact created quantity, exact cleanup |
-| Order execution | `glassbox/execute.py`, `tests/test_execute.py` | Intent-first submit, terminal cancel, no overlap or residual order |
-| Stable identity | `glassbox/ids.py`, strategy modules | Same opportunity produces same plan/client IDs |
-| Durable state | `glassbox/state.py`, `glassbox/manage.py`, `glassbox/scheduler.py` | Atomic state; corruption and write failure fail closed |
-| Candidate schema | `glassbox/schema.py` | Frozen plan with tuple-backed option legs and evidence |
-| Bounded AI | `glassbox/thesis.py`, `tests/test_thesis.py` | Select existing ID or abstain; never construct a plan |
-| Scored policy | `glassbox/scheduler.py`, `tests/test_scheduler.py` | SPY/QQQ options only, at most one selected plan per cycle |
-| Release | locks, `Makefile`, CI workflow, `deploy/setup.sh` | Exact dependencies and exact reviewed commit |
-| Evidence UI | `dashboard/app.py`, `tests/test_dashboard.py` | Read-only truthful candidate/kernel/order timeline |
-| Safe rehearsal | `tools/practice.py` | Read-only dev account and kernel demonstration |
-| Recovery proof | `tools/crash_drill.py`, `tests/test_crash_drill.py` | Wait for first durable append before kill/restart drill |
-
-## 6. Fresh Verification Evidence
-
-Verification was run after the final behavior changes on 2026-08-30.
-
-| Gate | Result |
-| --- | --- |
-| uv-managed CPython 3.12.11 + `requirements-dev.lock` full suite | `232 passed in 18.09s` |
-| Existing Windows project environment, CPython 3.10.11 full suite | `232 passed in 102.79s` |
-| Deterministic kernel suite | `33 passed in 0.75s` |
-| Executable deploy harness | `8 passed in 58.47s` |
-| Dashboard response/body suite | `12 passed in 3.50s` |
-| Crash-recovery drill, eight real kill/restart rounds | `DRILL PASSED — 13/13 checks` |
-| Crash-drill readiness regression | `2 passed` after the pre-fix test failed |
-| Environment parity | systemd and python-dotenv agree on all 9 variables |
-| Dependency consistency | no broken requirements |
-| Ruff format | 56 files formatted |
-| Ruff lint | all checks passed |
-| mypy | no issues in 31 production source files |
-| Compile | `compileall` passed for `glassbox`, `dashboard`, `tools`, and `main.py` |
-| Claim scan | no stale generative-AI, old test-count, multi-sleeve, or unimplemented-integration claim |
-| Secret scan | no live-looking Alpaca/Anthropic credential found outside ignored documentation |
-| Diff hygiene | `git diff --check` passed |
-
-One host-specific observation: during an earlier Windows CPython 3.10 run,
-Python printed intermittent native access-violation diagnostics while starting
-AnyIO TestClient threads and Git Bash subprocesses, but the processes continued
-and all tests exited zero. The final target CPython 3.12 exact-lock run was
-clean, fast, and exited zero. The current CI definition mirrors the target 3.12
-lock and `make verify`; it has not been executed by hosted CI for these local
-commits because pushing was explicitly out of scope.
-
-## 7. External Gates and Required Inputs
-
-### Gate A — Development Venue Proof
-
-Still required:
-
-- `ALPACA_API_KEY` for the development paper account.
-- `ALPACA_SECRET_KEY` for that account.
-- `ALPACA_EXPECTED_DEV_ACCOUNT_ID`.
-- `ALPACA_EXPECTED_SCORED_ACCOUNT_ID`, distinct from the dev ID.
-- Paper base URL and `ALPACA_PAPER_TRADE=true` as represented in
-  `.env.example`.
-- Explicit user authorization to place the bounded paper order.
-
-Do not use scored credentials for this proof. Do not increase the hard `$50.00`
-ceiling. Stop on any dirty baseline, identity mismatch, partial cleanup, or
-uncertain order state.
-
-### Gate B — Remote Availability and VPS Deployment
-
-Still required:
-
-- Explicit permission to push or otherwise publish the reviewed commit.
-- Confirmation of the exact 40-character commit SHA to deploy.
-- VPS hostname/IP, SSH user, and approved authentication route.
-- Runtime secret-delivery method.
-- Successful development venue proof evidence.
-
-`deploy/setup.sh` fetches an exact remote object; the current local-only commit
-cannot be deployed through that script until the SHA is available from the
-configured remote.
-
-### Gate C — Scored Activation
-
-Still required:
-
-- Successful venue proof and VPS soak.
-- Reconfirmation of the expected scored account ID.
-- Explicit user direction.
-- Any organizer clarification that materially changes the approved
-  options-only strategy. In the absence of such clarification, keep scored mode
-  options-only.
-
-## 8. Safe Continuation Commands
-
-Run from the repository root.
-
-### Re-establish local state
-
-```powershell
-git status --short --branch
-git log --oneline --decorate -15
-git rev-parse HEAD
-```
-
-Expected after this handoff is committed: branch `review`, clean working tree,
-with documentation-only handoff commits at `HEAD` and implementation checkpoint
-`3fac4c60b127aae196d0c44fec7b0536712d5f80` reachable directly beneath them.
-
-### Re-run the target-runtime proof
-
-```powershell
-uv run --isolated --python 3.12 --with-requirements requirements-dev.lock -- python -m pytest -q
-```
-
-### Re-run the complete local verification contract
-
-Use a Python environment installed from `requirements-dev.lock`, then:
-
-```powershell
-python -m ruff format --check .
-python -m ruff check .
-python -m mypy glassbox dashboard tools main.py
-python -m pytest -q
-python -m pytest tests/test_kernel.py -q
-python tools/crash_drill.py -n 8 --seed 1
-python tools/env_parity.py .env.example
-python -m compileall -q glassbox dashboard tools main.py
-python -m pip check
-```
-
-### After Gate A inputs are supplied
-
-First run the read-only check:
-
-```powershell
-python tools/live_check.py
-```
-
-Only after it proves identity and cleanliness, and only with explicit
-authorization, run the bounded trade proof:
-
-```powershell
-python tools/live_check.py --trade --notional 50
-```
-
-Preserve command output and journal evidence. A nonzero result is a stop signal,
-not permission to retry blindly.
-
-### After Gate B inputs are supplied
-
-On the named Debian/Ubuntu target, with the exact published reviewed SHA:
+**Branch:** `review` (pushed to `origin/review`; `main` untouched)
+**HEAD at handoff:** `73d230716249c1b50d5e1ca5bf231eeaa735f8e3`
+**Starting point for this session:** `eea74d0` (Task B, candidate provenance)
+**Verification:** `make verify` exits 0; **394 tests pass**; crash drill 13/13
+
+This session continued the audit-derived backlog in
+`GLASSBOX-REFERENCE-MASTER-PLAN.md`. It did not reopen the reference audit and
+did not redo completed checkpoints. No order was placed, no deployment
+happened, and nothing was merged to `main`.
+
+---
+
+## 1. Read this first
+
+The product contract is unchanged and is the thing to protect:
+
+1. Deterministic code acquires and validates Alpaca account, clock, active
+   option contracts, and timestamped quotes.
+2. Deterministic SPY/QQQ strategies build fully specified, pre-priced option
+   candidates with stable identity.
+3. Bounded AI returns **exactly one offered candidate ID, or abstains**. Any
+   timeout, model error, malformed output, extra field, unknown ID, altered
+   object, or missing credential means abstention.
+4. The exact original immutable candidate passes deterministic policy and the
+   risk kernel.
+5. Intent is durable before mutation; every transition stays attributable to
+   deterministic plan/client-order identity.
+6. Success means venue-confirmed terminal order state and exact per-contract
+   position reconciliation -- never request acceptance or a local log entry.
+
+Equity and crypto remain disabled on the scored account.
+
+## 2. Environment note (read before you run anything)
+
+The repository was authored on Windows and now also runs on macOS. Two things
+follow.
+
+- **Line endings.** The working tree arrived with CRLF while every committed
+  blob is LF, which made `git status` show 40 files as modified with a ~19,000
+  line phantom diff. It was verified to be line-ending-only (every file byte
+  identical modulo `\r`) and normalised. If you see that again, check
+  `git diff HEAD --raw` -- it reports the real change set -- before believing
+  `git status`. Consider adding a `.gitattributes` with `* text=auto eol=lf`.
+- **Python.** The committed `.venv/` is a Windows venv (`Scripts/`, not
+  `bin/`). This session used a separate `.venv-mac/` on Python 3.13.12 because
+  3.12 was unavailable on the host. **The release target is still 3.12**; CI
+  runs 3.12 and that remains authoritative. Re-run the matrix on 3.12 before
+  any release claim.
 
 ```bash
-sudo bash deploy/setup.sh <full-40-character-reviewed-commit-sha>
-sudo -u glassbox /opt/glassbox/.venv/bin/python /opt/glassbox/main.py --dry-run
-sudo bash /opt/glassbox/tools/soak.sh 30 3
+python3 -m venv .venv-mac && .venv-mac/bin/python -m pip install -r requirements-dev.lock
+make verify PYTHON=.venv-mac/bin/python
 ```
 
-Verify detached `HEAD`, dependency lock installation, journal integrity,
-systemd restart behavior, and dashboard health before considering scored mode.
+## 3. What was completed this session
 
-## 9. Do Not Regress These Boundaries
+Each item is one commit and one rollback boundary.
 
-- Do not replace expected account IDs with an environment label check.
-- Do not treat a cancellation request as a terminal cancellation.
-- Do not submit a replacement while an earlier order may still fill.
-- Do not close a symbol-wide position in the venue proof.
-- Do not retry an ambiguous submit under a new client-order ID.
-- Do not restore direct JSON safety-state writes or warning-and-continue reads.
-- Do not let AI return trade fields or construct a `TradePlan`.
-- Do not register equity or crypto strategies on the scored path without a new,
-  explicit product decision.
-- Do not restore a live-order option to `tools/practice.py`.
-- Do not deploy a branch name, default branch, short SHA, or unlocked dependency
-  set.
-- Do not claim a venue proof, deployment, soak duration, performance, or hosted
-  CI run without the corresponding evidence.
+| Commit | Task | What it changes |
+| --- | --- | --- |
+| `58144e7` | C | Typed Alpaca failures; unknown is never absence |
+| `5317724` | D | Pure order-lifecycle reducer, monotonic fill |
+| `42bac6d` | E | Per-contract position ledger, exact exits, singleton lock |
+| `bee13df` | G+H | Release/account manifest; read-only CLI proof capture |
+| `c1bf93c` | I | MIT `LICENSE`, generated `THIRD_PARTY_NOTICES.md` |
+| `ca5bf1a` | J | Public claims checked against the code |
+| `73d2307` | K | Notices gate in `make verify`; measurement date closed |
 
-## 10. Recommended Next Move
+### C -- typed Alpaca failures (`glassbox/broker.py`, `glassbox/execute.py`)
 
-Wait for external inputs. The implementation checkpoint is complete; adding
-more strategy surface before proving the venue and deployment path would weaken
-the approved proof-first submission. When the user provides development-only
-credentials and both expected account IDs, perform Gate A exactly once under
-the bounded state machine. When the user provides a VPS and permission to make
-the reviewed SHA remotely available, deploy that exact SHA and run the soak.
+`get_order_by_coid` collapsed every exception into `None`. "The venue says that
+order does not exist" and "we could not reach the venue" reached callers as the
+same answer -- the difference between an intent with no order and an intent
+whose order may be working and filling.
+
+Now: `OrderNotFound`, `BrokerAuthError`, `BrokerValidationError`,
+`BrokerRateLimited`, `BrokerUnavailable`, `BrokerUnknownState`, produced by
+`classify_broker_error`. Anything unidentifiable becomes `BrokerUnknownState`,
+which is neither retryable nor absence. Lookup returns `None` only for a
+verified 404. `_call` retries idempotent operations only, with bounded jittered
+backoff honouring `Retry-After`; `close_position` is marked non-idempotent.
+`_await_fills` tolerates a few transient lookup failures then marks the leg
+uncertain, which blocks the residual-cancel path. 22 broker tests, 24 executor.
+
+### D -- order lifecycle reducer (`glassbox/order_lifecycle.py`)
+
+A pure reducer: state + one observation -> new state. No network, clock, or
+disk, so duplicate polls, stale answers arriving late, fills after a cancel
+request, and replacement chains are table-driven tests. Cumulative fill never
+decreases; `pending_cancel` is never terminal; an unrecognised status sets
+`unknown`, which is never terminal. The same monotonic rule was wired into
+`ExecutionEngine._refresh_leg`, which previously overwrote leg fill with
+whatever the latest read said. 37 tests including a seeded property test over
+shuffled, duplicated observation streams.
+
+### E -- position ledger and exact exits (`glassbox/position_ledger.py`)
+
+The exit path called `close_position(symbol)`, which liquidates everything the
+**account** holds in a contract, not what **this strategy** holds -- and its
+acceptance proves nothing about our quantity reaching zero.
+
+Now expected signed quantity per contract is derived only from confirmed fills
+and reconciled exactly against the venue. Unknown exposure, foreign exposure,
+a missing position, a quantity mismatch, or an open order outside our client-ID
+family all fail closed and block new entries. Exits size to the exact owned
+quantity under a deterministic ID (`glassbox/ids.py:exit_client_order_id`)
+registered on disk *before* the mutation, fold the terminal read through the
+reducer, and leave a partial exit retryable. Flat is proven only from a
+terminal order plus a zero venue quantity. Persistence is schema-versioned and
+checksummed; a corrupt, foreign-account, or foreign-environment ledger raises
+rather than healing to empty. `ProcessLock` in `glassbox/state.py` makes two
+schedulers against one state directory impossible. 23 + 26 tests.
+
+`PositionManager` takes the ledger optionally. **With** one it uses the exact
+path; **without** one it keeps the development symbol-wide path. Wiring the
+ledger into `main.py`/`scheduler.py` for the scored account is the next task
+(see below).
+
+### G/H -- release identity and CLI proof
+
+`glassbox/release.py` binds commit + dirty flag, both lock hashes, Python and
+platform, policy hash, resolved paper endpoint, environment, and a redacted
+account suffix. `assert_scored_startable()` refuses dirty, non-paper, unbound,
+or non-options-only starts. `write()` fails *before* touching disk if any
+credential value or marker appears in the body.
+
+`tools/capture_alpaca_proof.py` captures the event-required CLI evidence
+read-only. Commands come from an allowlist and a mutating token anywhere in a
+built argv is refused before a process starts, so even a bad edit to the table
+cannot place an order. Output is redacted, hashed against the real bytes, and
+written atomically; a nonzero exit, unparseable JSON, or a wrong account ID
+marks the proof **incomplete** rather than absent.
+
+### I/J/K -- legal, claims, verification
+
+MIT `LICENSE` (see section 6 on the copyright line). `THIRD_PARTY_NOTICES.md` is
+generated from `requirements.lock` by `tools/build_notices.py`; all 40 runtime
+packages are permissive (MIT/BSD/Apache-2.0/MPL-2.0/PSF). `make verify` fails
+if the notices go stale. `tests/test_claims.py` fails when the README claims
+more than the code supports.
+
+Also fixed: `deploy/setup.sh` used `${1,,}` (bash 4+) and died on macOS bash
+3.2 before any step ran.
+
+## 4. Measurement date -- audit gate now closed
+
+The reference audit recorded the 3 September cutoff as **unconfirmed** because
+the public event page shows only the 4 September deadline. Re-verified this
+session against the archived Alpaca guidelines document. It carries both dates
+and they are the same number, not a conflict:
+
+- "Official P&L measurement: Monday, August 31 ... to Friday, September 4 at
+  9:30 a.m. ET. We will be looking at the portfolio's total equity as of EOD
+  Thursday Sep 3rd."
+- "The measurement window ends at 9:30 a.m. ET on Friday, September 4, when a
+  snapshot of total account equity will be taken."
+
+The market is shut between Thursday's close and that Friday snapshot, so EOD
+Thursday 3 September equity is what the snapshot photographs. `MEASUREMENT_ET`
+stays 2026-09-03 16:00 ET, which is also the conservative reading: stop taking
+risk by Thursday's close. Reasoning is now recorded in `glassbox/macro.py`
+where the constant lives.
+
+**Timing:** trading is meant to begin Monday 31 August 09:30 ET, and the
+window closes Friday 4 September 09:30 ET.
+
+## 5. Next task, in dependency order
+
+1. **Wire the ledger into the scored path.** `PositionManager` accepts
+   `ledger=`/`ledger_path=` but `main.py:68` still constructs it without one,
+   so the scored account would still take the development symbol-wide close.
+   Build the ledger at startup, feed `record_entry_fill` from confirmed
+   executor fills, and call `reconcile()` in the scheduler's pre-entry gate so
+   a fault blocks new entries. This is the highest-value remaining change.
+2. **Gate scored start on the release manifest.** `assert_scored_startable()`
+   exists and is tested but nothing calls it. Add `GLASSBOX_RELEASE_GATE=1`
+   handling in `main.py`.
+3. **Task F, trade-update stream** (`glassbox/trade_stream.py`) -- Should, and
+   explicitly only after polling/restart correctness is proven. REST stays
+   authoritative.
+4. **Evidence UX** -- the read-only proof drawer showing candidate -> select or
+   abstain -> kernel -> intent -> lifecycle -> reconciliation.
+5. **Pin GitHub Actions by SHA.** `.github/workflows/ci.yml` still uses
+   `@v4`/`@v5` tags. Deliberately not guessed here; resolve the real digests.
+
+## 6. Open gates -- do not close these on your own authority
+
+| Gate | Status | What it needs |
+| --- | --- | --- |
+| Development venue proof | **Open** | Dev credentials, distinct expected dev/scored account IDs, clean read-only baseline, explicit authorisation for one capped write ($50 ceiling) |
+| CLI proof capture | **Open** | The tool is built and tested against fakes; no bundle has been captured from a real CLI. Pin a reviewed CLI release and run it |
+| MCP | **Not claimed** | No MCP integration exists. `tests/test_claims.py` fails the build if the docs start claiming one |
+| Deployment / soak | **Open** | Named VPS/SSH target, reviewed full SHA, secret delivery, successful dev proof |
+| Scored activation | **Open** | All of the above, a fresh dedicated $100,000 paper account, exact identity proof, explicit direction |
+| Legal -- copyright line | **Needs your confirmation** | `LICENSE` reads `Copyright (c) 2026 The Glassbox Contributors`. You chose "a team name" but did not give the exact string, so a collective holder was used rather than guessing between the repo owner, the audit docs' author, and the account running the build. **Change the single line if a specific legal entity is wanted.** |
+
+No claim of completed paper execution, realized P&L, deployment, soak, MCP, or
+third-party attestation may be made without the corresponding captured
+evidence.
+
+## 7. Verification evidence (this checkout, 2026-08-30)
+
+Run on Python 3.13.12 via `.venv-mac`. **Re-run on 3.12 before release.**
+
+```
+ruff format --check .                72 files already formatted
+ruff check .                         All checks passed
+mypy glassbox dashboard tools main.py  Success: no issues in 38 source files
+pytest -q                            394 passed
+pytest tests/test_kernel.py -q       33 passed
+tools/crash_drill.py -n 8 --seed 1   DRILL PASSED 13/13
+tools/env_parity.py .env.example     PARITY OK, 9 variables
+compileall                           clean
+pip check                            No broken requirements found
+tools/build_notices.py --check       notices are current
+pytest tests/test_dashboard.py -q    12 passed
+make verify                          exit 0
+```
+
+CI competition guards re-run locally and passing: `.env` untracked, no
+live-looking keys committed, paper guards intact, sleeve budgets sum to
+100000, measurement window guards OK.
+
+`tools/verify_chain.py` reports no journal, which is correct -- this checkout
+has never run against an account.
+
+## 8. Where things are
+
+```text
+glassbox/
+  broker.py           Alpaca boundary, typed failures, identity, reconciliation
+  order_lifecycle.py  pure reducer over observed order states
+  position_ledger.py  per-contract ownership, exact venue reconciliation
+  release.py          release/account identity manifest
+  candidates.py       canonical candidate sets, manifests, selection receipts
+  option_data.py      option contract and quote acquisition
+  kernel.py           deterministic 13-invariant risk review
+  execute.py          intent journal, fill/cancel/reprice state machine
+  manage.py           exits; exact path when a ledger is supplied
+  state.py            atomic fail-closed persistence, ProcessLock
+tools/capture_alpaca_proof.py  read-only CLI evidence capture
+tools/build_notices.py         regenerates THIRD_PARTY_NOTICES.md
+```
+
+Governing plan: `GLASSBOX-REFERENCE-MASTER-PLAN.md` (Tasks B-K).
+Approved design: `docs/superpowers/`.
