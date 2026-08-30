@@ -34,6 +34,7 @@ from decimal import Decimal
 from . import config as C
 from .broker import BrokerFailure, BrokerRequestRejected
 from .ids import client_order_id
+from .order_lifecycle import OrderLifecycle, OrderObservation, reduce_order
 from .schema import TradePlan, Verdict
 from .state import StateError
 
@@ -87,6 +88,8 @@ class LegResult:
     broker_order_id: str = ""
     status: str = "unsubmitted"
     order_state_uncertain: bool = False
+    terminal_submit_failure: bool = False
+    lifecycle: OrderLifecycle | None = None
 
     @property
     def filled_qty(self) -> Decimal:
@@ -302,6 +305,20 @@ class ExecutionEngine:
                 r.status = "submitted"
             except ExecutionStateUncertain:
                 raise
+            except BrokerRequestRejected as exc:
+                r.status = "rejected"
+                r.client_order_id = ""
+                r.terminal_submit_failure = True
+                self.journal.append(
+                    "execute",
+                    "LEG_SUBMIT_FAILED",
+                    {
+                        "plan_id": plan.plan_id,
+                        "leg": i,
+                        "symbol": leg.symbol,
+                        "error_type": type(exc).__name__,
+                    },
+                )
             except Exception as exc:
                 r.status = f"submit_failed: {exc}"
                 self.journal.append(
@@ -396,7 +413,7 @@ class ExecutionEngine:
     def _reprice(self, plan: TradePlan, r: LegResult, attempt: int) -> None:
         """Cancel the remainder and resubmit wider, within the band."""
         leg = plan.option_legs[r.leg_index]
-        if r.order_state_uncertain or not self._cancel_leg(plan, r):
+        if r.terminal_submit_failure or r.order_state_uncertain or not self._cancel_leg(plan, r):
             return
 
         # Bank the terminal order's final fill before computing what is left.
@@ -405,6 +422,7 @@ class ExecutionEngine:
         r.broker_order_id = ""
         r.client_order_id = ""
         r.status = "canceled"
+        r.lifecycle = None
 
         remaining = r.requested_qty - r.filled_qty
         if remaining <= 0:
@@ -476,20 +494,46 @@ class ExecutionEngine:
                     "symbol": r.symbol,
                     "client_order_id": r.client_order_id,
                     "broker_order_id": r.broker_order_id,
-                    "error": str(exc),
+                    "error_type": type(exc).__name__,
                 },
             )
-            return False
+            raise ExecutionStateUncertain(
+                f"terminal state unproven for {r.client_order_id}"
+            ) from exc
         self._refresh_leg(r, final)
         return r.status in TERMINAL_OK | TERMINAL_DEAD
 
     @staticmethod
     def _refresh_leg(r: LegResult, order) -> None:
-        """Copy the broker order's current fill and normalized status."""
-        r.current_qty = Decimal(str(getattr(order, "filled_qty", 0) or 0))
+        """Reduce one broker observation into monotonic working-order state."""
+        order_id = str(getattr(order, "id", "") or r.broker_order_id)
+        coid = str(getattr(order, "client_order_id", "") or r.client_order_id)
+        requested = Decimal(str(getattr(order, "qty", 0) or (r.requested_qty - r.settled_qty)))
+        if r.lifecycle is None:
+            r.lifecycle = OrderLifecycle.start(
+                order_id=order_id,
+                client_order_id=coid,
+                requested_qty=requested,
+            )
         avg = getattr(order, "filled_avg_price", None)
-        r.current_avg = Decimal(str(avg)) if avg else Decimal(0)
-        r.status = str(getattr(order, "status", "")).lower().split(".")[-1]
+        r.lifecycle = reduce_order(
+            r.lifecycle,
+            OrderObservation(
+                order_id=order_id,
+                client_order_id=coid,
+                status=str(getattr(order, "status", "")),
+                cumulative_filled_qty=Decimal(str(getattr(order, "filled_qty", 0) or 0)),
+                filled_avg_price=Decimal(str(avg)) if avg else None,
+                replaced_by_order_id=(
+                    str(getattr(order, "replaced_by", ""))
+                    if getattr(order, "replaced_by", None)
+                    else None
+                ),
+            ),
+        )
+        r.current_qty = r.lifecycle.cumulative_filled_qty
+        r.current_avg = r.lifecycle.filled_avg_price or Decimal(0)
+        r.status = r.lifecycle.status
 
     # -- equity and crypto -----------------------------------------------------
 
@@ -531,6 +575,17 @@ class ExecutionEngine:
             r.status = "submitted"
         except ExecutionStateUncertain:
             raise
+        except BrokerRequestRejected as exc:
+            r.status = "rejected"
+            r.client_order_id = ""
+            r.terminal_submit_failure = True
+            return ExecutionResult(
+                plan.plan_id,
+                False,
+                f"submit failed: {exc}",
+                [r],
+                multiplier=1,
+            )
         except Exception as exc:
             r.status = f"submit_failed: {exc}"
             return ExecutionResult(plan.plan_id, False, f"submit failed: {exc}", [r], multiplier=1)

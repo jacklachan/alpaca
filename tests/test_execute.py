@@ -269,12 +269,11 @@ def test_unconfirmed_cancel_never_submits_a_replacement(journal):
     b = FakeBroker(fill={put: 0.2}, uncertain_cancel={put})
     p = strangle()
 
-    result = engine(b, journal).execute(p, APPROVED(p))
+    with pytest.raises(ExecutionStateUncertain, match="terminal state unproven"):
+        engine(b, journal).execute(p, APPROVED(p))
 
     put_orders = [order for order in b.submitted if order["symbol"] == put]
     assert len(put_orders) == 1
-    assert not result.ok
-    assert "manual intervention" in result.reason
 
 
 def test_failed_replacement_submit_does_not_bank_predecessor_twice(journal):
@@ -311,10 +310,10 @@ def test_single_order_cancel_uncertainty_is_not_success(journal):
     plan = single("equity")
     broker = FakeBroker(fill={plan.symbol: 0.5}, uncertain_cancel={plan.symbol})
 
-    result = engine(broker, journal).execute(plan, APPROVED(plan))
+    with pytest.raises(ExecutionStateUncertain, match="terminal state unproven"):
+        engine(broker, journal).execute(plan, APPROVED(plan))
 
-    assert not result.ok
-    assert "residual order state uncertain" in result.reason
+    assert broker.cancelled == []
 
 
 def test_submit_timeout_adopts_the_existing_client_order_without_resubmit(journal):

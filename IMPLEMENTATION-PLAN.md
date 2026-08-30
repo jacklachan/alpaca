@@ -68,7 +68,7 @@ separate, development-account connectivity proof only.
 | A | Preserve and attest Approach A boundary | Complete | Audit focus suite: 43 passed on 2026-08-30 |
 | B | Candidate provenance and canonical manifest | Complete | 56 focused and 257 full locked tests; committed rollback boundary |
 | C | Typed Alpaca failures and ambiguity discipline | Complete | 42 focused, 83 boundary-regression, and 267 full locked tests |
-| D | Pure order-lifecycle reducer | Pending | Begins only after typed outcomes in C |
+| D | Pure order-lifecycle reducer | Complete | 48 focused and 92 boundary-regression tests; pure reducer integrated |
 | E | Strategy-owned ledger and restart-safe exits | Pending | Begins only after lifecycle semantics stabilize |
 | G | Release/account/evidence manifest | Pending | Built on stable candidate, lifecycle, and state schemas |
 | H | Genuine read-only Alpaca CLI proof | Pending external executable/profile proof | No CLI integration claim until captured evidence exists |
@@ -296,14 +296,23 @@ Run every item from a cleanly understood working tree and record the output in
 
 ### Audit Task D — Pure Order-Lifecycle Reducer
 
-- [ ] Model accepted through terminal/unknown Alpaca states as pure
+- [x] Model accepted through terminal/unknown Alpaca states as pure
   observations.
-- [ ] Enforce monotonic cumulative fill and explicit replacement lineage.
-- [ ] Treat cancel acknowledgement as nonterminal.
-- [ ] Reduce successor quantity after every late fill.
-- [ ] Prove engine return leaves no strategy entry order open unless unknown
+- [x] Enforce monotonic cumulative fill and explicit replacement lineage.
+- [x] Treat cancel acknowledgement as nonterminal.
+- [x] Reduce successor quantity after every late fill.
+- [x] Prove engine return leaves no strategy entry order open unless unknown
   state has latched the global risk fault.
-- [ ] Add state-machine/property coverage and commit D independently.
+- [x] Add deterministic generated duplicate/out-of-order lifecycle coverage and
+  commit D independently.
+
+**Verification evidence (2026-08-30):**
+
+- Lifecycle/executor/broker focus: `48 passed`.
+- Lifecycle through scheduler/state/kernel regression: `92 passed`.
+- Ruff format/lint and mypy (34 source files) passed.
+- Cancel uncertainty now raises the durable `ExecutionStateUncertain` fault
+  instead of returning while a venue entry order may remain live.
 
 ### Audit Task E — Strategy-Owned Position Ledger and Restart-Safe Exits
 
@@ -399,9 +408,8 @@ not “deployed” or “live-tested.”
 
 ## 6. Immediate Next Actions
 
-1. Begin audit Task D with the pure lifecycle reducer tests before refactoring
-   executor call sites.
-2. Continue D → E → G in dependency order with focused tests and review at
+1. Begin audit Task E with the exact strategy-owned position-ledger tests.
+2. Continue E → G in dependency order with focused tests and review at
    every boundary.
 3. Record the license holder/year and operational proofs as external gates;
    continue only safe local work while they are absent.
