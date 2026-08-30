@@ -158,3 +158,23 @@ def test_no_committed_file_looks_like_a_live_credential():
         "these would fail CI's committed-credential scan; build test fixtures "
         f"at runtime instead of as literals: {offenders}"
     )
+
+
+def test_every_github_action_is_pinned_to_a_commit_sha():
+    """A tag is mutable. Whoever controls it can change what runs inside a
+    workflow that holds repository credentials, so pins are 40-hex SHAs."""
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    uses = re.findall(r"uses:\s*([^\s#]+)", workflow)
+    assert uses, "no actions found; did the workflow move?"
+
+    floating = [u for u in uses if not re.search(r"@[0-9a-f]{40}$", u)]
+    assert not floating, f"these actions are not SHA-pinned: {floating}"
+
+
+def test_every_action_pin_records_the_release_it_came_from():
+    """A bare SHA is unreviewable. The trailing comment is what makes a bump
+    auditable rather than a 40-character diff nobody can evaluate."""
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    for line in workflow.splitlines():
+        if "uses:" in line and "@" in line:
+            assert re.search(r"#\s*v[\d.]+", line), f"pin has no version comment: {line.strip()}"

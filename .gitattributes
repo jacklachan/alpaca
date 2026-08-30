@@ -1,0 +1,8 @@
+# Normalise line endings in the repository. This tree is edited on Windows and
+# on Unix, and without this a checkout on the other platform rewrites every
+# file, producing a diff of thousands of lines that hides the real change.
+* text=auto eol=lf
+
+# Shell scripts must stay LF even on Windows checkouts: a CRLF shebang line
+# makes the interpreter unrunnable on the deployment host.
+*.sh text eol=lf
