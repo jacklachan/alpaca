@@ -1,4 +1,6 @@
-"""The core sleeve. Deliberately passive.
+"""Development-only core sleeve. Deliberately passive.
+
+This strategy is never registered on the options-only scored account.
 
 Fixed-weight, bought once at Monday's open, held to the measurement. No
 signals, no rebalancing, no cleverness.
@@ -90,12 +92,12 @@ class CoreStrategy:
                         f"edge over four sessions and do not trade this sleeve; it "
                         f"finances the convex sleeve and holds the account up."
                     ),
-                    evidence=[
+                    evidence=(
                         f"allocation_policy=core_passive weight={weight}",
                         f"spot={spot}",
                         f"disaster_stop={stop} ({DISASTER_STOP_PCT:.0%} below spot)",
                         "edge_claimed=none",
-                    ],
+                    ),
                     confidence=0.5,
                 )
             )

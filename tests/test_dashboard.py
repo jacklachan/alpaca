@@ -41,6 +41,16 @@ def seed(path, n=3):
             "failed_invariant": "02_bounded_max_loss",
         },
     )
+    j.append(
+        "thesis.llm",
+        "CANDIDATE_SELECTED",
+        {"candidate_id": "candidate-spy", "rationale": "Best bounded setup."},
+    )
+    j.append(
+        "thesis.llm",
+        "CANDIDATE_ABSTAINED",
+        {"reason": "No second setup clears the bar."},
+    )
     j.append("risk.kernel", "PLAN_APPROVED", {"symbol": "SPY260904C00783000", "checks_passed": 13})
     for i, e in enumerate([100000, 101000, 99500]):
         j.append("scheduler", "HEARTBEAT", {"equity": e, "i": i})
@@ -100,8 +110,31 @@ class TestContent:
         s = c.get("/api/summary").json()
         assert s["plans_refused"] == 1
         assert s["plans_approved"] == 1
+        assert s["plans_reviewed"] == 2
+        assert s["candidate_selections"] == 1
+        assert s["candidate_abstentions"] == 1
         assert s["chain_ok"] is True
         assert s["equity"] == 99500.0
+
+    def test_page_describes_the_actual_bounded_options_only_path(self, client):
+        c, _ = client
+        body = c.get("/").text.lower()
+
+        assert "options-only scored path" in body
+        assert "pre-priced" in body
+        assert "select one candidate or abstain" in body
+        assert "alpaca trading api" in body
+        assert "risk kernel" in body
+        assert "model writes the thesis" not in body
+        assert "what the model proposed" not in body
+        assert "mcp" not in body
+
+    def test_page_discloses_unperformed_external_gates(self, client):
+        c, _ = client
+        body = c.get("/").text.lower()
+
+        assert "dev venue proof pending" in body
+        assert "vps soak pending" in body
 
     def test_equity_series_comes_from_heartbeats(self, client):
         c, path = client

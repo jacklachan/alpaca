@@ -1,12 +1,12 @@
-"""End-to-end rehearsal against the DEV account.
+"""Read-only development-account strategy and kernel rehearsal.
 
-    python -m tools.practice                 dry: propose and judge, place nothing
-    python -m tools.practice --live          actually place a small crypto trade
-    python -m tools.practice --live --close  ...and close it again afterwards
+    python -m tools.practice
 
-This is both the practice run and the demo rehearsal. It walks the whole path:
-
-    reconcile -> propose -> kernel -> execute -> manage -> journal -> verify
+This diagnostic reconciles the development account, displays development
+strategy output, exercises hostile kernel inputs, runs position management,
+and verifies the journal. It cannot place or close an order and is not evidence
+of scored execution. The only write-capable dev venue proof is
+``tools/live_check.py`` after explicit user authorization.
 
 Stage 4 is the one worth filming. It feeds the running kernel a deliberately
 hostile plan -- sell 400 naked SPY calls -- and shows the refusal, with the
@@ -14,15 +14,11 @@ reason string, in the live journal, in under a second.
 
 Safety:
   * refuses to run if ALPACA_ENV=scored. The scored account must stay clean.
-  * places nothing without --live.
-  * --live trades crypto only, at --notional (default $100), because crypto is
-    the only venue open outside market hours and $100 is enough to prove the
-    path works.
+  * places and closes nothing.
 """
 
 from __future__ import annotations
 
-import argparse
 import logging
 import os
 import sys
@@ -36,7 +32,6 @@ load_dotenv()
 from glassbox import config as C  # noqa: E402
 from glassbox.broker import Broker  # noqa: E402
 from glassbox.data import MarketData  # noqa: E402
-from glassbox.execute import ExecutionEngine  # noqa: E402
 from glassbox.journal import Journal  # noqa: E402
 from glassbox.kernel import RiskKernel  # noqa: E402
 from glassbox.manage import KillSwitch, PositionManager  # noqa: E402
@@ -62,7 +57,7 @@ def verdict_line(plan, v) -> str:
 
 
 def hostile_plans() -> list[tuple[str, TradePlan]]:
-    """Plans a careless or compromised model might emit. Each must be refused.
+    """Policy-violating inputs the deterministic kernel must refuse.
 
     Note these are constructed to VALIDATE against the schema -- the schema is
     deliberately permissive so that hostile plans are representable and can be
@@ -80,19 +75,19 @@ def hostile_plans() -> list[tuple[str, TradePlan]]:
                 instrument="option",
                 symbol="SPY",
                 side="sell",
-                option_legs=[
+                option_legs=(
                     OptionLeg(
                         symbol="SPY260911C00780000",
                         side="sell",
                         qty=200,
                         limit_price=Decimal("4.00"),
-                    )
-                ],
+                    ),
+                ),
                 notional_usd=Decimal("80000") / 100,
                 max_loss_usd=Decimal("800"),
                 thesis="Collect premium by selling calls against the index into the "
                 "payrolls print. Volatility is low and decay is on our side.",
-                evidence=["iv_low"],
+                evidence=("iv_low",),
                 confidence=0.9,
             ),
         )
@@ -112,7 +107,7 @@ def hostile_plans() -> list[tuple[str, TradePlan]]:
                 stop=Decimal("40"),
                 thesis="Strong momentum in this small cap with an unusual volume "
                 "profile suggesting accumulation ahead of a catalyst.",
-                evidence=["momentum_score=0.91"],
+                evidence=("momentum_score=0.91",),
                 confidence=0.8,
             ),
         )
@@ -132,7 +127,7 @@ def hostile_plans() -> list[tuple[str, TradePlan]]:
                 stop=Decimal("700"),
                 thesis="High conviction directional bet on the index into month end "
                 "rebalancing flows, sized up accordingly for the tournament.",
-                evidence=["month_end_flow"],
+                evidence=("month_end_flow",),
                 confidence=0.99,
             ),
         )
@@ -147,16 +142,16 @@ def hostile_plans() -> list[tuple[str, TradePlan]]:
                 instrument="option",
                 symbol="SPY",
                 side="buy",
-                option_legs=[
+                option_legs=(
                     OptionLeg(
                         symbol="SPY260904C00775000", side="buy", qty=20, limit_price=Decimal("1.20")
-                    )
-                ],
+                    ),
+                ),
                 notional_usd=Decimal("2400"),
                 max_loss_usd=Decimal("2400"),
                 thesis="Maximum convexity per dollar by holding zero-days-to-expiry "
                 "calls across the payrolls release for the largest payoff.",
-                evidence=["gamma_max"],
+                evidence=("gamma_max",),
                 confidence=0.7,
             ),
         )
@@ -166,17 +161,6 @@ def hostile_plans() -> list[tuple[str, TradePlan]]:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(prog="practice")
-    ap.add_argument("--live", action="store_true", help="actually place a small crypto order")
-    ap.add_argument("--close", action="store_true", help="close the practice position afterwards")
-    ap.add_argument(
-        "--notional",
-        type=float,
-        default=100.0,
-        help="size of the live practice trade (default $100)",
-    )
-    args = ap.parse_args()
-
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s %(message)s")
 
     env = os.getenv("ALPACA_ENV", "dev")
@@ -284,47 +268,9 @@ def main() -> int:
     )
 
     # -- 5 ---------------------------------------------------------------------
-    head(5, "Execution")
-    if not args.live:
-        print("  Dry run. Nothing placed.")
-        print("  Re-run with --live to place a small crypto order.")
-    else:
-        crypto = [p for p in approved if p.instrument == "crypto"]
-        if not crypto:
-            print("  No approved crypto plan to execute.")
-        else:
-            plan = crypto[0]
-            # Resize to the practice notional -- we are proving the path, not
-            # taking the position.
-            plan = plan.model_copy(
-                update={
-                    "notional_usd": Decimal(str(args.notional)),
-                    "max_loss_usd": Decimal(str(args.notional)) * Decimal("0.06"),
-                }
-            )
-            v = kernel.review(plan, state)
-            print(verdict_line(plan, v))
-            if v.approved:
-                engine = ExecutionEngine(broker, journal, poll_seconds=2, fill_wait_seconds=30)
-                result = engine.execute(plan, v)
-                print(f"\n  ok       {result.ok}")
-                print(f"  reason   {result.reason}")
-                for leg in result.legs:
-                    print(
-                        f"  leg      {leg.symbol} filled {leg.filled_qty} "
-                        f"@ {leg.avg_price}  broker_order_id={leg.broker_order_id}"
-                    )
-
-        if args.close:
-            print("\n  Closing practice positions...")
-            after = broker.reconcile()
-            for p in after.positions:
-                if p.instrument == "crypto":
-                    try:
-                        broker.close_position(p.symbol)
-                        print(f"  closed   {p.symbol}")
-                    except Exception as exc:
-                        print(f"  FAILED   {p.symbol}: {exc}")
+    head(5, "Execution boundary")
+    print("  Read-only rehearsal: no orders are submitted or closed.")
+    print("  Use tools/live_check.py for the separately authorized bounded venue proof.")
 
     # -- 6 ---------------------------------------------------------------------
     head(6, "Position management")

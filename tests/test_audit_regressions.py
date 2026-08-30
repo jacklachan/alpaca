@@ -316,3 +316,16 @@ class TestEveryEnvReadIsCleaned:
                 if f'os.getenv("{token}")' in src or f'os.environ["{token}"]' in src:
                     offenders.append(f"{path.name}:{token}")
         assert not offenders, f"raw env reads bypass env.clean(): {offenders}"
+
+
+class TestDevelopmentProofHasOneBoundedWritePath:
+    def test_practice_rehearsal_cannot_place_or_close_orders(self):
+        """The old demo had a second $100 crypto write path with symbol-wide
+        cleanup. The bounded live_check must be the only dev venue proof."""
+        from pathlib import Path
+
+        source = Path("tools/practice.py").read_text(encoding="utf-8")
+        assert "--live" not in source
+        assert "--close" not in source
+        assert "ExecutionEngine" not in source
+        assert "close_position" not in source

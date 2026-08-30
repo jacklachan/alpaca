@@ -1,206 +1,141 @@
 # Glassbox
 
-An autonomous options trading agent where a language model writes the thesis,
-a deterministic risk kernel decides whether it becomes an order, and a
-hash-chained journal records both.
+Glassbox is an options-only paper-trading agent for the Alpaca AI Trading
+Agents Hackathon. Deterministic strategy code creates fully priced SPY and QQQ
+option candidates. A bounded language model may select one existing candidate
+ID or abstain. It cannot invent contracts, quantities, sides, limit prices,
+maximum loss, or exits.
 
-Built for the Alpaca AI Trading Agents Hackathon, 28 Aug – 4 Sep 2026.
-Paper trading only. Nothing here is investment advice.
+Every selected candidate still passes through a deterministic 13-invariant
+risk kernel and a restart-safe executor before the Alpaca Trading API can see
+an order.
 
-## The separation
+## Evidence status
 
+The implementation and local verification suite are complete. Two external
+gates are deliberately still open:
+
+- **Dev venue proof pending.** No live paper order has been submitted from this
+  repository. The proof requires user-supplied dev credentials and both
+  explicit expected account IDs.
+- **VPS soak pending.** No host target was supplied, so no deployment or
+  multi-day soak has been performed.
+
+Do not describe either gate as complete until its broker or VPS evidence is in
+the journal. The repository uses Alpaca's Trading/Data APIs and local CLI
+tools. No additional broker integration is claimed.
+
+## Scored data flow
+
+```text
+Alpaca market data
+       |
+deterministic SPY/QQQ option candidate generators
+       |
+bounded AI: select one existing candidate ID or abstain
+       |
+exact original TradePlan object
+       |
+13-invariant risk kernel
+       |
+intent journal -> submit/reconcile -> cancel-and-confirm -> exact cleanup
+       |
+Alpaca paper Trading API
 ```
-ingest → features → thesis (LLM) → RISK KERNEL → execution → Alpaca
-                                        ↓
-                              decision journal (hash-chained)
-```
 
-The model proposes. It never executes. There is no code path from the thesis
-layer to the broker that bypasses `kernel.py`.
+The scored account registers no core equity or crypto strategy and schedules
+no crypto job. Equity and crypto strategies remain development fixtures only;
+the bounded live connectivity proof is the explicit `tools/live_check.py` CLI.
 
-## The thirteen invariants
+If the model is missing, times out, returns malformed JSON, names an unknown
+candidate, or attempts to add trade fields, the scored cycle abstains.
 
-Every plan is checked against all thirteen. Any failure refuses the plan and
-writes the reason to the journal. One named test per invariant in
-`tests/test_kernel.py`.
+## Safety properties
 
-| # | Invariant | What it stops |
-|---|---|---|
-| 01 | Symbol allowlist | A hallucinated ticker reaching the broker |
-| 02 | Bounded maximum loss | Any position whose worst case is not finite. Naked short options are refused unconditionally |
-| 03 | Sleeve budget | Total option premium outstanding exceeding the convex cap |
-| 04 | Daily burn | One bad day spending the whole week's ammunition |
-| 05 | Concentration | Over-exposure to a single underlying |
-| 06 | Position count | A book too large to reason about |
-| 07 | Gross exposure | Equity margin leverage. All convexity is purchased, never borrowed |
-| 08 | Drawdown kill switch | Continued risk-taking after the core sleeve breaks |
-| 09 | Market-hours guard | Orders into a closed session. Options have no extended hours |
-| 10 | Expiry guard | Holding into expiration mechanics |
-| 11 | Idempotency | A network retry doubling a position |
-| 12 | Sanity band | Fat-finger sizes and unit-confusion bugs |
-| 13 | Order frequency | A runaway loop draining the account overnight |
+- Credentials are bound to `ALPACA_EXPECTED_DEV_ACCOUNT_ID` or
+  `ALPACA_EXPECTED_SCORED_ACCOUNT_ID`; the two IDs must differ.
+- Paper trading is checked by configuration, key prefix, client construction,
+  returned account identity, and paper endpoint.
+- The venue proof requires a clean dev baseline, caps notional at $50, cancels
+  and confirms residual orders, closes only test-created quantity, and requires
+  exact flat reconciliation.
+- Cancel/reprice never overlaps orders: terminal cancellation is observed
+  before replacement, including late-fill reconciliation.
+- Submission intent is durable before broker submission. Ambiguous timeouts are
+  reconciled by deterministic client order ID and are never blindly retried.
+- Kill-switch, exit-target, and positioned-event state use atomic
+  flush/fsync/replace persistence and fail closed on corruption.
+- Deployments require a full reviewed 40-character commit SHA and install the
+  exact runtime lock.
+- The journal is append-only and SHA-256 chained. This detects edits to the
+  recorded file; it is not called tamper-proof. Broker IDs and timestamps make
+  order claims reconcilable against records we do not control.
 
-### Honest notes on the risk model
+## Local setup and verification
 
-Three places where the obvious claim would be an overclaim, and what is
-actually true instead:
-
-**Maximum loss is exact for options, estimated for everything else.**
-For a long option it is the premium paid — knowable at entry, enforceable.
-For equities and crypto a stop is *not* a bound, because price gaps through
-stops. Those are estimated as stop distance × quantity × a gap multiplier and
-labelled as estimates. The claim "every position had a computable maximum
-loss" is true only of the options book, and is stated that way.
-
-**The concentration limit for options is a sanity bound, not the risk
-control.** Long options deliver large notional delta for small premium — that
-is the leverage, and it is why we buy them. The binding constraints on the
-convex sleeve are the premium caps (03 and 04), because loss is bounded by
-premium regardless of delta.
-
-**The kill switch is per-sleeve, deliberately.** The convex sleeve is
-*permitted* to go to zero; that is a designed ~50% outcome, not a failure. A
-single portfolio-wide switch tight enough to catch a broken core sleeve would
-fire on the convex sleeve doing exactly what it was built to do. Core sleeve
-drawdown trips at 6%, with a 15% portfolio backstop behind it.
-
-**Kill-switch re-arm rule.** The switch latches. Re-arming is a human decision
-requiring two team members to agree, and the decision plus its reasoning is
-written to the journal before trading resumes. Decided in advance so it is not
-decided under pressure.
-
-## The journal, and what it does and does not prove
-
-Append-only JSONL. Each entry carries the SHA-256 of the entry before it, so
-editing history in place breaks the chain and `tools/verify_chain.py` detects
-it.
-
-What it does **not** prove: that we did not regenerate the entire chain from
-altered content. We control every input to the hash, so a self-generated chain
-is self-attestation, not third-party attestation.
-
-Two mechanisms close most of that gap, and both are implemented:
-
-1. **External anchoring.** The current head hash is published to Discord
-   hourly. Those messages carry server-side timestamps we do not control, so
-   an anchor accepted at a given time constrains every entry written before it.
-2. **Broker reconciliation.** Every order entry carries Alpaca's own
-   `broker_order_id` and broker-side timestamp. Judges hold the account ID and
-   can reconcile the journal against records we cannot edit.
-
-The defensible claim is "reconcilable against broker-side records", not
-"tamper-proof". We make the former.
-
-## Setup
+Python 3.12 is the release target.
 
 ```bash
-python -m venv .venv && . .venv/Scripts/activate
-pip install -r requirements.txt
-cp .env.example .env    # then fill in your own keys
-pytest -q
+python -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.lock
+make verify
 ```
 
-Two Alpaca paper accounts are required, and they must stay separate:
+On Windows, run the commands from `Makefile` with
+`.venv\Scripts\python.exe`. The verification target covers formatting, lint,
+typing, the full tests, the dedicated kernel suite, crash recovery, environment
+parity, compilation, dashboard responses, and `pip check`.
 
-- **dev** — everything is tested here.
-- **scored** — created fresh for the competition, never used for testing.
-  Its trade history must be clean when the window opens.
-
-`ALPACA_PAPER_TRADE=true` is asserted at startup. The process refuses to boot
-against a live account.
-
-Keys live in the environment. They are never committed, never written to the
-journal, and are scrubbed from any recorded terminal output.
-
-## Handover
-
-- `HANDOVER.md` — architecture, how to run it, what the pieces do.
-- `HANDOVER-2.md` — **start here.** What changed on 29 Aug, the fourteen audit
-  fixes, what is still not done, and what to do next.
-- `DECISIONS.md` — why every choice was made, including where we were wrong.
-- `PLAN.md` — the competition plan.
-- `SOCIAL.md` — the social criterion, with drafted posts.
-
-## Running it
+Useful read-only commands:
 
 ```bash
-python -m glassbox.preflight     # refuses to start on a bad .env
-python main.py --dry-run         # wire up, verify the account, print schedule
-python main.py --once            # a single tick
-python main.py                   # the agent
+python tools/env_parity.py .env.example
+python tools/verify_chain.py
+python tools/crash_drill.py -n 8 --seed 1
+python main.py --dry-run
+uvicorn dashboard.app:app --host 127.0.0.1 --port 8080
 ```
 
-Operational checks, all runnable without a broker connection:
+`main.py --dry-run` contacts Alpaca and proves account identity but does not
+start the clock. Normal and `--once` modes are order-capable.
+
+## External gate commands
+
+Only after the user supplies dev-only credentials and explicit expected IDs:
 
 ```bash
-pytest -q                        # 166 tests
-python tools/crash_drill.py      # 13 checks: real SIGKILL, real restarts
-python tools/verify_chain.py     # re-hash the journal end to end
-python tools/env_parity.py .env  # systemd vs dotenv agreement
-python tools/live_check.py       # the checks that need real network access
-sudo bash tools/soak.sh          # on the VPS: systemd in the loop
+python tools/live_check.py
+python tools/live_check.py --trade --notional 25
 ```
 
-The dashboard — the Application URL a judge opens — is read-only, holds no
-credentials, and has no write path:
+The first command is read-only. `--trade` is intentionally explicit, refuses
+the scored account, and enforces the $50 ceiling.
+
+Only after the user supplies a VPS/SSH target and chooses a reviewed commit:
 
 ```bash
-uvicorn dashboard.app:app --host 0.0.0.0 --port 8080
+sudo bash deploy/setup.sh <full-40-character-reviewed-commit-sha>
+sudo bash tools/soak.sh
 ```
 
-## The measurement date, and why it reshaped the strategy
+This repository does not push, merge, place an order, or deploy automatically.
 
-Alpaca's guidelines measure **total equity as of EOD Thursday 3 September**,
-not at Friday's open. The August payrolls print (Fri 4 Sep, 08:30 ET) therefore
-falls *outside* the scored window.
+## Repository map
 
-We originally built the flagship options trade around payrolls landing sixty
-minutes *inside* it. `next_event()` now refuses to return any catalyst at or
-after the measurement, and CI asserts it, because buying convexity for payrolls
-would have meant paying for a payoff that arrives after the account has already
-been photographed.
-
-## Repository layout
-
-```
+```text
 glassbox/
-  config.py     every threshold, in one place
-  env.py        fail-closed env reads (systemd vs dotenv parity)
-  preflight.py  startup gate; runs as systemd ExecStartPre
-  schema.py     the trade-plan schema (Pydantic v2)
-  kernel.py     the thirteen invariants
-  journal.py    hash-chained append-only log + verifier + anchoring
-  macro.py      the scored-window calendar and the measurement boundary
-  ids.py        deterministic client_order_id
-  strategies/   core (passive), crypto (24/7), event_vol (the options trade)
-dashboard/
-  app.py        read-only journal + equity view. No credentials, no writes.
-tools/
-  crash_drill.py  SIGKILL/restart drill, 13 checks, no broker needed
-  soak.sh         the same on the VPS, with systemd in the loop
-  env_parity.py   systemd vs python-dotenv disagreement detector
-  verify_chain.py standalone journal verifier
-  panic.sh        flatten everything via the Alpaca CLI
-tests/            142 tests
+  broker.py       Alpaca boundary, identity checks, reconciliation, cancellation
+  schema.py       frozen TradePlan and option contract validation
+  thesis.py       bounded select-or-abstain AI plus read-only daily summary
+  kernel.py       deterministic 13-invariant risk review
+  execute.py      intent journal, reconciliation, fill/cancel/reprice state machine
+  state.py        atomic fail-closed JSON persistence
+  scheduler.py    options-only scored policy and development schedule
+  strategies/     deterministic option generators plus dev-only fixtures
+dashboard/app.py  credential-free, read-only journal dashboard
+tools/live_check.py  bounded dev venue proof
+deploy/setup.sh   exact-SHA deployment
 ```
 
-## Disclosure of pre-event work
-
-Required by the FAQ ("If pre-event work is permitted, must it be disclosed in
-the README or final submission? Yes.").
-
-All application code in this repository was written during the hackathon
-window. No pre-existing private library is vendored or depended on. Third-party
-dependencies are the public packages listed in `requirements.txt`.
-
-## Status
-
-Complete and tested: the full autonomous loop — reconcile → manage → propose →
-kernel → execute → journal — plus the read-only dashboard, CI, and the
-crash-recovery drill. 166 tests.
-
-Proven: the recovery *logic*, via `tools/crash_drill.py` (real SIGKILL on real
-child processes).
-
-Not yet proven: the *host*. Until `tools/soak.sh` has run green on the VPS,
-"runs unattended for four days" is a claim rather than a fact.
+The approved design and task-level implementation plan are preserved under
+`docs/superpowers/`.

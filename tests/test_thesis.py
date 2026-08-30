@@ -86,6 +86,22 @@ def test_selection_returns_the_exact_original_candidate() -> None:
     assert journal.events[-1][2]["candidate_id"] == "candidate-b"
 
 
+def test_candidate_trade_fields_are_deeply_immutable() -> None:
+    candidate = _option_candidate("candidate-a")
+
+    with pytest.raises(AttributeError):
+        candidate.option_legs.append(  # type: ignore[attr-defined]
+            OptionLeg(
+                symbol="SPY260904P00500000",
+                side="buy",
+                qty=99,
+                limit_price=Decimal("9.99"),
+            )
+        )
+    with pytest.raises(AttributeError):
+        candidate.evidence.append("model-added evidence")  # type: ignore[attr-defined]
+
+
 def test_explicit_abstention_returns_no_candidate() -> None:
     journal = Journal()
     layer = _layer_returning({"candidate_id": None, "rationale": "No setup clears the bar."})

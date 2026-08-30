@@ -90,7 +90,11 @@ def main() -> int:
         help="wire up, verify the account, print the schedule, exit",
     )
     ap.add_argument("--once", action="store_true", help="one tick, then exit")
-    ap.add_argument("--no-thesis", action="store_true", help="run the deterministic sleeves only")
+    ap.add_argument(
+        "--no-thesis",
+        action="store_true",
+        help="disable AI selection; scored cycles safely abstain",
+    )
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
 

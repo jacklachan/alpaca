@@ -9,7 +9,8 @@ This is the thesis of the whole project, expressed deterministically:
 Deliberately NOT an LLM decision. The flagship trade of the competition cannot
 depend on a model volunteering the right idea on the right afternoon -- it runs
 on the calendar, emits a normal TradePlan, and goes through the same kernel as
-everything else. The LLM's role is to confirm or veto, never to originate.
+everything else. Bounded AI may select this exact candidate or abstain; it can
+never originate or alter one.
 
 The expiry choice is the interesting part. See `select_expiry`.
 """
@@ -260,10 +261,10 @@ class EventVolStrategy:
                 side="buy",
                 is_event_trade=True,
                 event_key=event.name,
-                option_legs=[
+                option_legs=(
                     OptionLeg(symbol=call.symbol, side="buy", qty=qty, limit_price=call_limit),
                     OptionLeg(symbol=put.symbol, side="buy", qty=qty, limit_price=put_limit),
-                ],
+                ),
                 notional_usd=premium,
                 max_loss_usd=premium,  # exact: long premium only
                 time_exit=measurement,
@@ -274,14 +275,14 @@ class EventVolStrategy:
                     f"cheap into a scheduled catalyst. Buying a {C.STRANGLE_OTM_PCT:.1%} "
                     f"strangle for the move, not the direction. {choice.reason}."
                 ),
-                evidence=[
+                evidence=(
                     f"macro_cal: {event.name} {event.when:%Y-%m-%d %H:%M} ET ({event.source})",
                     f"iv_to_rv_ratio_{self.underlying.lower()}={iv_vs_rv:.3f}",
                     f"expiry_selected={choice.expiry} gamma_per_dollar={choice.gamma_per_dollar:.2f}x",
                     f"event_premium_vol_pts={choice.event_premium_vol_pts:+.4f}",
                     f"spot={spot} call_strike={call.strike} put_strike={put.strike}",
                     f"premium_at_risk={premium} max_loss={premium}",
-                ],
+                ),
                 confidence=0.6,
             )
         ]

@@ -37,17 +37,24 @@ JOURNAL_PATH = os.getenv("GLASSBOX_JOURNAL_PATH", C.JOURNAL_PATH)
 # Events that carry the story. Anything else is plumbing and stays out of the
 # default timeline so the interesting entries are not buried.
 HEADLINE = {
+    "CANDIDATE_SELECTED",
+    "CANDIDATE_ABSTAINED",
+    "CANDIDATE_SELECTION_INVALID",
+    "CANDIDATE_SELECTION_UNAVAILABLE",
+    "SCORED_POLICY_REFUSED",
     "PLAN_APPROVED",
     "PLAN_REFUSED",
-    "PLAN_DISCARDED_INVALID",
+    "ORDER_SUBMIT_INTENT",
+    "ORDER_SUBMIT_RECONCILED",
+    "ORDER_SUBMIT_AMBIGUOUS",
     "ORDER_ACCEPTED",
-    "ORDER_CANCELLED",
+    "ORDER_CANCEL_REQUESTED",
+    "ORDER_CANCEL_CONFIRMED",
+    "ORDER_CANCEL_UNCERTAIN",
     "POSITION_CLOSED",
     "EXIT_TRIGGERED",
     "KILL_SWITCH_TRIPPED",
     "KILL_SWITCH_REARMED",
-    "THESIS_COMPLETE",
-    "THESIS_UNAVAILABLE",
     "DAILY_REVIEW",
     "STARTUP",
     "TORN_ENTRY_DISCARDED",
@@ -59,13 +66,19 @@ HEADLINE = {
 
 TONE = {
     "PLAN_REFUSED": "refuse",
-    "PLAN_DISCARDED_INVALID": "refuse",
+    "SCORED_POLICY_REFUSED": "refuse",
+    "CANDIDATE_SELECTION_INVALID": "refuse",
+    "CANDIDATE_SELECTION_UNAVAILABLE": "alarm",
+    "ORDER_SUBMIT_AMBIGUOUS": "alarm",
+    "ORDER_CANCEL_UNCERTAIN": "alarm",
     "KILL_SWITCH_TRIPPED": "alarm",
     "JOB_FAILED": "alarm",
     "LEG_SUBMIT_FAILED": "alarm",
     "EXIT_FAILED": "alarm",
     "TORN_ENTRY_DISCARDED": "alarm",
     "ORDER_ACCEPTED": "act",
+    "CANDIDATE_SELECTED": "approve",
+    "CANDIDATE_ABSTAINED": "sys",
     "POSITION_CLOSED": "act",
     "EXIT_TRIGGERED": "act",
     "PLAN_APPROVED": "approve",
@@ -92,8 +105,8 @@ def _load() -> list[dict]:
 def _summary(records: list[dict]) -> dict:
     counts = Counter(r["event"] for r in records)
     approved = counts["PLAN_APPROVED"]
-    refused = counts["PLAN_REFUSED"] + counts["PLAN_DISCARDED_INVALID"]
-    proposed = approved + refused
+    refused = counts["PLAN_REFUSED"]
+    reviewed = approved + refused
 
     equity, start_equity = None, None
     for r in records:
@@ -113,10 +126,13 @@ def _summary(records: list[dict]) -> dict:
     ok, why = Journal(JOURNAL_PATH).verify() if records else (True, "no entries yet")
     return {
         "entries": len(records),
-        "plans_proposed": proposed,
+        "plans_reviewed": reviewed,
         "plans_approved": approved,
         "plans_refused": refused,
-        "refusal_rate": round(refused / proposed, 3) if proposed else None,
+        "refusal_rate": round(refused / reviewed, 3) if reviewed else None,
+        "candidate_selections": counts["CANDIDATE_SELECTED"],
+        "candidate_abstentions": counts["CANDIDATE_ABSTAINED"],
+        "policy_refusals": counts["SCORED_POLICY_REFUSED"],
         "orders_accepted": counts["ORDER_ACCEPTED"],
         "restarts": counts["STARTUP"],
         "crash_recoveries": counts["TORN_ENTRY_DISCARDED"],
@@ -188,7 +204,7 @@ def index() -> HTMLResponse:
 PAGE = r"""<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Glassbox — Autonomous Options Agent</title>
+<title>Glassbox — Options-only bounded AI agent</title>
 <style>
 :root{
   --paper:#F7F7F5; --surface:#fff; --surface2:#EFEFEC;
@@ -258,9 +274,14 @@ td{padding:8px 10px;border-bottom:1px solid var(--rule)}
 
 <header><div class="wrap" style="padding-bottom:0">
   <h1>Glass<b>box</b> <span class="pill" style="color:var(--accent)">read-only</span></h1>
-  <p class="sub">An autonomous options agent where a language model writes the thesis,
-  a deterministic kernel holds the gun, and a hash-chained journal proves nobody
-  touched either one. This page holds no credentials and can place no orders.</p>
+  <p class="sub"><b>Options-only scored path.</b> Deterministic strategies create
+  immutable, pre-priced SPY and QQQ candidates. Bounded AI may select one candidate
+  or abstain; it cannot change contracts, quantities, sides, or limits. The exact
+  selected object still passes the deterministic risk kernel and hardened executor
+  through the Alpaca Trading API. This page is read-only and holds no credentials.</p>
+  <p class="sub"><span class="pill" style="color:var(--signal)">external gates</span>
+  Dev venue proof pending · VPS soak pending. Neither is claimed complete without
+  broker/VPS evidence.</p>
 </div></header>
 
 <div class="wrap">
@@ -286,10 +307,13 @@ td{padding:8px 10px;border-bottom:1px solid var(--rule)}
 </div>
 
 <script>
-const TONE = {PLAN_REFUSED:"refuse",PLAN_DISCARDED_INVALID:"refuse",
+const TONE = {PLAN_REFUSED:"refuse",SCORED_POLICY_REFUSED:"refuse",
+  CANDIDATE_SELECTION_INVALID:"refuse",CANDIDATE_SELECTION_UNAVAILABLE:"alarm",
+  ORDER_SUBMIT_AMBIGUOUS:"alarm",ORDER_CANCEL_UNCERTAIN:"alarm",
   KILL_SWITCH_TRIPPED:"alarm",JOB_FAILED:"alarm",LEG_SUBMIT_FAILED:"alarm",
   EXIT_FAILED:"alarm",TORN_ENTRY_DISCARDED:"alarm",ORDER_ACCEPTED:"act",
-  POSITION_CLOSED:"act",EXIT_TRIGGERED:"act",PLAN_APPROVED:"approve"};
+  POSITION_CLOSED:"act",EXIT_TRIGGERED:"act",PLAN_APPROVED:"approve",
+  CANDIDATE_SELECTED:"approve",CANDIDATE_ABSTAINED:"sys"};
 const money = v => v==null ? "—" : "$"+Number(v).toLocaleString(undefined,{maximumFractionDigits:0});
 const esc = s => String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
@@ -306,10 +330,13 @@ function stats(s){
       <div class="v ${cls}">${money(s.equity)}</div>
       <div class="n2">${pct==null?"awaiting first heartbeat":
         (pct>=0?"+":"")+pct.toFixed(2)+"% vs start"}</div></div>
-    <div class="card"><div class="k">Plans refused</div>
-      <div class="v">${s.plans_refused}<span style="font-size:15px;color:var(--muted)">/${s.plans_proposed||0}</span></div>
-      <div class="n2">${s.refusal_rate==null?"no plans yet":
-        "the kernel rejected "+(s.refusal_rate*100).toFixed(0)+"% of what the model proposed"}</div></div>
+    <div class="card"><div class="k">AI selections</div>
+      <div class="v">${s.candidate_selections}<span style="font-size:15px;color:var(--muted)">/${s.candidate_selections+s.candidate_abstentions}</span></div>
+      <div class="n2">select one candidate or abstain; no trade fields can be authored</div></div>
+    <div class="card"><div class="k">Kernel refusals</div>
+      <div class="v">${s.plans_refused}<span style="font-size:15px;color:var(--muted)">/${s.plans_reviewed||0}</span></div>
+      <div class="n2">${s.refusal_rate==null?"no selected plan reviewed yet":
+        "deterministic kernel refused "+(s.refusal_rate*100).toFixed(0)+"% of reviewed selections"}</div></div>
     <div class="card"><div class="k">Orders placed</div>
       <div class="v">${s.orders_accepted}</div>
       <div class="n2">every one carries a broker order id</div></div>
@@ -352,15 +379,17 @@ function line(r){
   const tone=TONE[r.event]||"sys";
   const p=r.payload||{};
   let body="";
-  if(r.event==="PLAN_REFUSED"||r.event==="PLAN_DISCARDED_INVALID"){
+  if(r.event==="PLAN_REFUSED"||r.event==="SCORED_POLICY_REFUSED"||r.event==="CANDIDATE_SELECTION_INVALID"){
     body=`<span class="why">refused: ${esc(p.reason||p.failed_invariant||"—")}</span>`;
+  } else if(r.event==="CANDIDATE_SELECTED"){
+    body=`selected immutable candidate ${esc(p.candidate_id||"—")} · ${esc(p.rationale||"")}`;
+  } else if(r.event==="CANDIDATE_ABSTAINED"){
+    body=`abstained · ${esc(p.reason||"no candidate selected")}`;
   } else if(r.event==="PLAN_APPROVED"){
     body=`${esc(p.symbol||p.plan_id||"")} — passed ${esc(p.checks_passed??"all")} invariants`;
   } else if(r.event==="ORDER_ACCEPTED"){
     body=`${esc(p.symbol||"")} ${esc(p.side||"")} ${esc(p.qty||"")} @ ${esc(p.limit_price??"mkt")}
       <span style="color:var(--muted)">· broker ${esc(p.broker_order_id||"—")}</span>`;
-  } else if(r.event==="THESIS_COMPLETE"){
-    body=esc(p.thesis||`${p.plans??0} plan(s) proposed`);
   } else if(r.event==="STARTUP"){
     body=`account ${esc(p.account_number||"—")} · equity ${esc(p.equity||"—")} · env ${esc(p.env||"—")}`;
   } else if(r.event==="TORN_ENTRY_DISCARDED"){
@@ -382,7 +411,7 @@ prev_hash ${esc(r.prev_hash)}</pre></details>
 async function timeline(){
   const rows=await j(`/api/journal?limit=400&all_events=${RAW}`);
   let f=rows;
-  if(FILTER==="ref") f=rows.filter(r=>r.event==="PLAN_REFUSED"||r.event==="PLAN_DISCARDED_INVALID");
+  if(FILTER==="ref") f=rows.filter(r=>r.event==="PLAN_REFUSED"||r.event==="SCORED_POLICY_REFUSED"||r.event==="CANDIDATE_SELECTION_INVALID");
   if(FILTER==="ord") f=rows.filter(r=>r.event==="ORDER_ACCEPTED"||r.event==="POSITION_CLOSED");
   const el=document.getElementById("tl");
   el.innerHTML = f.length ? f.slice().reverse().map(line).join("")

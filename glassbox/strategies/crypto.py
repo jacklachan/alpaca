@@ -1,4 +1,8 @@
-"""The crypto sleeve. Runs 24/7 -- which is the entire point.
+"""Development-only crypto strategy.
+
+This strategy and its 24/7 job are never registered on the options-only scored
+account. The only approved connectivity proof is the explicit, capped
+``tools/live_check.py`` command.
 
 Two jobs:
 
@@ -73,6 +77,7 @@ class CryptoStrategy:
             stop = (spot * (1 - STOP_PCT)).quantize(Decimal("0.01"))
             qty = notional / spot
             max_loss = (abs(spot - stop) * qty * C.GAP_MULTIPLIER).quantize(Decimal("1"))
+            evidence: tuple[str, ...]
 
             if in_event_window:
                 thesis = (
@@ -82,12 +87,12 @@ class CryptoStrategy:
                     f"defined-risk position in {symbol} on published information, "
                     f"with a hard time exit before the measurement."
                 )
-                evidence = [
+                evidence = (
                     f"macro_cal: {event.name} {event.when:%Y-%m-%d %H:%M} ET (released)",
                     "equity_market_open=False crypto_venue_open=True",
                     f"spot={spot} stop={stop}",
                     f"time_exit={MEASUREMENT_ET:%Y-%m-%d %H:%M} ET",
-                ]
+                )
                 time_exit = MEASUREMENT_ET
                 confidence = 0.55
             else:
@@ -97,11 +102,11 @@ class CryptoStrategy:
                     f"so the agent is operating outside equity hours, with a "
                     f"{STOP_PCT:.0%} stop bounding the position."
                 )
-                evidence = [
+                evidence = (
                     f"allocation_policy=crypto_baseline weight={weight}",
                     f"spot={spot} stop={stop}",
                     "venue=alpaca_crypto hours=24/7",
-                ]
+                )
                 time_exit = None
                 confidence = 0.5
 

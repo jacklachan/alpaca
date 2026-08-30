@@ -89,6 +89,22 @@ def _spawn(path: Path) -> subprocess.Popen:
     )
 
 
+def _wait_for_journal(path: Path, proc: subprocess.Popen, timeout: float = 5.0) -> bool:
+    """Wait until the writer has completed at least one durable append."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            if path.is_file() and path.stat().st_size > 0:
+                return True
+        except OSError:
+            # The writer may be between create and stat; retry within the bound.
+            pass
+        if proc.poll() is not None:
+            return False
+        time.sleep(0.005)
+    return False
+
+
 def scenario_kill_mid_write(res: Results, rounds: int) -> None:
     """SIGKILL a live writer repeatedly; the chain must stay verifiable."""
     print(f"\n{YELLOW}1. SIGKILL mid-write, {rounds} rounds{RESET}")
@@ -99,6 +115,16 @@ def scenario_kill_mid_write(res: Results, rounds: int) -> None:
     try:
         for r in range(rounds):
             proc = _spawn(path)
+            if not _wait_for_journal(path, proc):
+                if proc.poll() is None:
+                    proc.send_signal(KILL_SIGNAL)
+                    proc.wait(timeout=5)
+                res.add(
+                    "survives SIGKILL mid-write",
+                    False,
+                    f"round {r + 1}: writer never completed its first durable append",
+                )
+                return
             time.sleep(random.uniform(0.05, 0.30))
             proc.send_signal(KILL_SIGNAL)
             proc.wait(timeout=5)

@@ -248,8 +248,10 @@ class Agent:
             self.execute(plan, verdict)
 
     def crypto_tick(self) -> None:
-        """Same loop, crypto only. Runs 24/7 -- including the pre-open window
+        """Development-only crypto loop. Runs 24/7, including the pre-open window
         after an 08:15 or 08:30 ET release, when equities are still shut.
+
+        It is omitted entirely when ``environment == "scored"``.
 
         AUDIT NOTE: this used to reconcile and manage but never iterate the
         strategies, so the crypto sleeve proposed nothing, ever. The only place

@@ -1,7 +1,8 @@
 """The trade-plan schema.
 
-This is load-bearing, not cosmetic: it is what turns "the LLM returned some
-text" into "the LLM returned a validated object, or nothing at all".
+This is load-bearing, not cosmetic: it is the immutable boundary between
+deterministic candidate construction, risk review, and execution. The bounded
+AI layer returns only a candidate ID and never constructs this object.
 
 Design note -- the schema is deliberately PERMISSIVE about dangerous plans.
 A short option leg validates here and is refused by the kernel. That is on
@@ -89,12 +90,12 @@ class TradePlan(BaseModel):
     instrument: Instrument
 
     symbol: str = Field(description="equity/crypto ticker, or underlying for options")
-    option_legs: list[OptionLeg] = Field(default_factory=list)
+    option_legs: tuple[OptionLeg, ...] = ()
 
     side: Side
     notional_usd: Decimal = Field(gt=0, le=30_000)
 
-    # The model must state a bounded worst case. The kernel recomputes it
+    # The deterministic candidate must state a bounded worst case. The kernel recomputes it
     # independently and refuses the plan if the two materially disagree.
     max_loss_usd: Decimal = Field(gt=0)
 
@@ -102,7 +103,7 @@ class TradePlan(BaseModel):
     target: Decimal | None = None
     time_exit: datetime | None = None
 
-    # Set by a calendar-triggered strategy, not by the LLM. Routes the plan to
+    # Set by a calendar-triggered strategy. Routes the plan to
     # the separately budgeted event-trade allowance.
     is_event_trade: bool = False
 
@@ -118,7 +119,7 @@ class TradePlan(BaseModel):
     event_key: str | None = None
 
     thesis: str = Field(min_length=40, max_length=800)
-    evidence: list[str] = Field(min_length=1)
+    evidence: tuple[str, ...] = Field(min_length=1)
     confidence: float = Field(ge=0, le=1)
 
     @field_validator("symbol")
