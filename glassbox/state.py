@@ -23,8 +23,7 @@ class StateWriteError(StateError):
     """A durable atomic state replacement failed."""
 
 
-def read_json(path: str | Path, *, default: T,
-              validate: Callable[[Any], T]) -> T:
+def read_json(path: str | Path, *, default: T, validate: Callable[[Any], T]) -> T:
     """Read and validate JSON; only a missing file receives `default`."""
     target = Path(path)
     if not target.exists():
@@ -60,8 +59,14 @@ def atomic_write_json(path: str | Path, value: Any) -> None:
     temporary: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
-                mode="w", encoding="utf-8", newline="\n", delete=False,
-                dir=target.parent, prefix=f".{target.name}.", suffix=".tmp") as fh:
+            mode="w",
+            encoding="utf-8",
+            newline="\n",
+            delete=False,
+            dir=target.parent,
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+        ) as fh:
             temporary = Path(fh.name)
             json.dump(value, fh, sort_keys=True, indent=2)
             fh.write("\n")

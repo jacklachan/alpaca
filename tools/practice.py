@@ -27,20 +27,21 @@ import logging
 import os
 import sys
 from decimal import Decimal
+from typing import Any
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from glassbox import config as C                       # noqa: E402
-from glassbox.broker import Broker                     # noqa: E402
-from glassbox.data import MarketData                   # noqa: E402
-from glassbox.execute import ExecutionEngine           # noqa: E402
-from glassbox.journal import Journal                   # noqa: E402
-from glassbox.kernel import RiskKernel                 # noqa: E402
+from glassbox import config as C  # noqa: E402
+from glassbox.broker import Broker  # noqa: E402
+from glassbox.data import MarketData  # noqa: E402
+from glassbox.execute import ExecutionEngine  # noqa: E402
+from glassbox.journal import Journal  # noqa: E402
+from glassbox.kernel import RiskKernel  # noqa: E402
 from glassbox.manage import KillSwitch, PositionManager  # noqa: E402
-from glassbox.schema import OptionLeg, TradePlan       # noqa: E402
-from glassbox.strategies.core import CoreStrategy      # noqa: E402
+from glassbox.schema import OptionLeg, TradePlan  # noqa: E402
+from glassbox.strategies.core import CoreStrategy  # noqa: E402
 from glassbox.strategies.crypto import CryptoStrategy  # noqa: E402
 from glassbox.strategies.event_vol import EventVolStrategy  # noqa: E402
 
@@ -53,12 +54,14 @@ def head(n: int, title: str) -> None:
 
 def verdict_line(plan, v) -> str:
     mark = "APPROVED" if v.approved else "REFUSED "
-    return (f"  [{mark}] {plan.sleeve:<7} {plan.symbol:<10} "
-            f"${plan.notional_usd:>9,.0f}  {v.checks_passed}/{v.checks_total}  "
-            f"{v.reason[:70]}")
+    return (
+        f"  [{mark}] {plan.sleeve:<7} {plan.symbol:<10} "
+        f"${plan.notional_usd:>9,.0f}  {v.checks_passed}/{v.checks_total}  "
+        f"{v.reason[:70]}"
+    )
 
 
-def hostile_plans() -> list[TradePlan]:
+def hostile_plans() -> list[tuple[str, TradePlan]]:
     """Plans a careless or compromised model might emit. Each must be refused.
 
     Note these are constructed to VALIDATE against the schema -- the schema is
@@ -66,73 +69,130 @@ def hostile_plans() -> list[TradePlan]:
     refused visibly by the kernel, with a reason string and a journal entry,
     rather than dying as an opaque validation error.
     """
-    out = []
+    out: list[tuple[str, TradePlan]] = []
 
-    out.append(("sell 400 naked SPY calls", TradePlan(
-        sleeve="convex", action="open", instrument="option", symbol="SPY",
-        side="sell",
-        option_legs=[OptionLeg(symbol="SPY260911C00780000", side="sell",
-                               qty=200, limit_price=Decimal("4.00"))],
-        notional_usd=Decimal("80000") / 100, max_loss_usd=Decimal("800"),
-        thesis="Collect premium by selling calls against the index into the "
-               "payrolls print. Volatility is low and decay is on our side.",
-        evidence=["iv_low"], confidence=0.9)))
+    out.append(
+        (
+            "sell 400 naked SPY calls",
+            TradePlan(
+                sleeve="convex",
+                action="open",
+                instrument="option",
+                symbol="SPY",
+                side="sell",
+                option_legs=[
+                    OptionLeg(
+                        symbol="SPY260911C00780000",
+                        side="sell",
+                        qty=200,
+                        limit_price=Decimal("4.00"),
+                    )
+                ],
+                notional_usd=Decimal("80000") / 100,
+                max_loss_usd=Decimal("800"),
+                thesis="Collect premium by selling calls against the index into the "
+                "payrolls print. Volatility is low and decay is on our side.",
+                evidence=["iv_low"],
+                confidence=0.9,
+            ),
+        )
+    )
 
-    out.append(("hallucinated ticker", TradePlan(
-        sleeve="core", action="open", instrument="equity", symbol="ZXQQ",
-        side="buy", notional_usd=Decimal("10000"), max_loss_usd=Decimal("900"),
-        stop=Decimal("40"),
-        thesis="Strong momentum in this small cap with an unusual volume "
-               "profile suggesting accumulation ahead of a catalyst.",
-        evidence=["momentum_score=0.91"], confidence=0.8)))
+    out.append(
+        (
+            "hallucinated ticker",
+            TradePlan(
+                sleeve="core",
+                action="open",
+                instrument="equity",
+                symbol="ZXQQ",
+                side="buy",
+                notional_usd=Decimal("10000"),
+                max_loss_usd=Decimal("900"),
+                stop=Decimal("40"),
+                thesis="Strong momentum in this small cap with an unusual volume "
+                "profile suggesting accumulation ahead of a catalyst.",
+                evidence=["momentum_score=0.91"],
+                confidence=0.8,
+            ),
+        )
+    )
 
-    out.append(("100x oversized position", TradePlan(
-        sleeve="core", action="open", instrument="equity", symbol="SPY",
-        side="buy", notional_usd=Decimal("29999"), max_loss_usd=Decimal("10"),
-        stop=Decimal("700"),
-        thesis="High conviction directional bet on the index into month end "
-               "rebalancing flows, sized up accordingly for the tournament.",
-        evidence=["month_end_flow"], confidence=0.99)))
+    out.append(
+        (
+            "100x oversized position",
+            TradePlan(
+                sleeve="core",
+                action="open",
+                instrument="equity",
+                symbol="SPY",
+                side="buy",
+                notional_usd=Decimal("29999"),
+                max_loss_usd=Decimal("10"),
+                stop=Decimal("700"),
+                thesis="High conviction directional bet on the index into month end "
+                "rebalancing flows, sized up accordingly for the tournament.",
+                evidence=["month_end_flow"],
+                confidence=0.99,
+            ),
+        )
+    )
 
-    out.append(("0DTE into the snapshot", TradePlan(
-        sleeve="convex", action="open", instrument="option", symbol="SPY",
-        side="buy",
-        option_legs=[OptionLeg(symbol="SPY260904C00775000", side="buy",
-                               qty=20, limit_price=Decimal("1.20"))],
-        notional_usd=Decimal("2400"), max_loss_usd=Decimal("2400"),
-        thesis="Maximum convexity per dollar by holding zero-days-to-expiry "
-               "calls across the payrolls release for the largest payoff.",
-        evidence=["gamma_max"], confidence=0.7)))
+    out.append(
+        (
+            "0DTE into the snapshot",
+            TradePlan(
+                sleeve="convex",
+                action="open",
+                instrument="option",
+                symbol="SPY",
+                side="buy",
+                option_legs=[
+                    OptionLeg(
+                        symbol="SPY260904C00775000", side="buy", qty=20, limit_price=Decimal("1.20")
+                    )
+                ],
+                notional_usd=Decimal("2400"),
+                max_loss_usd=Decimal("2400"),
+                thesis="Maximum convexity per dollar by holding zero-days-to-expiry "
+                "calls across the payrolls release for the largest payoff.",
+                evidence=["gamma_max"],
+                confidence=0.7,
+            ),
+        )
+    )
 
     return out
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(prog="practice")
-    ap.add_argument("--live", action="store_true",
-                    help="actually place a small crypto order")
-    ap.add_argument("--close", action="store_true",
-                    help="close the practice position afterwards")
-    ap.add_argument("--notional", type=float, default=100.0,
-                    help="size of the live practice trade (default $100)")
+    ap.add_argument("--live", action="store_true", help="actually place a small crypto order")
+    ap.add_argument("--close", action="store_true", help="close the practice position afterwards")
+    ap.add_argument(
+        "--notional",
+        type=float,
+        default=100.0,
+        help="size of the live practice trade (default $100)",
+    )
     args = ap.parse_args()
 
-    logging.basicConfig(level=logging.WARNING,
-                        format="%(levelname)s %(name)s %(message)s")
+    logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s %(message)s")
 
     env = os.getenv("ALPACA_ENV", "dev")
     if env == "scored":
-        print("REFUSING: ALPACA_ENV=scored.\n"
-              "The scored account must have a clean, untouched trade history "
-              "when the window opens. Point .env at the dev account.")
+        print(
+            "REFUSING: ALPACA_ENV=scored.\n"
+            "The scored account must have a clean, untouched trade history "
+            "when the window opens. Point .env at the dev account."
+        )
         return 2
 
     journal = Journal(C.JOURNAL_PATH)
     broker = Broker(journal=journal)
     kernel = RiskKernel()
     data = MarketData(broker)
-    manager = PositionManager(broker, journal,
-                              KillSwitch(journal=journal))
+    manager = PositionManager(broker, journal, KillSwitch(journal=journal))
 
     # -- 1 ---------------------------------------------------------------------
     head(1, "Account")
@@ -158,7 +218,7 @@ def main() -> int:
 
     # -- 3 ---------------------------------------------------------------------
     head(3, "Strategies propose, kernel judges")
-    strategies = {
+    strategies: dict[str, Any] = {
         "event_vol": EventVolStrategy(underlying="SPY", data=data),
         "core": CoreStrategy(),
         "crypto": CryptoStrategy(data=data),
@@ -171,20 +231,29 @@ def main() -> int:
             print(f"  {name:<10} error: {exc}")
             continue
         if not plans:
-            print(f"  {name:<10} proposed nothing "
-                  f"({'market closed' if not state.market_open else 'no setup'})")
+            print(
+                f"  {name:<10} proposed nothing "
+                f"({'market closed' if not state.market_open else 'no setup'})"
+            )
             continue
         for p in plans:
             v = kernel.review(p, state)
             print(verdict_line(p, v))
-            journal.append("risk.kernel",
-                           "PLAN_APPROVED" if v.approved else "PLAN_REFUSED",
-                           {"plan_id": p.plan_id, "strategy": name,
-                            "symbol": p.symbol, "sleeve": p.sleeve,
-                            "thesis": p.thesis, "evidence": p.evidence,
-                            "reason": v.reason,
-                            "checks_passed": v.checks_passed,
-                            "failed_invariant": v.failed_invariant})
+            journal.append(
+                "risk.kernel",
+                "PLAN_APPROVED" if v.approved else "PLAN_REFUSED",
+                {
+                    "plan_id": p.plan_id,
+                    "strategy": name,
+                    "symbol": p.symbol,
+                    "sleeve": p.sleeve,
+                    "thesis": p.thesis,
+                    "evidence": p.evidence,
+                    "reason": v.reason,
+                    "checks_passed": v.checks_passed,
+                    "failed_invariant": v.failed_invariant,
+                },
+            )
             if v.approved:
                 approved.append(p)
 
@@ -198,14 +267,21 @@ def main() -> int:
         print(f"  {status} {label}")
         print(f"           invariant: {v.failed_invariant}")
         print(f"           reason:    {v.reason}\n")
-        journal.append("risk.kernel", "PLAN_REFUSED" if not v.approved
-                       else "PLAN_APPROVED",
-                       {"source": "adversarial_probe", "label": label,
-                        "reason": v.reason,
-                        "failed_invariant": v.failed_invariant})
+        journal.append(
+            "risk.kernel",
+            "PLAN_REFUSED" if not v.approved else "PLAN_APPROVED",
+            {
+                "source": "adversarial_probe",
+                "label": label,
+                "reason": v.reason,
+                "failed_invariant": v.failed_invariant,
+            },
+        )
         if v.approved:
             all_refused = False
-    print(f"  {'All hostile plans refused.' if all_refused else 'A HOSTILE PLAN PASSED. Investigate.'}")
+    print(
+        f"  {'All hostile plans refused.' if all_refused else 'A HOSTILE PLAN PASSED. Investigate.'}"
+    )
 
     # -- 5 ---------------------------------------------------------------------
     head(5, "Execution")
@@ -220,20 +296,24 @@ def main() -> int:
             plan = crypto[0]
             # Resize to the practice notional -- we are proving the path, not
             # taking the position.
-            plan = plan.model_copy(update={
-                "notional_usd": Decimal(str(args.notional)),
-                "max_loss_usd": Decimal(str(args.notional)) * Decimal("0.06")})
+            plan = plan.model_copy(
+                update={
+                    "notional_usd": Decimal(str(args.notional)),
+                    "max_loss_usd": Decimal(str(args.notional)) * Decimal("0.06"),
+                }
+            )
             v = kernel.review(plan, state)
             print(verdict_line(plan, v))
             if v.approved:
-                engine = ExecutionEngine(broker, journal, poll_seconds=2,
-                                         fill_wait_seconds=30)
+                engine = ExecutionEngine(broker, journal, poll_seconds=2, fill_wait_seconds=30)
                 result = engine.execute(plan, v)
                 print(f"\n  ok       {result.ok}")
                 print(f"  reason   {result.reason}")
                 for leg in result.legs:
-                    print(f"  leg      {leg.symbol} filled {leg.filled_qty} "
-                          f"@ {leg.avg_price}  broker_order_id={leg.broker_order_id}")
+                    print(
+                        f"  leg      {leg.symbol} filled {leg.filled_qty} "
+                        f"@ {leg.avg_price}  broker_order_id={leg.broker_order_id}"
+                    )
 
         if args.close:
             print("\n  Closing practice positions...")
@@ -252,10 +332,11 @@ def main() -> int:
     exits = manager.tick(state)
     print(f"  positions evaluated      {len(state.positions)}")
     print(f"  exits triggered          {len(exits)}")
-    for e in exits:
-        print(f"    {e.symbol}: {e.reason}")
-    print(f"  kill switch              "
-          f"{'LATCHED' if manager.kill.tripped else 'armed, not tripped'}")
+    for exit_order in exits:
+        print(f"    {exit_order.symbol}: {exit_order.reason}")
+    print(
+        f"  kill switch              {'LATCHED' if manager.kill.tripped else 'armed, not tripped'}"
+    )
 
     # -- 7 ---------------------------------------------------------------------
     head(7, "Journal")
@@ -263,9 +344,9 @@ def main() -> int:
     ok, why = journal.verify()
     actors: dict[str, int] = {}
     events: dict[str, int] = {}
-    for e in entries:
-        actors[e["actor"]] = actors.get(e["actor"], 0) + 1
-        events[e["event"]] = events.get(e["event"], 0) + 1
+    for entry in entries:
+        actors[entry["actor"]] = actors.get(entry["actor"], 0) + 1
+        events[entry["event"]] = events.get(entry["event"], 0) + 1
     print(f"  entries   {len(entries)}")
     print(f"  head      {journal.head[:24]}")
     print("  actors    " + ", ".join(f"{a}={n}" for a, n in sorted(actors.items())))

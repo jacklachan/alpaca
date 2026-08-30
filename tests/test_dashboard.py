@@ -21,28 +21,41 @@ def client(tmp_path, monkeypatch):
     path = tmp_path / "journal.jsonl"
     monkeypatch.setenv("GLASSBOX_JOURNAL_PATH", str(path))
     import importlib
+
     import dashboard.app as mod
+
     importlib.reload(mod)
     return TestClient(mod.app), path
 
 
 def seed(path, n=3):
     from glassbox.journal import Journal
+
     j = Journal(path)
-    j.append("broker", "STARTUP",
-             {"account_number": "PA-TEST", "equity": "100000", "env": "dev"})
-    j.append("risk.kernel", "PLAN_REFUSED",
-             {"reason": "naked short option: maximum loss is unbounded",
-              "failed_invariant": "02_bounded_max_loss"})
-    j.append("risk.kernel", "PLAN_APPROVED",
-             {"symbol": "SPY260904C00783000", "checks_passed": 13})
+    j.append("broker", "STARTUP", {"account_number": "PA-TEST", "equity": "100000", "env": "dev"})
+    j.append(
+        "risk.kernel",
+        "PLAN_REFUSED",
+        {
+            "reason": "naked short option: maximum loss is unbounded",
+            "failed_invariant": "02_bounded_max_loss",
+        },
+    )
+    j.append("risk.kernel", "PLAN_APPROVED", {"symbol": "SPY260904C00783000", "checks_passed": 13})
     for i, e in enumerate([100000, 101000, 99500]):
         j.append("scheduler", "HEARTBEAT", {"equity": e, "i": i})
     return j
 
 
-ROUTES = ["/", "/healthz", "/api/summary", "/api/verify",
-          "/api/equity", "/api/calendar", "/api/journal"]
+ROUTES = [
+    "/",
+    "/healthz",
+    "/api/summary",
+    "/api/verify",
+    "/api/equity",
+    "/api/calendar",
+    "/api/journal",
+]
 
 
 class TestResilience:
@@ -117,6 +130,7 @@ class TestSafety:
     def test_no_write_routes_exist(self, client):
         c, _ = client
         import dashboard.app as mod
+
         methods = set()
         for route in mod.app.routes:
             methods |= set(getattr(route, "methods", set()) or set())

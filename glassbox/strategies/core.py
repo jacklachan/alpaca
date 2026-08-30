@@ -18,7 +18,6 @@ the shots. Passive discharges that job perfectly and cannot break at 03:00.
 
 from __future__ import annotations
 
-from datetime import datetime
 from decimal import Decimal
 
 from .. import config as C
@@ -34,9 +33,9 @@ from ..schema import TradePlan
 # and the kernel refused it -- correctly. Three broad ETFs, no single-name
 # idiosyncratic risk, every leg comfortably inside the limit.
 WEIGHTS: dict[str, Decimal] = {
-    "SPY": Decimal("0.35"),   # 22.75% of starting equity
-    "QQQ": Decimal("0.35"),   # 22.75%
-    "IWM": Decimal("0.30"),   # 19.50%
+    "SPY": Decimal("0.35"),  # 22.75% of starting equity
+    "QQQ": Decimal("0.35"),  # 22.75%
+    "IWM": Decimal("0.30"),  # 19.50%
 }
 
 # A disaster stop, not a trading stop. Wide enough that ordinary noise never
@@ -49,8 +48,9 @@ class CoreStrategy:
 
     name = "core"
 
-    def propose_from_state(self, state: PortfolioState,
-                           positioned_for: set[str] | None = None) -> list[TradePlan]:
+    def propose_from_state(
+        self, state: PortfolioState, positioned_for: set[str] | None = None
+    ) -> list[TradePlan]:
         if not state.market_open:
             return []
 
@@ -59,7 +59,7 @@ class CoreStrategy:
 
         for symbol, weight in WEIGHTS.items():
             if symbol in held:
-                continue                      # bought already; never top up
+                continue  # bought already; never top up
             spot = state.snapshot_price.get(symbol)
             if not spot or spot <= 0:
                 continue
@@ -72,23 +72,31 @@ class CoreStrategy:
             qty = notional / spot
             max_loss = (abs(spot - stop) * qty * C.GAP_MULTIPLIER).quantize(Decimal("1"))
 
-            plans.append(TradePlan(
-                plan_id=stable_plan_id("core", state.now_et.date(), symbol),
-                sleeve="core", action="open", instrument="equity", symbol=symbol,
-                side="buy", notional_usd=notional, max_loss_usd=max_loss,
-                stop=stop,
-                thesis=(
-                    f"Core sleeve allocation: {weight:.0%} of a "
-                    f"${C.CORE_SLEEVE_USD:,.0f} passive book in {symbol}, bought "
-                    f"once and held to the measurement. We claim no directional "
-                    f"edge over four sessions and do not trade this sleeve; it "
-                    f"finances the convex sleeve and holds the account up."),
-                evidence=[
-                    f"allocation_policy=core_passive weight={weight}",
-                    f"spot={spot}",
-                    f"disaster_stop={stop} ({DISASTER_STOP_PCT:.0%} below spot)",
-                    "edge_claimed=none",
-                ],
-                confidence=0.5,
-            ))
+            plans.append(
+                TradePlan(
+                    plan_id=stable_plan_id("core", state.now_et.date(), symbol),
+                    sleeve="core",
+                    action="open",
+                    instrument="equity",
+                    symbol=symbol,
+                    side="buy",
+                    notional_usd=notional,
+                    max_loss_usd=max_loss,
+                    stop=stop,
+                    thesis=(
+                        f"Core sleeve allocation: {weight:.0%} of a "
+                        f"${C.CORE_SLEEVE_USD:,.0f} passive book in {symbol}, bought "
+                        f"once and held to the measurement. We claim no directional "
+                        f"edge over four sessions and do not trade this sleeve; it "
+                        f"finances the convex sleeve and holds the account up."
+                    ),
+                    evidence=[
+                        f"allocation_policy=core_passive weight={weight}",
+                        f"spot={spot}",
+                        f"disaster_stop={stop} ({DISASTER_STOP_PCT:.0%} below spot)",
+                        "edge_claimed=none",
+                    ],
+                    confidence=0.5,
+                )
+            )
         return plans

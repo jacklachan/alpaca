@@ -30,11 +30,15 @@ def main() -> int:
 
     if not problems:
         mode = env.get("ALPACA_ENV", "dev")
-        print(f"preflight OK: paper=true, env={mode}, .env parses identically "
-              f"under systemd and python-dotenv")
+        print(
+            f"preflight OK: paper=true, env={mode}, .env parses identically "
+            f"under systemd and python-dotenv"
+        )
         if mode == "scored":
-            print("NOTE: pointed at the SCORED account. Startup will additionally "
-                  "assert equity == 100000 and no open positions.")
+            print(
+                "NOTE: pointed at the SCORED account. Startup will additionally "
+                "assert equity == 100000 and no open positions."
+            )
         return 0
 
     print("PREFLIGHT FAILED -- refusing to start:", file=sys.stderr)

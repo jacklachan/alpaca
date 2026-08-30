@@ -13,19 +13,20 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from typing import Any
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from glassbox import config as C           # noqa: E402
+from glassbox import config as C  # noqa: E402
 from glassbox.broker import Broker, NotPaperTrading  # noqa: E402
-from glassbox.data import MarketData        # noqa: E402
-from glassbox.journal import Journal        # noqa: E402
-from glassbox.kernel import RiskKernel      # noqa: E402
+from glassbox.data import MarketData  # noqa: E402
+from glassbox.journal import Journal  # noqa: E402
+from glassbox.kernel import RiskKernel  # noqa: E402
 from glassbox.manage import KillSwitch, PositionManager  # noqa: E402
 from glassbox.scheduler import Agent, discord  # noqa: E402
-from glassbox.strategies.core import CoreStrategy      # noqa: E402
+from glassbox.strategies.core import CoreStrategy  # noqa: E402
 from glassbox.strategies.crypto import CryptoStrategy  # noqa: E402
 from glassbox.strategies.event_vol import EventVolStrategy  # noqa: E402
 
@@ -34,26 +35,28 @@ def setup_logging(verbose: bool = False) -> None:
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(asctime)s %(levelname)-8s %(name)-18s %(message)s",
-        stream=sys.stdout)
+        stream=sys.stdout,
+    )
     logging.getLogger("apscheduler").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
-def strategy_set(environment: str, data) -> dict:
+def strategy_set(environment: str, data: Any) -> dict[str, Any]:
     """Construct the explicit strategy surface for one account role."""
     if environment not in {"dev", "scored"}:
         raise ValueError(f"unknown environment {environment!r}")
 
-    strategies = {
-        f"event_vol_{underlying.lower()}": EventVolStrategy(
-            underlying=underlying, data=data)
+    strategies: dict[str, Any] = {
+        f"event_vol_{underlying.lower()}": EventVolStrategy(underlying=underlying, data=data)
         for underlying in C.SCORED_OPTION_UNDERLYINGS
     }
     if environment == "dev":
-        strategies.update({
-            "core": CoreStrategy(),
-            "crypto": CryptoStrategy(data=data),
-        })
+        strategies.update(
+            {
+                "core": CoreStrategy(),
+                "crypto": CryptoStrategy(data=data),
+            }
+        )
     return strategies
 
 
@@ -70,10 +73,10 @@ def build(thesis_enabled: bool = True):
     if thesis_enabled:
         try:
             from glassbox.thesis import ThesisLayer
+
             thesis = ThesisLayer()
         except Exception as exc:
-            logging.warning("thesis layer unavailable (%s); "
-                            "deterministic sleeves continue", exc)
+            logging.warning("thesis layer unavailable (%s); deterministic sleeves continue", exc)
 
     agent = Agent(broker, journal, RiskKernel(), manager, strategies, thesis)
     return agent, journal, broker
@@ -81,11 +84,13 @@ def build(thesis_enabled: bool = True):
 
 def main() -> int:
     ap = argparse.ArgumentParser(prog="glassbox")
-    ap.add_argument("--dry-run", action="store_true",
-                    help="wire up, verify the account, print the schedule, exit")
+    ap.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="wire up, verify the account, print the schedule, exit",
+    )
     ap.add_argument("--once", action="store_true", help="one tick, then exit")
-    ap.add_argument("--no-thesis", action="store_true",
-                    help="run the deterministic sleeves only")
+    ap.add_argument("--no-thesis", action="store_true", help="run the deterministic sleeves only")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -126,26 +131,30 @@ def main() -> int:
             # Separate "the network is unhappy" (systemd will retry) from "this
             # account is wrong" (a human must intervene), because the responses
             # are completely different.
-            transient = any(t in str(exc).lower() for t in
-                            ("proxy", "timeout", "connection", "temporarily",
-                             "unreachable", "resolve"))
+            transient = any(
+                t in str(exc).lower()
+                for t in ("proxy", "timeout", "connection", "temporarily", "unreachable", "resolve")
+            )
             if transient:
                 log.critical("cannot reach Alpaca: %s", exc)
-                log.critical("this looks transient; the service will retry. "
-                             "Check egress/DNS if it persists.")
+                log.critical(
+                    "this looks transient; the service will retry. Check egress/DNS if it persists."
+                )
                 return 4
             log.critical("ACCOUNT CHECK FAILED: %s", exc)
-            log.critical("this is not transient. Do not start the agent until "
-                         "it is understood.")
+            log.critical("this is not transient. Do not start the agent until it is understood.")
             return 5
-        log.info("account %s | equity %s | env=%s | options level %s",
-                 info["account_number"], info["equity"], info["env"],
-                 info["options_level"])
+        log.info(
+            "account %s | equity %s | env=%s | options level %s",
+            info["account_number"],
+            info["equity"],
+            info["env"],
+            info["options_level"],
+        )
         for job in sorted(agent.build().get_jobs(), key=lambda j: j.id):
             log.info("  %-14s %s", job.id, job.trigger)
         if agent.manager.kill.tripped:
-            log.warning("kill switch is LATCHED: %s",
-                        agent.manager.kill.state().get("reason"))
+            log.warning("kill switch is LATCHED: %s", agent.manager.kill.state().get("reason"))
         log.info("dry run complete; clock not started")
         return 0
 

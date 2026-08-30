@@ -70,12 +70,13 @@ def main() -> int:
             seen[k] = i
 
     for k, first, second in dupes:
-        print(f"DUPLICATE  {k}: defined on line {first} and line {second} "
-              f"(last one wins in both parsers)")
+        print(
+            f"DUPLICATE  {k}: defined on line {first} and line {second} "
+            f"(last one wins in both parsers)"
+        )
 
     if not mismatches:
-        print(f"PARITY OK  {path}: systemd and python-dotenv agree on "
-              f"all {len(dot)} variables.")
+        print(f"PARITY OK  {path}: systemd and python-dotenv agree on all {len(dot)} variables.")
         return 0
 
     print(f"MISMATCH   {path}: {len(mismatches)} variable(s) parse differently.\n")

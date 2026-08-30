@@ -85,11 +85,12 @@ def require_choice(name: str, allowed: set[str], default: str | None = None) -> 
     if v not in allowed:
         detail = ""
         if clean(raw) != raw.strip():
-            detail = (f"\n  The raw value was {raw!r}, which suggests an inline "
-                      f"'#' comment in .env.\n  systemd keeps inline comments; "
-                      f"move every comment onto its own line.")
-        raise EnvError(
-            f"{name}={v!r} is not one of {sorted(allowed)}.{detail}")
+            detail = (
+                f"\n  The raw value was {raw!r}, which suggests an inline "
+                f"'#' comment in .env.\n  systemd keeps inline comments; "
+                f"move every comment onto its own line."
+            )
+        raise EnvError(f"{name}={v!r} is not one of {sorted(allowed)}.{detail}")
     return v
 
 
@@ -99,8 +100,11 @@ def expected_account_id(environment: str) -> str:
         raise EnvError(f"unknown Alpaca environment {environment!r}")
 
     selected = f"ALPACA_EXPECTED_{environment.upper()}_ACCOUNT_ID"
-    other = ("ALPACA_EXPECTED_SCORED_ACCOUNT_ID" if environment == "dev"
-             else "ALPACA_EXPECTED_DEV_ACCOUNT_ID")
+    other = (
+        "ALPACA_EXPECTED_SCORED_ACCOUNT_ID"
+        if environment == "dev"
+        else "ALPACA_EXPECTED_DEV_ACCOUNT_ID"
+    )
     expected = require(selected)
     other_id = require(other)
     if expected == other_id:
@@ -124,6 +128,7 @@ def _systemd_values(path: Path) -> dict[str, str]:
 
 def _dotenv_values(path: Path) -> dict[str, str]:
     from dotenv import dotenv_values
+
     return {k: (v or "") for k, v in dotenv_values(str(path)).items()}
 
 
@@ -143,7 +148,8 @@ def parity_report(path: str | Path = ".env") -> tuple[bool, list[str]]:
             if k in seen:
                 problems.append(
                     f"{k} is defined twice (lines {seen[k]} and {i}); "
-                    f"the later definition wins and the earlier one is dead text")
+                    f"the later definition wins and the earlier one is dead text"
+                )
             seen[k] = i
 
     sysd, dot = _systemd_values(p), _dotenv_values(p)
@@ -155,7 +161,8 @@ def parity_report(path: str | Path = ".env") -> tuple[bool, list[str]]:
             problems.append(
                 f"{key} parses differently: systemd sees [{shown[0]}], "
                 f"dotenv sees [{shown[1]}]. Under systemd the systemd value "
-                f"wins. Move the '#' comment onto its own line.")
+                f"wins. Move the '#' comment onto its own line."
+            )
 
     return (not problems), problems
 
@@ -171,8 +178,7 @@ def preflight(path: str | Path = ".env", strict: bool = True) -> list[str]:
 
     paper = get("ALPACA_PAPER_TRADE", "")
     if paper != "true":
-        problems.append(
-            f"ALPACA_PAPER_TRADE={paper!r}; must be exactly 'true'")
+        problems.append(f"ALPACA_PAPER_TRADE={paper!r}; must be exactly 'true'")
 
     try:
         require_choice("ALPACA_ENV", {"dev", "scored"}, default="dev")
@@ -184,6 +190,5 @@ def preflight(path: str | Path = ".env", strict: bool = True) -> list[str]:
         problems.append(f"ALPACA_BASE_URL={base!r} is not the paper endpoint")
 
     if problems and strict:
-        raise EnvError(
-            "environment preflight failed:\n  - " + "\n  - ".join(problems))
+        raise EnvError("environment preflight failed:\n  - " + "\n  - ".join(problems))
     return problems

@@ -21,8 +21,8 @@ ET = ZoneInfo("America/New_York")
 @dataclass(frozen=True)
 class MacroEvent:
     name: str
-    when: datetime          # ET, timezone-aware
-    tier: int               # 1 = market-moving, 2 = secondary
+    when: datetime  # ET, timezone-aware
+    tier: int  # 1 = market-moving, 2 = secondary
     expected_move_bps: int
     source: str
 
@@ -40,18 +40,32 @@ def _et(y: int, m: int, d: int, hh: int, mm: int) -> datetime:
 
 # Scored window: Mon 31 Aug -- Fri 4 Sep 2026.
 CALENDAR: tuple[MacroEvent, ...] = (
-    MacroEvent("Month-end rebalancing", _et(2026, 8, 31, 15, 0), 2, 45,
-               "seasonal flow, not a scheduled release"),
-    MacroEvent("ISM Manufacturing PMI", _et(2026, 9, 1, 10, 0), 2, 40,
-               "ISM, first business day of the month"),
-    MacroEvent("ADP National Employment", _et(2026, 9, 2, 8, 15), 2, 35,
-               "ADP, Wednesday before payrolls"),
-    MacroEvent("ISM Services PMI", _et(2026, 9, 3, 10, 0), 2, 40,
-               "ISM, third business day"),
-    MacroEvent("Initial jobless claims", _et(2026, 9, 3, 8, 30), 2, 20,
-               "DOL, weekly"),
-    MacroEvent("Employment Situation (Aug)", _et(2026, 9, 4, 8, 30), 1, 85,
-               "BLS September 2026 release schedule, verified"),
+    MacroEvent(
+        "Month-end rebalancing",
+        _et(2026, 8, 31, 15, 0),
+        2,
+        45,
+        "seasonal flow, not a scheduled release",
+    ),
+    MacroEvent(
+        "ISM Manufacturing PMI",
+        _et(2026, 9, 1, 10, 0),
+        2,
+        40,
+        "ISM, first business day of the month",
+    ),
+    MacroEvent(
+        "ADP National Employment", _et(2026, 9, 2, 8, 15), 2, 35, "ADP, Wednesday before payrolls"
+    ),
+    MacroEvent("ISM Services PMI", _et(2026, 9, 3, 10, 0), 2, 40, "ISM, third business day"),
+    MacroEvent("Initial jobless claims", _et(2026, 9, 3, 8, 30), 2, 20, "DOL, weekly"),
+    MacroEvent(
+        "Employment Situation (Aug)",
+        _et(2026, 9, 4, 8, 30),
+        1,
+        85,
+        "BLS September 2026 release schedule, verified",
+    ),
 )
 
 # When the account is measured. RESOLVED 29 Aug by Alpaca's official guidelines:
@@ -88,9 +102,12 @@ OPTION_ORDER_CUTOFF_ET = (15, 30)
 HOLIDAYS_2026 = frozenset({date(2026, 9, 7)})  # Labor Day
 
 
-def next_event(now: datetime, tier: int | None = None,
-               within_hours: float = 48,
-               measurement: datetime | None = None) -> MacroEvent | None:
+def next_event(
+    now: datetime,
+    tier: int | None = None,
+    within_hours: float = 48,
+    measurement: datetime | None = None,
+) -> MacroEvent | None:
     """The next scheduled catalyst that resolves BEFORE we are measured.
 
     The measurement filter is not a refinement, it is the point. The largest
@@ -103,7 +120,8 @@ def next_event(now: datetime, tier: int | None = None,
     """
     cutoff = measurement or MEASUREMENT_ET
     upcoming = [
-        e for e in CALENDAR
+        e
+        for e in CALENDAR
         if e.when > now
         and e.when <= cutoff
         and (tier is None or e.tier <= tier)
@@ -139,8 +157,7 @@ def trading_days_between(start: date, end: date) -> int:
     return n
 
 
-def sessions_remaining_at_measurement(expiry: date,
-                                      measurement: datetime | None = None) -> int:
+def sessions_remaining_at_measurement(expiry: date, measurement: datetime | None = None) -> int:
     """How many trading sessions the contract still has when we are measured.
 
     Inclusive of the measurement day itself, because the option still has that

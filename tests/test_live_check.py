@@ -5,11 +5,10 @@ from __future__ import annotations
 from decimal import Decimal
 from types import SimpleNamespace
 
-from glassbox.broker import OrderStateUncertain
 import tools.live_check as live_check
+from glassbox.broker import OrderStateUncertain
 
-LIVE_CHECK_MAX_NOTIONAL_USD = getattr(
-    live_check, "LIVE_CHECK_MAX_NOTIONAL_USD", Decimal("50.00"))
+LIVE_CHECK_MAX_NOTIONAL_USD = getattr(live_check, "LIVE_CHECK_MAX_NOTIONAL_USD", Decimal("50.00"))
 
 
 def order(status: str, filled: str, avg: str = "100000"):
@@ -23,8 +22,15 @@ def order(status: str, filled: str, avg: str = "100000"):
 
 
 class FakeBroker:
-    def __init__(self, *, entry=None, exit=None, positions=None, open_orders=None,
-                 ready_error: Exception | None = None):
+    def __init__(
+        self,
+        *,
+        entry=None,
+        exit=None,
+        positions=None,
+        open_orders=None,
+        ready_error: Exception | None = None,
+    ):
         self.entry = entry or order("filled", "0.0005")
         self.exit = exit or order("filled", "0.0005")
         self.position_qty = Decimal("0")
@@ -58,13 +64,17 @@ class FakeBroker:
     def snapshot_prices(self, symbols):
         return {"BTC/USD": Decimal("100000")}
 
-    def submit(self, *, symbol, qty, side, client_order_id, limit_price,
-               instrument):
-        self.submitted.append({
-            "symbol": symbol, "qty": Decimal(str(qty)), "side": side,
-            "coid": client_order_id, "limit": limit_price,
-            "instrument": instrument,
-        })
+    def submit(self, *, symbol, qty, side, client_order_id, limit_price, instrument):
+        self.submitted.append(
+            {
+                "symbol": symbol,
+                "qty": Decimal(str(qty)),
+                "side": side,
+                "coid": client_order_id,
+                "limit": limit_price,
+                "instrument": instrument,
+            }
+        )
         chosen = self.entry if side == "buy" else self.exit
         chosen.client_order_id = client_order_id
         return SimpleNamespace(id=f"broker-{len(self.submitted)}")
@@ -88,8 +98,9 @@ class FakeBroker:
             self.position_qty = Decimal(str(result.filled_qty))
         else:
             self.exit = result
-            self.position_qty = (Decimal(str(self.entry.filled_qty))
-                                 - Decimal(str(result.filled_qty)))
+            self.position_qty = Decimal(str(self.entry.filled_qty)) - Decimal(
+                str(result.filled_qty)
+            )
         return result
 
     def close_position(self, symbol):
@@ -107,8 +118,14 @@ class Journal:
 
 def run(broker, notional=Decimal("50")):
     return live_check.run_trade_check(
-        broker, Journal(), notional, run_id="unit-test",
-        wait_seconds=0, poll_seconds=0, sleep=lambda _: None)
+        broker,
+        Journal(),
+        notional,
+        run_id="unit-test",
+        wait_seconds=0,
+        poll_seconds=0,
+        sleep=lambda _: None,
+    )
 
 
 def test_refuses_notional_above_hard_ceiling_before_broker_access():
@@ -149,8 +166,7 @@ def test_refuses_a_dirty_open_order_baseline():
 
 
 def test_sells_exactly_the_test_created_quantity_without_symbol_close():
-    broker = FakeBroker(entry=order("filled", "0.0005"),
-                        exit=order("filled", "0.0005"))
+    broker = FakeBroker(entry=order("filled", "0.0005"), exit=order("filled", "0.0005"))
 
     result = run(broker)
 
@@ -162,8 +178,7 @@ def test_sells_exactly_the_test_created_quantity_without_symbol_close():
 
 
 def test_late_entry_fill_after_cancel_sets_the_exact_cleanup_quantity():
-    broker = FakeBroker(entry=order("partially_filled", "0.0002"),
-                        exit=order("filled", "0.0007"))
+    broker = FakeBroker(entry=order("partially_filled", "0.0002"), exit=order("filled", "0.0007"))
     broker.cancel_results = [order("canceled", "0.0007")]
 
     result = run(broker)
@@ -183,8 +198,7 @@ def test_unconfirmed_entry_cancel_is_a_failure_not_a_warning():
 
 
 def test_partial_exit_and_residual_position_fail_exact_reconciliation():
-    broker = FakeBroker(entry=order("filled", "0.0005"),
-                        exit=order("partially_filled", "0.0002"))
+    broker = FakeBroker(entry=order("filled", "0.0005"), exit=order("partially_filled", "0.0002"))
     broker.cancel_results = [order("canceled", "0.0002")]
 
     result = run(broker)

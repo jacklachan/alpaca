@@ -12,8 +12,6 @@ It passed every hand test, because by hand there is no systemd.
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from glassbox import env

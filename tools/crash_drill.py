@@ -43,10 +43,11 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+KILL_SIGNAL = int(getattr(signal, "SIGKILL", signal.SIGTERM))
 sys.path.insert(0, str(ROOT))
 
 from glassbox.ids import client_order_id  # noqa: E402
-from glassbox.journal import GENESIS, Journal, JournalCorrupt  # noqa: E402
+from glassbox.journal import Journal  # noqa: E402
 
 GREEN, RED, YELLOW, DIM, RESET = "\033[32m", "\033[31m", "\033[33m", "\033[2m", "\033[0m"
 
@@ -84,8 +85,8 @@ class Results:
 def _spawn(path: Path) -> subprocess.Popen:
     src = WRITER % {"root": str(ROOT), "path": str(path)}
     return subprocess.Popen(
-        [sys.executable, "-c", src],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        [sys.executable, "-c", src], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
 
 
 def scenario_kill_mid_write(res: Results, rounds: int) -> None:
@@ -99,7 +100,7 @@ def scenario_kill_mid_write(res: Results, rounds: int) -> None:
         for r in range(rounds):
             proc = _spawn(path)
             time.sleep(random.uniform(0.05, 0.30))
-            proc.send_signal(signal.SIGKILL)
+            proc.send_signal(KILL_SIGNAL)
             proc.wait(timeout=5)
 
             raw = path.read_bytes().decode("utf-8", errors="replace")
@@ -114,19 +115,28 @@ def scenario_kill_mid_write(res: Results, rounds: int) -> None:
             try:
                 j = Journal(path)
             except Exception as exc:
-                res.add("survives SIGKILL mid-write", False,
-                        f"round {r + 1}: restart raised {type(exc).__name__}: {exc}")
+                res.add(
+                    "survives SIGKILL mid-write",
+                    False,
+                    f"round {r + 1}: restart raised {type(exc).__name__}: {exc}",
+                )
                 return
 
             ok, why = j.verify()
             if not ok:
-                res.add("survives SIGKILL mid-write", False,
-                        f"round {r + 1}: chain broken after restart -- {why}")
+                res.add(
+                    "survives SIGKILL mid-write",
+                    False,
+                    f"round {r + 1}: chain broken after restart -- {why}",
+                )
                 return
 
-        res.add("survives SIGKILL mid-write", True,
-                f"{rounds} kill/restart cycles, chain verifiable every time; "
-                f"{torn_seen} round(s) left a torn final line naturally")
+        res.add(
+            "survives SIGKILL mid-write",
+            True,
+            f"{rounds} kill/restart cycles, chain verifiable every time; "
+            f"{torn_seen} round(s) left a torn final line naturally",
+        )
 
         # fsync makes the torn-line window very small, so a random kill rarely
         # lands in it. That is good for durability and bad for test coverage:
@@ -140,25 +150,35 @@ def scenario_kill_mid_write(res: Results, rounds: int) -> None:
         try:
             recovered = Journal(path)
         except Exception as exc:
-            res.add("recovers from an injected torn line", False,
-                    f"restart raised {type(exc).__name__}: {exc}")
+            res.add(
+                "recovers from an injected torn line",
+                False,
+                f"restart raised {type(exc).__name__}: {exc}",
+            )
             return
 
         ok, why = recovered.verify()
         # The recovery itself appends a TORN_ENTRY_DISCARDED marker, so the
         # sequence advances by exactly one past the pre-injection head.
-        marker = [r for r in recovered.read()
-                  if r["event"] == "TORN_ENTRY_DISCARDED"]
-        res.add("recovers from an injected torn line", ok and bool(marker),
-                f"discarded the partial write, resumed from seq {seq_before}, "
-                f"chain re-verified ({why})")
-        res.add("records the crash in the chain itself", bool(marker),
-                f"TORN_ENTRY_DISCARDED written at seq {marker[0]['seq']}"
-                if marker else "no recovery marker found")
-        res.add("intact prefix is preserved byte-for-byte",
-                any(r["seq"] == seq_before and r["hash"] == head_before
-                    for r in recovered.read()),
-                f"pre-crash head {head_before[:12]} still present at seq {seq_before}")
+        marker = [r for r in recovered.read() if r["event"] == "TORN_ENTRY_DISCARDED"]
+        res.add(
+            "recovers from an injected torn line",
+            ok and bool(marker),
+            f"discarded the partial write, resumed from seq {seq_before}, "
+            f"chain re-verified ({why})",
+        )
+        res.add(
+            "records the crash in the chain itself",
+            bool(marker),
+            f"TORN_ENTRY_DISCARDED written at seq {marker[0]['seq']}"
+            if marker
+            else "no recovery marker found",
+        )
+        res.add(
+            "intact prefix is preserved byte-for-byte",
+            any(r["seq"] == seq_before and r["hash"] == head_before for r in recovered.read()),
+            f"pre-crash head {head_before[:12]} still present at seq {seq_before}",
+        )
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -171,7 +191,7 @@ def scenario_continuity(res: Results) -> None:
     try:
         proc = _spawn(path)
         time.sleep(0.4)
-        proc.send_signal(signal.SIGKILL)
+        proc.send_signal(KILL_SIGNAL)
         proc.wait(timeout=5)
 
         before = Journal(path)
@@ -185,11 +205,18 @@ def scenario_continuity(res: Results) -> None:
         crossing = [r for r in records if r["seq"] == seq_before + 1]
         linked = bool(crossing) and crossing[0]["prev_hash"] == head_before
 
-        res.add("sequence continues across crash", ok and again.seq > seq_before,
-                f"seq {seq_before} -> {again.seq}; {why}")
-        res.add("prev_hash links across crash", linked,
-                f"entry {seq_before + 1}.prev_hash == pre-crash head "
-                f"{head_before[:12]}" if linked else "link broken at the boundary")
+        res.add(
+            "sequence continues across crash",
+            ok and again.seq > seq_before,
+            f"seq {seq_before} -> {again.seq}; {why}",
+        )
+        res.add(
+            "prev_hash links across crash",
+            linked,
+            f"entry {seq_before + 1}.prev_hash == pre-crash head {head_before[:12]}"
+            if linked
+            else "link broken at the boundary",
+        )
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -202,10 +229,8 @@ def scenario_idempotency(res: Results) -> None:
     # Simulate a fresh interpreter: nothing cached, nothing carried over.
     second = [client_order_id(plan_id, i) for i in range(3)]
     distinct_legs = len(set(first)) == 3
-    res.add("client_order_id is deterministic", first == second,
-            f"leg 0 -> {first[0]}")
-    res.add("legs do not collide", distinct_legs,
-            f"{len(set(first))} distinct ids for 3 legs")
+    res.add("client_order_id is deterministic", first == second, f"leg 0 -> {first[0]}")
+    res.add("legs do not collide", distinct_legs, f"{len(set(first))} distinct ids for 3 legs")
 
 
 def scenario_broker_is_truth(res: Results) -> None:
@@ -216,7 +241,6 @@ def scenario_broker_is_truth(res: Results) -> None:
     """
     print(f"\n{YELLOW}4. Broker-as-truth reconciliation{RESET}")
 
-    from decimal import Decimal
     from glassbox.broker import Broker
 
     class StubPos:
@@ -241,18 +265,23 @@ def scenario_broker_is_truth(res: Results) -> None:
     class StubTrading:
         def __init__(self):
             self.venue: list[StubPos] = [StubPos("SPY", 10, 5000)]
+
         def get_account(self):
             return StubAcct()
+
         def get_all_positions(self):
-            return list(self.venue)          # a fresh read every call
+            return list(self.venue)  # a fresh read every call
+
         def get_orders(self, *_a, **_k):
             return []
+
         def get_clock(self):
             return StubClock()
 
     class StubSnap:
         class latest_trade:
             price = 500.0
+
         class latest_quote:
             bid_price, ask_price = 499.5, 500.5
 
@@ -260,13 +289,14 @@ def scenario_broker_is_truth(res: Results) -> None:
         def get_stock_snapshot(self, *_a, **_k):
             return {"SPY": StubSnap(), "QQQ": StubSnap()}
 
-    b = Broker.__new__(Broker)               # bypass credential checks
+    b = Broker.__new__(Broker)  # bypass credential checks
     stub = StubTrading()
     b.trading = stub
     b.data = StubData()
     b.journal = None
     b.env = "dev"
     from glassbox.broker import TokenBucket
+
     b.bucket = TokenBucket(10_000)
 
     before = {p.symbol for p in b.reconcile().positions}
@@ -277,16 +307,21 @@ def scenario_broker_is_truth(res: Results) -> None:
     after = {p.symbol for p in b.reconcile().positions}
 
     saw_new = "QQQ" in after and "QQQ" not in before
-    res.add("reconcile() picks up a fill that landed while the process was dead",
-            saw_new,
-            f"before {sorted(before)} -> after restart {sorted(after)}")
+    res.add(
+        "reconcile() picks up a fill that landed while the process was dead",
+        saw_new,
+        f"before {sorted(before)} -> after restart {sorted(after)}",
+    )
 
     # Removing a position at the venue must also propagate: a stale local cache
     # would keep showing a position the account no longer holds.
     stub.venue = [p for p in stub.venue if p.symbol != "SPY"]
     final = {p.symbol for p in b.reconcile().positions}
-    res.add("reconcile() drops a position closed while the process was dead",
-            "SPY" not in final, f"after close -> {sorted(final)}")
+    res.add(
+        "reconcile() drops a position closed while the process was dead",
+        "SPY" not in final,
+        f"after close -> {sorted(final)}",
+    )
 
 
 def scenario_deep_corruption(res: Results) -> None:
@@ -318,20 +353,31 @@ def scenario_deep_corruption(res: Results) -> None:
         path.write_text("\n".join(lines) + "\n")
 
         ok, why = Journal(path).verify()
-        res.add("verify() detects an edited payload", not ok,
-                why if not ok else "tamper went undetected")
+        res.add(
+            "verify() detects an edited payload",
+            not ok,
+            why if not ok else "tamper went undetected",
+        )
 
         # End-to-end: the shipped entry point must refuse, with exit code 3.
         envcopy = dict(os.environ)
         envcopy["GLASSBOX_JOURNAL_PATH"] = str(path)
         proc = subprocess.run(
             [sys.executable, "main.py", "--dry-run"],
-            cwd=str(ROOT), env=envcopy, capture_output=True, text=True, timeout=90)
+            cwd=str(ROOT),
+            env=envcopy,
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
         combined = proc.stdout + proc.stderr
         refused = proc.returncode == 3 or "CHAIN BROKEN" in combined.upper()
-        res.add("main.py refuses to start on a broken chain", refused,
-                f"exit={proc.returncode} "
-                f"{'(3 = chain broken, as designed)' if proc.returncode == 3 else ''}")
+        res.add(
+            "main.py refuses to start on a broken chain",
+            refused,
+            f"exit={proc.returncode} "
+            f"{'(3 = chain broken, as designed)' if proc.returncode == 3 else ''}",
+        )
 
         # A hash-chain claim is only worth making if breaking it is detectable
         # at every position, not just the one we happened to test.
@@ -346,24 +392,30 @@ def scenario_deep_corruption(res: Results) -> None:
             if Journal(fresh).verify()[0]:
                 all_detected = False
                 break
-        res.add("every position in the chain is tamper-evident", all_detected,
-                f"edited each of {len(lines)} entries in turn; all detected")
+        res.add(
+            "every position in the chain is tamper-evident",
+            all_detected,
+            f"edited each of {len(lines)} entries in turn; all detected",
+        )
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(prog="crash_drill")
-    ap.add_argument("-n", "--rounds", type=int, default=10,
-                    help="how many kill/restart cycles in scenario 1")
+    ap.add_argument(
+        "-n", "--rounds", type=int, default=10, help="how many kill/restart cycles in scenario 1"
+    )
     ap.add_argument("--seed", type=int, default=None)
     args = ap.parse_args()
     if args.seed is not None:
         random.seed(args.seed)
 
     print(f"{YELLOW}Glassbox crash-recovery drill{RESET}")
-    print(f"{DIM}Real child processes, real SIGKILL, real restarts. "
-          f"No broker connection needed.{RESET}")
+    print(
+        f"{DIM}Real child processes, real SIGKILL, real restarts. "
+        f"No broker connection needed.{RESET}"
+    )
 
     res = Results()
     scenario_kill_mid_write(res, args.rounds)
@@ -381,8 +433,10 @@ def main() -> int:
         for name, ok, detail in res.rows:
             if not ok:
                 print(f"  - {name}: {detail}")
-    print(f"{DIM}Note: this proves the recovery logic. It does not prove the "
-          f"host stays up.\n      Run tools/soak.sh on the VPS for that.{RESET}")
+    print(
+        f"{DIM}Note: this proves the recovery logic. It does not prove the "
+        f"host stays up.\n      Run tools/soak.sh on the VPS for that.{RESET}"
+    )
     return 0 if res.ok else 1
 
 

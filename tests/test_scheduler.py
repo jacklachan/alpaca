@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 from glassbox import config as C
 from glassbox.kernel import PortfolioState
-from glassbox.schema import OptionLeg, TradePlan
 from glassbox.scheduler import Agent
+from glassbox.schema import OptionLeg, TradePlan
 
 
 class Journal:
@@ -91,12 +91,14 @@ def _option(plan_id: str, underlying: str) -> TradePlan:
         action="open",
         instrument="option",
         symbol=underlying,
-        option_legs=[OptionLeg(
-            symbol=f"{underlying}260904C00600000",
-            side="buy",
-            qty=1,
-            limit_price=Decimal("2.00"),
-        )],
+        option_legs=[
+            OptionLeg(
+                symbol=f"{underlying}260904C00600000",
+                side="buy",
+                qty=1,
+                limit_price=Decimal("2.00"),
+            )
+        ],
         side="buy",
         notional_usd=Decimal("200"),
         max_loss_usd=Decimal("200"),
@@ -134,7 +136,8 @@ def _agent(tmp_path, monkeypatch, strategies: dict, thesis: Thesis):
 
 
 def test_scored_cycle_offers_all_option_candidates_and_executes_only_selection(
-        tmp_path, monkeypatch) -> None:
+    tmp_path, monkeypatch
+) -> None:
     spy = _option("spy-a", "SPY")
     qqq = _option("qqq-a", "QQQ")
     thesis = Thesis(qqq)
@@ -155,7 +158,8 @@ def test_scored_cycle_offers_all_option_candidates_and_executes_only_selection(
 def test_scored_abstention_submits_nothing(tmp_path, monkeypatch) -> None:
     thesis = Thesis(None)
     agent, journal, kernel, submitted = _agent(
-        tmp_path, monkeypatch, {"event_spy": Strategy([_option("spy-a", "SPY")])}, thesis)
+        tmp_path, monkeypatch, {"event_spy": Strategy([_option("spy-a", "SPY")])}, thesis
+    )
 
     agent.equity_tick()
 
@@ -179,8 +183,9 @@ def test_scored_policy_refuses_injected_non_option_before_ai(tmp_path, monkeypat
     assert thesis.offered == [option]
     assert kernel.reviewed == []
     assert submitted == []
-    refusal = next(payload for _, event, payload in journal.events
-                   if event == "SCORED_POLICY_REFUSED")
+    refusal = next(
+        payload for _, event, payload in journal.events if event == "SCORED_POLICY_REFUSED"
+    )
     assert refusal["plan_id"] == "equity-a"
     assert refusal["instrument"] == "equity"
 

@@ -33,7 +33,7 @@ class ExitOrder:
     symbol: str
     qty: Decimal
     reason: str
-    urgency: str = "normal"     # normal | immediate
+    urgency: str = "normal"  # normal | immediate
 
 
 class KillSwitch:
@@ -68,14 +68,17 @@ class KillSwitch:
                 raise StateCorrupt(f"{self.path}: invalid kill-switch state")
             return raw
 
-        return read_json(
-            self.path, default={"tripped": False}, validate=validate)
+        return read_json(self.path, default={"tripped": False}, validate=validate)
 
     def trip(self, reason: str, detail: dict | None = None) -> None:
         if self.tripped:
             return
-        rec = {"tripped": True, "reason": reason,
-               "at": datetime.now(C.ET).isoformat(), "detail": detail or {}}
+        rec = {
+            "tripped": True,
+            "reason": reason,
+            "at": datetime.now(C.ET).isoformat(),
+            "detail": detail or {},
+        }
         atomic_write_json(self.path, rec)
         log.critical("KILL SWITCH TRIPPED: %s", reason)
         if self.journal:
@@ -83,16 +86,25 @@ class KillSwitch:
 
     def rearm(self, who: str, why: str) -> None:
         """Human only. Never called by any automated path."""
-        rec = {"tripped": False, "rearmed_by": who, "why": why,
-               "at": datetime.now(C.ET).isoformat()}
+        rec = {
+            "tripped": False,
+            "rearmed_by": who,
+            "why": why,
+            "at": datetime.now(C.ET).isoformat(),
+        }
         atomic_write_json(self.path, rec)
         if self.journal:
             self.journal.append("human", "KILL_SWITCH_REARMED", rec)
 
 
 class PositionManager:
-    def __init__(self, broker, journal, kill_switch: KillSwitch | None = None,
-                 targets_path: str | Path | None = None):
+    def __init__(
+        self,
+        broker,
+        journal,
+        kill_switch: KillSwitch | None = None,
+        targets_path: str | Path | None = None,
+    ):
         self.broker = broker
         self.journal = journal
         self.kill = kill_switch or KillSwitch(journal=journal)
@@ -118,47 +130,59 @@ class PositionManager:
     def _load_targets(self) -> dict[str, dict]:
         def validate(raw) -> dict[str, dict]:
             if not isinstance(raw, dict):
-                raise StateCorrupt(
-                    f"{self._targets_path}: exit targets must be an object")
+                raise StateCorrupt(f"{self._targets_path}: exit targets must be an object")
             out: dict[str, dict] = {}
             try:
                 for symbol, target in raw.items():
                     if not isinstance(symbol, str) or not isinstance(target, dict):
                         raise ValueError("each target must map a symbol to an object")
                     out[symbol] = {
-                        "stop": (Decimal(target["stop"])
-                                 if target.get("stop") else None),
-                        "target": (Decimal(target["target"])
-                                   if target.get("target") else None),
-                        "time_exit": (datetime.fromisoformat(target["time_exit"])
-                                      if target.get("time_exit") else None),
-                        "entry": (Decimal(target["entry"])
-                                  if target.get("entry") else None),
+                        "stop": (Decimal(target["stop"]) if target.get("stop") else None),
+                        "target": (Decimal(target["target"]) if target.get("target") else None),
+                        "time_exit": (
+                            datetime.fromisoformat(target["time_exit"])
+                            if target.get("time_exit")
+                            else None
+                        ),
+                        "entry": (Decimal(target["entry"]) if target.get("entry") else None),
                     }
             except Exception as exc:
-                raise StateCorrupt(
-                    f"{self._targets_path}: invalid exit targets: {exc}") from exc
+                raise StateCorrupt(f"{self._targets_path}: invalid exit targets: {exc}") from exc
             return out
 
         return read_json(self._targets_path, default={}, validate=validate)
 
     def _save_targets(self) -> None:
-        atomic_write_json(self._targets_path, {
-            symbol: {
-                "stop": str(target["stop"])
-                if target.get("stop") is not None else None,
-                "target": str(target["target"])
-                if target.get("target") is not None else None,
-                "time_exit": (target["time_exit"].isoformat()
-                              if target.get("time_exit") else None),
-                "entry": str(target["entry"])
-                if target.get("entry") is not None else None,
-            } for symbol, target in self._targets.items()})
+        atomic_write_json(
+            self._targets_path,
+            {
+                symbol: {
+                    "stop": str(target["stop"]) if target.get("stop") is not None else None,
+                    "target": str(target["target"]) if target.get("target") is not None else None,
+                    "time_exit": (
+                        target["time_exit"].isoformat() if target.get("time_exit") else None
+                    ),
+                    "entry": str(target["entry"]) if target.get("entry") is not None else None,
+                }
+                for symbol, target in self._targets.items()
+            },
+        )
 
-    def register(self, symbol: str, *, stop=None, target=None, time_exit=None,
-                 entry_price: Decimal | None = None) -> None:
-        self._targets[symbol] = {"stop": stop, "target": target,
-                                 "time_exit": time_exit, "entry": entry_price}
+    def register(
+        self,
+        symbol: str,
+        *,
+        stop=None,
+        target=None,
+        time_exit=None,
+        entry_price: Decimal | None = None,
+    ) -> None:
+        self._targets[symbol] = {
+            "stop": stop,
+            "target": target,
+            "time_exit": time_exit,
+            "entry": entry_price,
+        }
         self._save_targets()
 
     # -- the tick --------------------------------------------------------------
@@ -183,9 +207,12 @@ class PositionManager:
             for p in state.positions:
                 if p.instrument == "option" and p.qty > 0:
                     if not any(x.symbol == p.symbol for x in exits):
-                        e = ExitOrder(p.symbol, p.qty,
-                                      "kill switch latched: flattening convex sleeve",
-                                      urgency="immediate")
+                        e = ExitOrder(
+                            p.symbol,
+                            p.qty,
+                            "kill switch latched: flattening convex sleeve",
+                            urgency="immediate",
+                        )
                         self._close(e)
                         exits.append(e)
         return exits
@@ -201,21 +228,29 @@ class PositionManager:
                 # Hard deadline: Alpaca stops accepting options orders at 15:30
                 # ET on expiry day. We act an hour early, every time.
                 if now.date() == expiry:
-                    cutoff = now.replace(hour=C.OPTION_FORCE_CLOSE_ET[0],
-                                         minute=C.OPTION_FORCE_CLOSE_ET[1],
-                                         second=0, microsecond=0)
+                    cutoff = now.replace(
+                        hour=C.OPTION_FORCE_CLOSE_ET[0],
+                        minute=C.OPTION_FORCE_CLOSE_ET[1],
+                        second=0,
+                        microsecond=0,
+                    )
                     if now >= cutoff:
                         return ExitOrder(
-                            p.symbol, abs(p.qty),
+                            p.symbol,
+                            abs(p.qty),
                             f"expiry close-out: {expiry} is today and it is past "
                             f"{C.OPTION_FORCE_CLOSE_ET[0]:02d}:"
                             f"{C.OPTION_FORCE_CLOSE_ET[1]:02d} ET "
                             f"(broker cutoff 15:30, non-trade activity syncs T+1)",
-                            urgency="immediate")
+                            urgency="immediate",
+                        )
                 if now.date() > expiry:
-                    return ExitOrder(p.symbol, abs(p.qty),
-                                     f"position past expiry {expiry}: closing",
-                                     urgency="immediate")
+                    return ExitOrder(
+                        p.symbol,
+                        abs(p.qty),
+                        f"position past expiry {expiry}: closing",
+                        urgency="immediate",
+                    )
 
         rules = self._targets.get(p.symbol)
         if not rules:
@@ -233,12 +268,16 @@ class PositionManager:
         if p.instrument != "option":
             long = p.qty > 0
             if stop is not None and ((long and px <= stop) or (not long and px >= stop)):
-                return ExitOrder(p.symbol, abs(p.qty),
-                                 f"stop hit: {p.symbol} at {px} against stop {stop}",
-                                 urgency="immediate")
+                return ExitOrder(
+                    p.symbol,
+                    abs(p.qty),
+                    f"stop hit: {p.symbol} at {px} against stop {stop}",
+                    urgency="immediate",
+                )
             if target is not None and ((long and px >= target) or (not long and px <= target)):
-                return ExitOrder(p.symbol, abs(p.qty),
-                                 f"target hit: {p.symbol} at {px} against target {target}")
+                return ExitOrder(
+                    p.symbol, abs(p.qty), f"target hit: {p.symbol} at {px} against target {target}"
+                )
         return None
 
     def _evaluate_kill_switch(self, state: PortfolioState) -> None:
@@ -247,21 +286,25 @@ class PositionManager:
         if self.kill.tripped:
             return
         if state.core_sleeve_cost_basis > 0:
-            dd = ((state.core_sleeve_cost_basis - state.core_sleeve_value)
-                  / state.core_sleeve_cost_basis)
+            dd = (
+                state.core_sleeve_cost_basis - state.core_sleeve_value
+            ) / state.core_sleeve_cost_basis
             if dd >= C.CORE_DRAWDOWN_KILL_PCT:
                 self.kill.trip(
-                    f"core sleeve drawdown {dd:.1%} at or beyond "
-                    f"{C.CORE_DRAWDOWN_KILL_PCT:.0%}",
-                    {"core_value": str(state.core_sleeve_value),
-                     "core_cost": str(state.core_sleeve_cost_basis)})
+                    f"core sleeve drawdown {dd:.1%} at or beyond {C.CORE_DRAWDOWN_KILL_PCT:.0%}",
+                    {
+                        "core_value": str(state.core_sleeve_value),
+                        "core_cost": str(state.core_sleeve_cost_basis),
+                    },
+                )
                 return
         port_dd = (C.STARTING_EQUITY - state.equity) / C.STARTING_EQUITY
         if port_dd >= C.PORTFOLIO_DRAWDOWN_KILL_PCT:
             self.kill.trip(
                 f"portfolio drawdown {port_dd:.1%} at or beyond "
                 f"{C.PORTFOLIO_DRAWDOWN_KILL_PCT:.0%} backstop",
-                {"equity": str(state.equity)})
+                {"equity": str(state.equity)},
+            )
 
     # -- helpers ---------------------------------------------------------------
 
@@ -280,16 +323,19 @@ class PositionManager:
             return
         self._exits_sent.add(e.symbol)
 
-        self.journal.append("manage", "EXIT_TRIGGERED", {
-            "symbol": e.symbol, "qty": str(e.qty),
-            "reason": e.reason, "urgency": e.urgency})
+        self.journal.append(
+            "manage",
+            "EXIT_TRIGGERED",
+            {"symbol": e.symbol, "qty": str(e.qty), "reason": e.reason, "urgency": e.urgency},
+        )
         try:
             self.broker.close_position(e.symbol)
         except Exception as exc:
             # A failed close must be retryable, so release the guard.
             self._exits_sent.discard(e.symbol)
-            self.journal.append("manage", "EXIT_FAILED", {
-                "symbol": e.symbol, "reason": e.reason, "error": str(exc)})
+            self.journal.append(
+                "manage", "EXIT_FAILED", {"symbol": e.symbol, "reason": e.reason, "error": str(exc)}
+            )
             log.error("failed to close %s: %s", e.symbol, exc)
 
 

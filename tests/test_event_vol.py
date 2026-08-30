@@ -14,8 +14,7 @@ from pydantic import ValidationError
 
 from glassbox import config as C
 from glassbox.macro import CALENDAR, MEASUREMENT_ET, next_event, sessions_remaining_at_measurement
-from glassbox.strategies.event_vol import (ChainLeg, EventVolStrategy, ExpiryQuote,
-                                           select_expiry)
+from glassbox.strategies.event_vol import ChainLeg, EventVolStrategy, ExpiryQuote, select_expiry
 
 # The measurement is EOD Thu 3 Sep, so the August payrolls print (Fri 4 Sep
 # 08:30) falls OUTSIDE the scored window. It is kept in the calendar because it
@@ -35,21 +34,31 @@ SPOT = Decimal("774")
 
 
 def q(exp: date, iv: str, spread: str = "0.03") -> ExpiryQuote:
-    return ExpiryQuote(expiry=exp, atm_iv=Decimal(iv),
-                       atm_straddle_px=Decimal("11"), bid_ask_pct=Decimal(spread))
+    return ExpiryQuote(
+        expiry=exp, atm_iv=Decimal(iv), atm_straddle_px=Decimal("11"), bid_ask_pct=Decimal(spread)
+    )
 
 
 # Re-based on the EOD Thu 3 Sep measurement:
 #   3 Sep -> 1 session (below the minimum, refused)
 #   4 Sep -> 2,  8 Sep -> 3,  9 Sep -> 4,  11 Sep -> 6
-FLAT = [q(date(2026, 9, 3), "0.132"), q(date(2026, 9, 4), "0.133"),
-        q(date(2026, 9, 8), "0.133"), q(date(2026, 9, 11), "0.131")]
+FLAT = [
+    q(date(2026, 9, 3), "0.132"),
+    q(date(2026, 9, 4), "0.133"),
+    q(date(2026, 9, 8), "0.133"),
+    q(date(2026, 9, 11), "0.131"),
+]
 
-EVENT_PREMIUM = [q(date(2026, 9, 3), "0.240"), q(date(2026, 9, 4), "0.240"),
-                 q(date(2026, 9, 8), "0.185"), q(date(2026, 9, 11), "0.132")]
+EVENT_PREMIUM = [
+    q(date(2026, 9, 3), "0.240"),
+    q(date(2026, 9, 4), "0.240"),
+    q(date(2026, 9, 8), "0.185"),
+    q(date(2026, 9, 11), "0.132"),
+]
 
 
 # --- the calendar -------------------------------------------------------------
+
 
 def test_nfp_is_the_only_tier_one_event():
     assert [e.name for e in CALENDAR if e.tier == 1] == ["Employment Situation (Aug)"]
@@ -71,6 +80,7 @@ def test_a_post_measurement_catalyst_is_never_selected():
     """Regression guard. Buying convexity for payrolls would be paying for a
     payoff that lands after the account has already been photographed."""
     from glassbox.macro import post_measurement_events
+
     assert NFP in post_measurement_events()
     # Even standing on Thursday with payrolls well inside the lookahead window.
     assert next_event(THU_LATE, tier=1, within_hours=48) is None
@@ -94,6 +104,7 @@ def test_thursday_afternoon_has_nothing_left_to_trade():
 
 # --- expiry selection ---------------------------------------------------------
 
+
 def test_refuses_zero_dte_which_marks_as_a_stub():
     """3 Sep is the 0DTE now -- it expires on the measurement day itself."""
     choice = select_expiry(FLAT, CATALYST, MEASUREMENT_ET)
@@ -108,7 +119,7 @@ def test_flat_term_structure_takes_the_shortest_surviving_expiry():
     the 11 Sep contract a team without this analysis would default to."""
     choice = select_expiry(FLAT, CATALYST, MEASUREMENT_ET)
     assert choice.expiry == date(2026, 9, 4)
-    assert choice.gamma_per_dollar == Decimal("3")     # 6 sessions / 2 sessions
+    assert choice.gamma_per_dollar == Decimal("3")  # 6 sessions / 2 sessions
 
 
 def test_event_premium_pushes_us_out_to_the_longer_expiry():
@@ -131,23 +142,35 @@ def test_returns_none_when_nothing_qualifies():
 
 # --- plan construction --------------------------------------------------------
 
+
 def chain_for(exp: date) -> dict[date, list[ChainLeg]]:
     legs = []
     for k in range(750, 800, 1):
         strike = Decimal(k)
         for right in ("C", "P"):
-            legs.append(ChainLeg(
-                symbol=f"SPY{exp:%y%m%d}{right}{int(strike * 1000):08d}",
-                strike=strike, right=right,
-                ask=Decimal("5.20"), bid=Decimal("5.00")))
+            legs.append(
+                ChainLeg(
+                    symbol=f"SPY{exp:%y%m%d}{right}{int(strike * 1000):08d}",
+                    strike=strike,
+                    right=right,
+                    ask=Decimal("5.20"),
+                    bid=Decimal("5.00"),
+                )
+            )
     return {exp: legs}
 
 
 def test_proposes_a_strangle_into_the_catalyst():
     s = EventVolStrategy()
-    plans = s.propose(now=WED, spot=SPOT, iv_vs_rv=Decimal("1.05"),
-                      expiry_candidates=FLAT, chain=chain_for(date(2026, 9, 4)),
-                      measurement=MEASUREMENT_ET, remaining_budget=Decimal("18000"))
+    plans = s.propose(
+        now=WED,
+        spot=SPOT,
+        iv_vs_rv=Decimal("1.05"),
+        expiry_candidates=FLAT,
+        chain=chain_for(date(2026, 9, 4)),
+        measurement=MEASUREMENT_ET,
+        remaining_budget=Decimal("18000"),
+    )
     assert len(plans) == 1
     p = plans[0]
     assert p.sleeve == "convex" and p.is_event_trade
@@ -163,9 +186,14 @@ def test_proposes_a_strangle_into_the_catalyst():
 
 def test_same_event_opportunity_has_the_same_plan_id_after_restart():
     kwargs = dict(
-        now=WED, spot=SPOT, iv_vs_rv=Decimal("1.05"),
-        expiry_candidates=FLAT, chain=chain_for(date(2026, 9, 4)),
-        measurement=MEASUREMENT_ET, remaining_budget=Decimal("18000"))
+        now=WED,
+        spot=SPOT,
+        iv_vs_rv=Decimal("1.05"),
+        expiry_candidates=FLAT,
+        chain=chain_for(date(2026, 9, 4)),
+        measurement=MEASUREMENT_ET,
+        remaining_budget=Decimal("18000"),
+    )
 
     first = EventVolStrategy().propose(**kwargs)[0]
     restarted = EventVolStrategy().propose(**kwargs)[0]
@@ -175,9 +203,14 @@ def test_same_event_opportunity_has_the_same_plan_id_after_restart():
 
 def test_priced_candidate_is_immutable():
     plan = EventVolStrategy().propose(
-        now=WED, spot=SPOT, iv_vs_rv=Decimal("1.05"),
-        expiry_candidates=FLAT, chain=chain_for(date(2026, 9, 4)),
-        measurement=MEASUREMENT_ET, remaining_budget=Decimal("18000"))[0]
+        now=WED,
+        spot=SPOT,
+        iv_vs_rv=Decimal("1.05"),
+        expiry_candidates=FLAT,
+        chain=chain_for(date(2026, 9, 4)),
+        measurement=MEASUREMENT_ET,
+        remaining_budget=Decimal("18000"),
+    )[0]
 
     with pytest.raises(ValidationError):
         plan.symbol = "QQQ"
@@ -185,34 +218,58 @@ def test_priced_candidate_is_immutable():
 
 def test_stands_down_when_convexity_is_expensive():
     s = EventVolStrategy()
-    plans = s.propose(now=WED, spot=SPOT, iv_vs_rv=Decimal("1.80"),
-                      expiry_candidates=FLAT, chain=chain_for(date(2026, 9, 4)),
-                      measurement=MEASUREMENT_ET, remaining_budget=Decimal("18000"))
+    plans = s.propose(
+        now=WED,
+        spot=SPOT,
+        iv_vs_rv=Decimal("1.80"),
+        expiry_candidates=FLAT,
+        chain=chain_for(date(2026, 9, 4)),
+        measurement=MEASUREMENT_ET,
+        remaining_budget=Decimal("18000"),
+    )
     assert plans == [], "must not buy gamma it is not being paid to own"
 
 
 def test_stands_down_when_already_positioned_for_the_event():
     s = EventVolStrategy()
-    plans = s.propose(now=WED, spot=SPOT, iv_vs_rv=Decimal("1.05"),
-                      expiry_candidates=FLAT, chain=chain_for(date(2026, 9, 4)),
-                      measurement=MEASUREMENT_ET, remaining_budget=Decimal("18000"),
-                      already_positioned_for={CATALYST.name})
+    plans = s.propose(
+        now=WED,
+        spot=SPOT,
+        iv_vs_rv=Decimal("1.05"),
+        expiry_candidates=FLAT,
+        chain=chain_for(date(2026, 9, 4)),
+        measurement=MEASUREMENT_ET,
+        remaining_budget=Decimal("18000"),
+        already_positioned_for={CATALYST.name},
+    )
     assert plans == []
 
 
 def test_sizes_within_the_budget():
     s = EventVolStrategy()
-    plans = s.propose(now=WED, spot=SPOT, iv_vs_rv=Decimal("1.05"),
-                      expiry_candidates=FLAT, chain=chain_for(date(2026, 9, 4)),
-                      measurement=MEASUREMENT_ET, remaining_budget=Decimal("4000"))
+    plans = s.propose(
+        now=WED,
+        spot=SPOT,
+        iv_vs_rv=Decimal("1.05"),
+        expiry_candidates=FLAT,
+        chain=chain_for(date(2026, 9, 4)),
+        measurement=MEASUREMENT_ET,
+        remaining_budget=Decimal("4000"),
+    )
     assert plans[0].notional_usd <= Decimal("4000")
 
 
 def test_thesis_and_evidence_are_grounded():
     s = EventVolStrategy()
-    p = s.propose(now=WED, spot=SPOT, iv_vs_rv=Decimal("1.05"),
-                  expiry_candidates=FLAT, chain=chain_for(date(2026, 9, 4)),
-                  measurement=MEASUREMENT_ET, remaining_budget=Decimal("18000"))[0]
+    p = s.propose(
+        now=WED,
+        spot=SPOT,
+        iv_vs_rv=Decimal("1.05"),
+        expiry_candidates=FLAT,
+        chain=chain_for(date(2026, 9, 4)),
+        measurement=MEASUREMENT_ET,
+        remaining_budget=Decimal("18000"),
+    )[0]
     assert CATALYST.name in p.thesis
     joined = " ".join(p.evidence)
     assert "macro_cal:" in joined
@@ -223,6 +280,7 @@ def test_thesis_and_evidence_are_grounded():
 
 # --- the whole path -----------------------------------------------------------
 
+
 def test_the_event_plan_is_approved_by_the_kernel():
     """The flagship trade must survive its own risk kernel.
 
@@ -232,17 +290,26 @@ def test_the_event_plan_is_approved_by_the_kernel():
     from glassbox.kernel import PortfolioState, RiskKernel
 
     s = EventVolStrategy()
-    plan = s.propose(now=WED, spot=SPOT, iv_vs_rv=Decimal("1.05"),
-                     expiry_candidates=FLAT, chain=chain_for(date(2026, 9, 4)),
-                     measurement=MEASUREMENT_ET, remaining_budget=Decimal("18000"))[0]
+    plan = s.propose(
+        now=WED,
+        spot=SPOT,
+        iv_vs_rv=Decimal("1.05"),
+        expiry_candidates=FLAT,
+        chain=chain_for(date(2026, 9, 4)),
+        measurement=MEASUREMENT_ET,
+        remaining_budget=Decimal("18000"),
+    )[0]
 
     state = PortfolioState(
-        equity=Decimal("100000"), cash=Decimal("40000"),
-        core_sleeve_value=Decimal("60000"), core_sleeve_cost_basis=Decimal("60000"),
-        convex_premium_today=Decimal("7000"),   # daily cap already spent
+        equity=Decimal("100000"),
+        cash=Decimal("40000"),
+        core_sleeve_value=Decimal("60000"),
+        core_sleeve_cost_basis=Decimal("60000"),
+        convex_premium_today=Decimal("7000"),  # daily cap already spent
         snapshot_price={"SPY": SPOT},
         trading_days_to={date(2026, 9, 4): 2},
-        market_open=True, median_order_notional=Decimal("6000"),
+        market_open=True,
+        median_order_notional=Decimal("6000"),
         now_et=WED,
     )
     verdict = RiskKernel().review(plan, state)

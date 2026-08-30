@@ -16,8 +16,7 @@ def durable_state():
     return importlib.import_module("glassbox.state")
 
 
-def test_atomic_replace_failure_preserves_the_previous_valid_file(tmp_path,
-                                                                  monkeypatch):
+def test_atomic_replace_failure_preserves_the_previous_valid_file(tmp_path, monkeypatch):
     state = durable_state()
     path = tmp_path / "safety.json"
     path.write_text('{"version": 1}', encoding="utf-8")
@@ -40,8 +39,7 @@ def test_atomic_write_replaces_complete_json_and_leaves_no_temp_file(tmp_path):
 
     state.atomic_write_json(path, {"keys": ["CPI", "NFP"]})
 
-    assert json.loads(path.read_text(encoding="utf-8")) == {
-        "keys": ["CPI", "NFP"]}
+    assert json.loads(path.read_text(encoding="utf-8")) == {"keys": ["CPI", "NFP"]}
     assert list(tmp_path.glob(".safety.json.*.tmp")) == []
 
 
@@ -90,16 +88,14 @@ def build_agent(tmp_path, monkeypatch):
 
 def test_corrupt_positioned_state_stops_agent_construction(tmp_path, monkeypatch):
     path = tmp_path / "positioned.json"
-    path.write_text('{"day": "2026-08-29", "keys": "not-a-list"}',
-                    encoding="utf-8")
+    path.write_text('{"day": "2026-08-29", "keys": "not-a-list"}', encoding="utf-8")
     monkeypatch.setattr(C, "POSITIONED_STATE_FILE", str(path))
 
     with pytest.raises(RuntimeError, match="positioned"):
         Agent(Broker(), Journal(), object(), Manager(), {})
 
 
-def test_positioned_write_fault_blocks_entries_but_keeps_management_running(
-        tmp_path, monkeypatch):
+def test_positioned_write_fault_blocks_entries_but_keeps_management_running(tmp_path, monkeypatch):
     state = durable_state()
     import glassbox.scheduler as scheduler
 

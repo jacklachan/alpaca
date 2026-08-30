@@ -16,22 +16,33 @@ from glassbox.strategies.core import WEIGHTS, CoreStrategy
 from glassbox.strategies.crypto import CryptoStrategy
 
 K = RiskKernel()
-PRICES = {"SPY": Decimal("769.28"), "QQQ": Decimal("716.91"), "IWM": Decimal("240"),
-          "BTC/USD": Decimal("95000"), "ETH/USD": Decimal("3200")}
+PRICES = {
+    "SPY": Decimal("769.28"),
+    "QQQ": Decimal("716.91"),
+    "IWM": Decimal("240"),
+    "BTC/USD": Decimal("95000"),
+    "ETH/USD": Decimal("3200"),
+}
 
 
 def state(now=None, positions=None, **kw) -> PortfolioState:
     base = dict(
-        equity=Decimal("100000"), cash=Decimal("100000"),
-        core_sleeve_value=Decimal(0), core_sleeve_cost_basis=Decimal(0),
-        positions=positions or [], snapshot_price=dict(PRICES),
-        market_open=True, median_order_notional=Decimal("20000"),
-        now_et=now or datetime(2026, 8, 31, 9, 35, tzinfo=C.ET))
+        equity=Decimal("100000"),
+        cash=Decimal("100000"),
+        core_sleeve_value=Decimal(0),
+        core_sleeve_cost_basis=Decimal(0),
+        positions=positions or [],
+        snapshot_price=dict(PRICES),
+        market_open=True,
+        median_order_notional=Decimal("20000"),
+        now_et=now or datetime(2026, 8, 31, 9, 35, tzinfo=C.ET),
+    )
     base.update(kw)
     return PortfolioState(**base)
 
 
 # --- core ---------------------------------------------------------------------
+
 
 def test_core_buys_the_full_allocation_once():
     plans = CoreStrategy().propose_from_state(state())
@@ -40,8 +51,9 @@ def test_core_buys_the_full_allocation_once():
 
 
 def test_core_never_tops_up_an_existing_holding():
-    held = [Position(symbol="SPY", instrument="equity", qty=Decimal(40),
-                     market_value=Decimal("32500"))]
+    held = [
+        Position(symbol="SPY", instrument="equity", qty=Decimal(40), market_value=Decimal("32500"))
+    ]
     plans = CoreStrategy().propose_from_state(state(positions=held))
     assert "SPY" not in {p.symbol for p in plans}
 
@@ -72,6 +84,7 @@ def test_core_plan_ids_survive_a_restart():
 
 
 # --- crypto -------------------------------------------------------------------
+
 
 def test_crypto_allocates_its_sleeve():
     plans = CryptoStrategy().propose_from_state(state())
@@ -130,6 +143,7 @@ def test_crypto_plan_ids_survive_a_restart():
 
 # --- features -----------------------------------------------------------------
 
+
 def test_realised_vol_is_zero_for_a_flat_series():
     assert realised_vol([100.0] * 10) == 0.0
 
@@ -145,9 +159,9 @@ def test_realised_vol_needs_enough_data():
 
 
 def test_iv_to_rv_flags_cheap_and_expensive_convexity():
-    assert iv_to_rv(0.094, 0.12) < 1.0            # cheap: buy
-    assert iv_to_rv(0.20, 0.08) > C.MAX_IV_TO_RV_RATIO   # expensive: stand down
-    assert iv_to_rv(0.10, 0.0) == float("inf")    # no realised vol -> refuse
+    assert iv_to_rv(0.094, 0.12) < 1.0  # cheap: buy
+    assert iv_to_rv(0.20, 0.08) > C.MAX_IV_TO_RV_RATIO  # expensive: stand down
+    assert iv_to_rv(0.10, 0.0) == float("inf")  # no realised vol -> refuse
 
 
 def test_atr_and_gap():

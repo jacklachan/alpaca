@@ -29,10 +29,11 @@ from ..schema import OptionLeg, TradePlan
 @dataclass(frozen=True)
 class ExpiryQuote:
     """One candidate expiry, as observed in the chain."""
+
     expiry: date
-    atm_iv: Decimal          # implied vol, e.g. Decimal("0.132")
+    atm_iv: Decimal  # implied vol, e.g. Decimal("0.132")
     atm_straddle_px: Decimal  # per share
-    bid_ask_pct: Decimal     # relative spread at the money, e.g. 0.04 = 4%
+    bid_ask_pct: Decimal  # relative spread at the money, e.g. 0.04 = 4%
 
 
 @dataclass(frozen=True)
@@ -84,10 +85,13 @@ def select_expiry(
     # as the "clean" vol level against which shorter-dated event premium is
     # measured. It must come from inside the window, or the premium figure that
     # lands in the journal is quoted against an expiry we never considered.
-    in_window = [o for o in ordered
-                 if C.OPTION_MIN_DTE_AT_MEASUREMENT
-                 <= sessions_remaining_at_measurement(o.expiry, measurement)
-                 <= C.OPTION_MAX_SESSIONS_AT_MEASUREMENT]
+    in_window = [
+        o
+        for o in ordered
+        if C.OPTION_MIN_DTE_AT_MEASUREMENT
+        <= sessions_remaining_at_measurement(o.expiry, measurement)
+        <= C.OPTION_MAX_SESSIONS_AT_MEASUREMENT
+    ]
     if baseline_iv is not None:
         base = baseline_iv
     elif in_window:
@@ -122,10 +126,15 @@ def select_expiry(
         # longest candidate so the number is readable in a journal entry.
         # Reference = the longest expiry still inside our window, i.e. the one
         # a team without this analysis would default to.
-        t_ref = max((sessions_remaining_at_measurement(o.expiry, measurement)
-                     for o in ordered
-                     if sessions_remaining_at_measurement(o.expiry, measurement)
-                     <= C.OPTION_MAX_SESSIONS_AT_MEASUREMENT), default=1)
+        t_ref = max(
+            (
+                sessions_remaining_at_measurement(o.expiry, measurement)
+                for o in ordered
+                if sessions_remaining_at_measurement(o.expiry, measurement)
+                <= C.OPTION_MAX_SESSIONS_AT_MEASUREMENT
+            ),
+            default=1,
+        )
         gpd = Decimal(t_ref) / Decimal(max(tdays, 1))
         viable.append((gpd, q, premium))
 
@@ -156,6 +165,7 @@ def _round_strike(px: Decimal, increment: Decimal = Decimal("1")) -> Decimal:
 @dataclass
 class ChainLeg:
     """A concrete quotable contract, as seen in the chain."""
+
     symbol: str
     strike: Decimal
     right: str
@@ -190,8 +200,7 @@ class EventVolStrategy:
         """Return zero or one TradePlan. Zero is a normal, healthy outcome."""
         done = already_positioned_for or set()
 
-        event = next_event(now, tier=C.EVENT_MIN_TIER,
-                           within_hours=C.EVENT_LOOKAHEAD_HOURS)
+        event = next_event(now, tier=C.EVENT_MIN_TIER, within_hours=C.EVENT_LOOKAHEAD_HOURS)
         if event is None or event.name in done:
             return []
 
@@ -238,42 +247,44 @@ class EventVolStrategy:
 
         premium = pair_cost * qty
         plan_id = stable_plan_id(
-            "event-vol", event.name, self.underlying, choice.expiry,
-            call.symbol, put.symbol)
+            "event-vol", event.name, self.underlying, choice.expiry, call.symbol, put.symbol
+        )
 
-        return [TradePlan(
-            plan_id=plan_id,
-            sleeve="convex",
-            action="open",
-            instrument="option",
-            symbol=self.underlying,
-            side="buy",
-            is_event_trade=True,
-            event_key=event.name,
-            option_legs=[
-                OptionLeg(symbol=call.symbol, side="buy", qty=qty, limit_price=call_limit),
-                OptionLeg(symbol=put.symbol, side="buy", qty=qty, limit_price=put_limit),
-            ],
-            notional_usd=premium,
-            max_loss_usd=premium,          # exact: long premium only
-            time_exit=measurement,
-            thesis=(
-                f"{event.name} releases {event.when:%Y-%m-%d %H:%M} ET, "
-                f"{event.hours_until(now):.0f}h before the account is measured. "
-                f"Implied volatility is {iv_vs_rv:.2f}x realised, so convexity is "
-                f"cheap into a scheduled catalyst. Buying a {C.STRANGLE_OTM_PCT:.1%} "
-                f"strangle for the move, not the direction. {choice.reason}."
-            ),
-            evidence=[
-                f"macro_cal: {event.name} {event.when:%Y-%m-%d %H:%M} ET ({event.source})",
-                f"iv_to_rv_ratio_{self.underlying.lower()}={iv_vs_rv:.3f}",
-                f"expiry_selected={choice.expiry} gamma_per_dollar={choice.gamma_per_dollar:.2f}x",
-                f"event_premium_vol_pts={choice.event_premium_vol_pts:+.4f}",
-                f"spot={spot} call_strike={call.strike} put_strike={put.strike}",
-                f"premium_at_risk={premium} max_loss={premium}",
-            ],
-            confidence=0.6,
-        )]
+        return [
+            TradePlan(
+                plan_id=plan_id,
+                sleeve="convex",
+                action="open",
+                instrument="option",
+                symbol=self.underlying,
+                side="buy",
+                is_event_trade=True,
+                event_key=event.name,
+                option_legs=[
+                    OptionLeg(symbol=call.symbol, side="buy", qty=qty, limit_price=call_limit),
+                    OptionLeg(symbol=put.symbol, side="buy", qty=qty, limit_price=put_limit),
+                ],
+                notional_usd=premium,
+                max_loss_usd=premium,  # exact: long premium only
+                time_exit=measurement,
+                thesis=(
+                    f"{event.name} releases {event.when:%Y-%m-%d %H:%M} ET, "
+                    f"{event.hours_until(now):.0f}h before the account is measured. "
+                    f"Implied volatility is {iv_vs_rv:.2f}x realised, so convexity is "
+                    f"cheap into a scheduled catalyst. Buying a {C.STRANGLE_OTM_PCT:.1%} "
+                    f"strangle for the move, not the direction. {choice.reason}."
+                ),
+                evidence=[
+                    f"macro_cal: {event.name} {event.when:%Y-%m-%d %H:%M} ET ({event.source})",
+                    f"iv_to_rv_ratio_{self.underlying.lower()}={iv_vs_rv:.3f}",
+                    f"expiry_selected={choice.expiry} gamma_per_dollar={choice.gamma_per_dollar:.2f}x",
+                    f"event_premium_vol_pts={choice.event_premium_vol_pts:+.4f}",
+                    f"spot={spot} call_strike={call.strike} put_strike={put.strike}",
+                    f"premium_at_risk={premium} max_loss={premium}",
+                ],
+                confidence=0.6,
+            )
+        ]
 
     @staticmethod
     def _nearest(legs: list[ChainLeg], right: str, target: Decimal) -> ChainLeg | None:
@@ -310,9 +321,12 @@ class EventVolStrategy:
             return []
         ratio = Decimal(str(round(float(front.atm_iv) / rv, 4)))
 
-        choice = select_expiry(quotes, next_event(state.now_et, tier=C.EVENT_MIN_TIER,
-                                                 within_hours=C.EVENT_LOOKAHEAD_HOURS)
-                               or CALENDAR[-1], MEASUREMENT_ET)
+        choice = select_expiry(
+            quotes,
+            next_event(state.now_et, tier=C.EVENT_MIN_TIER, within_hours=C.EVENT_LOOKAHEAD_HOURS)
+            or CALENDAR[-1],
+            MEASUREMENT_ET,
+        )
         if choice is None:
             return []
 
@@ -326,7 +340,12 @@ class EventVolStrategy:
             return []
 
         return self.propose(
-            now=state.now_et, spot=spot, iv_vs_rv=ratio,
-            expiry_candidates=quotes, chain=chain,
-            measurement=MEASUREMENT_ET, remaining_budget=remaining,
-            already_positioned_for=positioned_for)
+            now=state.now_et,
+            spot=spot,
+            iv_vs_rv=ratio,
+            expiry_candidates=quotes,
+            chain=chain,
+            measurement=MEASUREMENT_ET,
+            remaining_budget=remaining,
+            already_positioned_for=positioned_for,
+        )

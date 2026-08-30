@@ -30,6 +30,7 @@ log = logging.getLogger("glassbox.data")
 
 # --- features (pure) ----------------------------------------------------------
 
+
 def realised_vol(closes: list[float], periods_per_year: int = 252) -> float:
     """Annualised close-to-close volatility. Needs at least three closes."""
     if len(closes) < 3:
@@ -58,9 +59,9 @@ def atr(highs: list[float], lows: list[float], closes: list[float], n: int = 14)
         return 0.0
     trs = []
     for i in range(1, len(closes)):
-        trs.append(max(highs[i] - lows[i],
-                       abs(highs[i] - closes[i - 1]),
-                       abs(lows[i] - closes[i - 1])))
+        trs.append(
+            max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]), abs(lows[i] - closes[i - 1]))
+        )
     tail = trs[-n:]
     return sum(tail) / len(tail) if tail else 0.0
 
@@ -70,6 +71,7 @@ def overnight_gap(prev_close: float, today_open: float) -> float:
 
 
 # --- market data --------------------------------------------------------------
+
 
 class MarketData:
     """Everything the strategies need, cached briefly to respect the budget."""
@@ -92,35 +94,42 @@ class MarketData:
         def fetch():
             from alpaca.data.requests import StockBarsRequest
             from alpaca.data.timeframe import TimeFrame
+
             req = StockBarsRequest(
-                symbol_or_symbols=[symbol], timeframe=TimeFrame.Day,
-                start=datetime.now(timezone.utc) - timedelta(days=days * 2))
-            bars = self.broker._call(
-                lambda: self.broker.data.get_stock_bars(req), f"bars:{symbol}")
+                symbol_or_symbols=[symbol],
+                timeframe=TimeFrame.Day,
+                start=datetime.now(timezone.utc) - timedelta(days=days * 2),
+            )
+            bars = self.broker._call(lambda: self.broker.data.get_stock_bars(req), f"bars:{symbol}")
             data = bars.data.get(symbol, []) if hasattr(bars, "data") else []
             return [float(b.close) for b in data][-days:]
+
         return self._cached(f"closes:{symbol}:{days}", fetch)
 
     def realised_vol(self, symbol: str, days: int = 10) -> float:
-        return realised_vol(self.daily_closes(symbol, days + 5)[-(days + 1):])
+        return realised_vol(self.daily_closes(symbol, days + 5)[-(days + 1) :])
 
     def option_chain(self, underlying: str) -> dict:
         def fetch():
+
             from alpaca.data.historical.option import OptionHistoricalDataClient
             from alpaca.data.requests import OptionChainRequest
-            import os
+
             client = OptionHistoricalDataClient(
-                env.get("ALPACA_API_KEY"), env.get("ALPACA_SECRET_KEY"))
+                env.get("ALPACA_API_KEY"), env.get("ALPACA_SECRET_KEY")
+            )
             return self.broker._call(
-                lambda: client.get_option_chain(
-                    OptionChainRequest(underlying_symbol=underlying)),
-                f"chain:{underlying}")
+                lambda: client.get_option_chain(OptionChainRequest(underlying_symbol=underlying)),
+                f"chain:{underlying}",
+            )
+
         return self._cached(f"chain:{underlying}", fetch)
 
     # -- shaping for the strategy ---------------------------------------------
 
-    def expiry_quotes(self, underlying: str, spot: Decimal,
-                      band: float = 0.01) -> list[ExpiryQuote]:
+    def expiry_quotes(
+        self, underlying: str, spot: Decimal, band: float = 0.01
+    ) -> list[ExpiryQuote]:
         """ATM implied vol and quote width per expiry -- the term structure the
         expiry selector consumes."""
         chain = self.option_chain(underlying)
@@ -152,17 +161,23 @@ class MarketData:
             ivs = [v for v, _, _ in vals]
             spreads = [s for _, s, _ in vals if s == s]
             mids = [m for _, _, m in vals if m == m]
-            out.append(ExpiryQuote(
-                expiry=exp,
-                atm_iv=Decimal(str(round(sum(ivs) / len(ivs), 4))),
-                atm_straddle_px=Decimal(str(round(median(mids) * 2, 2))) if mids
-                else Decimal(0),
-                bid_ask_pct=Decimal(str(round(median(spreads), 4))) if spreads
-                else Decimal("1")))   # no quote -> unusable, filter rejects it
+            out.append(
+                ExpiryQuote(
+                    expiry=exp,
+                    atm_iv=Decimal(str(round(sum(ivs) / len(ivs), 4))),
+                    atm_straddle_px=Decimal(str(round(median(mids) * 2, 2)))
+                    if mids
+                    else Decimal(0),
+                    bid_ask_pct=Decimal(str(round(median(spreads), 4)))
+                    if spreads
+                    else Decimal("1"),
+                )
+            )  # no quote -> unusable, filter rejects it
         return out
 
-    def chain_legs(self, underlying: str, expiry: date, spot: Decimal,
-                   band: float = 0.05) -> dict[date, list[ChainLeg]]:
+    def chain_legs(
+        self, underlying: str, expiry: date, spot: Decimal, band: float = 0.05
+    ) -> dict[date, list[ChainLeg]]:
         """Quotable contracts near the money for one expiry."""
         chain = self.option_chain(underlying)
         legs: list[ChainLeg] = []
@@ -182,8 +197,9 @@ class MarketData:
             ask = Decimal(str(getattr(q, "ask_price", 0) or 0))
             if ask <= 0:
                 continue
-            legs.append(ChainLeg(symbol=sym, strike=Decimal(str(strike)),
-                                 right=right, ask=ask, bid=bid))
+            legs.append(
+                ChainLeg(symbol=sym, strike=Decimal(str(strike)), right=right, ask=ask, bid=bid)
+            )
         return {expiry: legs}
 
     def feature_table(self, symbols: list[str], state) -> dict:
@@ -213,8 +229,7 @@ class MarketData:
                     if quotes:
                         front = min(quotes, key=lambda q: q.expiry)
                         row["implied_vol_front"] = float(front.atm_iv)
-                        row["iv_to_rv_ratio"] = round(
-                            iv_to_rv(float(front.atm_iv), rv10), 3)
+                        row["iv_to_rv_ratio"] = round(iv_to_rv(float(front.atm_iv), rv10), 3)
                 out[sym] = row
             except Exception as exc:
                 log.warning("features failed for %s: %s", sym, exc)
@@ -224,7 +239,7 @@ class MarketData:
 def _parse_occ(sym: str) -> tuple[date, str, float] | None:
     try:
         root = "".join(ch for ch in sym[:6] if ch.isalpha())
-        rest = sym[len(root):]
+        rest = sym[len(root) :]
         exp = date(2000 + int(rest[0:2]), int(rest[2:4]), int(rest[4:6]))
         return exp, rest[6], int(rest[7:]) / 1000
     except Exception:

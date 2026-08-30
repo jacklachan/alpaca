@@ -31,37 +31,10 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install httpx
+          pip install -r requirements-dev.lock
 
-      - name: Unit tests
-        run: python -m pytest -q
-
-      # These two are the reason CI exists. The kernel is the only thing
-      # standing between a hallucinated plan and a real order, and the crash
-      # drill is the evidence behind "runs unattended for four days".
-      - name: Risk kernel invariants
-        run: python -m pytest tests/test_kernel.py -q -v
-
-      - name: Crash-recovery drill
-        run: python tools/crash_drill.py -n 8 --seed 1
-
-      # A .env that systemd and python-dotenv read differently silently
-      # disabled the scored-account guards once. Never again, unnoticed.
-      - name: Environment parity (.env.example)
-        run: python tools/env_parity.py .env.example
-
-      - name: Dashboard starts and serves
-        run: |
-          python -m uvicorn dashboard.app:app --host 127.0.0.1 --port 8080 &
-          for i in $(seq 1 30); do
-            curl -sf http://127.0.0.1:8080/healthz >/dev/null && break
-            sleep 1
-          done
-          curl -sf http://127.0.0.1:8080/healthz
-          curl -sf http://127.0.0.1:8080/ | grep -q "Glass"
-          curl -sf http://127.0.0.1:8080/api/summary | grep -q chain_ok
-          echo "dashboard OK"
+      - name: Full verification
+        run: make verify
 
   guards:
     name: Competition guards
@@ -74,7 +47,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -r requirements.txt
+      - run: pip install -r requirements.lock
 
       # Cheap checks for the mistakes that cost the whole competition rather
       # than one test.

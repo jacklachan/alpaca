@@ -59,9 +59,16 @@ def _canonical(obj: Any) -> Any:
 
 def entry_hash(seq: int, ts: str, actor: str, event: str, payload: Any, prev_hash: str) -> str:
     body = json.dumps(
-        {"seq": seq, "ts": ts, "actor": actor, "event": event,
-         "payload": _canonical(payload), "prev_hash": prev_hash},
-        sort_keys=True, separators=(",", ":"),
+        {
+            "seq": seq,
+            "ts": ts,
+            "actor": actor,
+            "event": event,
+            "payload": _canonical(payload),
+            "prev_hash": prev_hash,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
     )
     return hashlib.sha256(body.encode()).hexdigest()
 
@@ -79,10 +86,15 @@ class Journal:
             # Record the repair inside the chain itself, so the fact that a
             # crash happened is part of the audit trail rather than a detail
             # buried in a log file the judges never see.
-            self.append("journal.recover", "TORN_ENTRY_DISCARDED",
-                        {"bytes": len(self._truncated),
-                         "resumed_at_seq": self._seq,
-                         "note": "interrupted write; entry was never acknowledged"})
+            self.append(
+                "journal.recover",
+                "TORN_ENTRY_DISCARDED",
+                {
+                    "bytes": len(self._truncated),
+                    "resumed_at_seq": self._seq,
+                    "note": "interrupted write; entry was never acknowledged",
+                },
+            )
 
     def _recover(self) -> tuple[int, str]:
         """Resume the chain after a restart, tolerating a torn final line.
@@ -131,9 +143,12 @@ class Journal:
                 f"copy the file aside and inspect it."
             ) from exc
 
-        log.error("journal: discarded a torn final line (%d bytes) left by an "
-                  "interrupted write; resuming from seq %d",
-                  len(self._truncated), seq)
+        log.error(
+            "journal: discarded a torn final line (%d bytes) left by an "
+            "interrupted write; resuming from seq %d",
+            len(self._truncated),
+            seq,
+        )
         self._rewrite(good)
         return seq, head
 
@@ -163,8 +178,13 @@ class Journal:
             prev = self._head
             h = entry_hash(seq, ts, actor, event, payload, prev)
             rec = {
-                "seq": seq, "ts": ts, "actor": actor, "event": event,
-                "payload": _canonical(payload), "prev_hash": prev, "hash": h,
+                "seq": seq,
+                "ts": ts,
+                "actor": actor,
+                "event": event,
+                "payload": _canonical(payload),
+                "prev_hash": prev,
+                "hash": h,
             }
             line = json.dumps(rec, sort_keys=True, separators=(",", ":"))
             with self.path.open("a", encoding="utf-8") as fh:
@@ -197,9 +217,15 @@ class Journal:
             expected_seq += 1
             count += 1
             if rec.get("seq") != expected_seq:
-                return False, f"seq gap at entry {count}: expected {expected_seq}, got {rec.get('seq')}"
+                return (
+                    False,
+                    f"seq gap at entry {count}: expected {expected_seq}, got {rec.get('seq')}",
+                )
             if rec.get("prev_hash") != prev:
-                return False, f"chain break at seq {rec['seq']}: prev_hash does not match seq {expected_seq - 1}"
+                return (
+                    False,
+                    f"chain break at seq {rec['seq']}: prev_hash does not match seq {expected_seq - 1}",
+                )
             recomputed = entry_hash(
                 rec["seq"], rec["ts"], rec["actor"], rec["event"], rec["payload"], rec["prev_hash"]
             )
@@ -228,8 +254,9 @@ class Journal:
         try:
             with urllib.request.urlopen(req, timeout=10):
                 pass
-            self.append("journal.anchor", "ANCHOR_PUBLISHED",
-                        {"seq": self._seq, "head": self._head})
+            self.append(
+                "journal.anchor", "ANCHOR_PUBLISHED", {"seq": self._seq, "head": self._head}
+            )
             return self._head
         except Exception as exc:  # never let an anchor failure stop trading
             self.append("journal.anchor", "ANCHOR_FAILED", {"error": str(exc)})

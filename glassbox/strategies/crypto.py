@@ -24,13 +24,12 @@ event-window response are demonstrated.
 
 from __future__ import annotations
 
-from datetime import timedelta
 from decimal import Decimal
 
 from .. import config as C
 from ..ids import stable_plan_id
 from ..kernel import PortfolioState
-from ..macro import MEASUREMENT_ET, next_event
+from ..macro import MEASUREMENT_ET
 from ..schema import TradePlan
 
 WEIGHTS: dict[str, Decimal] = {
@@ -54,8 +53,9 @@ class CryptoStrategy:
     def __init__(self, data=None):
         self.data = data
 
-    def propose_from_state(self, state: PortfolioState,
-                           positioned_for: set[str] | None = None) -> list[TradePlan]:
+    def propose_from_state(
+        self, state: PortfolioState, positioned_for: set[str] | None = None
+    ) -> list[TradePlan]:
         held = {p.symbol for p in state.positions if p.instrument == "crypto"}
         now = state.now_et
         plans: list[TradePlan] = []
@@ -80,7 +80,8 @@ class CryptoStrategy:
                     f"market is closed until 09:30, so for this window crypto is "
                     f"the only venue where the reaction is tradeable. Taking a "
                     f"defined-risk position in {symbol} on published information, "
-                    f"with a hard time exit before the measurement.")
+                    f"with a hard time exit before the measurement."
+                )
                 evidence = [
                     f"macro_cal: {event.name} {event.when:%Y-%m-%d %H:%M} ET (released)",
                     "equity_market_open=False crypto_venue_open=True",
@@ -94,7 +95,8 @@ class CryptoStrategy:
                     f"Crypto sleeve baseline allocation in {symbol}, {weight:.0%} "
                     f"of a ${C.CRYPTO_SLEEVE_USD:,.0f} sleeve. Runs continuously "
                     f"so the agent is operating outside equity hours, with a "
-                    f"{STOP_PCT:.0%} stop bounding the position.")
+                    f"{STOP_PCT:.0%} stop bounding the position."
+                )
                 evidence = [
                     f"allocation_policy=crypto_baseline weight={weight}",
                     f"spot={spot} stop={stop}",
@@ -103,14 +105,25 @@ class CryptoStrategy:
                 time_exit = None
                 confidence = 0.5
 
-            plans.append(TradePlan(
-                plan_id=stable_plan_id(
-                    "crypto", now.date(), symbol,
-                    event.name if in_event_window else "baseline"),
-                sleeve="crypto", action="open", instrument="crypto", symbol=symbol,
-                side="buy", notional_usd=notional, max_loss_usd=max_loss,
-                stop=stop, time_exit=time_exit,
-                thesis=thesis, evidence=evidence, confidence=confidence))
+            plans.append(
+                TradePlan(
+                    plan_id=stable_plan_id(
+                        "crypto", now.date(), symbol, event.name if in_event_window else "baseline"
+                    ),
+                    sleeve="crypto",
+                    action="open",
+                    instrument="crypto",
+                    symbol=symbol,
+                    side="buy",
+                    notional_usd=notional,
+                    max_loss_usd=max_loss,
+                    stop=stop,
+                    time_exit=time_exit,
+                    thesis=thesis,
+                    evidence=evidence,
+                    confidence=confidence,
+                )
+            )
         return plans
 
     @staticmethod
@@ -127,6 +140,7 @@ class CryptoStrategy:
         tier 2. The `now < MEASUREMENT_ET` guard is what keeps it honest.
         """
         from ..macro import CALENDAR
+
         for e in CALENDAR:
             if e.tier > C.EVENT_MIN_TIER:
                 continue

@@ -1,0 +1,16 @@
+# Development and verification lock. Runtime dependencies remain sourced from
+# the exact deployment lock above.
+-r requirements.lock
+ast-serialize==0.8.0
+colorama==0.4.6; sys_platform == "win32"
+iniconfig==2.3.0
+librt==0.15.0
+mypy==2.3.1
+mypy-extensions==1.1.0
+packaging==26.3
+pathspec==1.1.1
+pluggy==1.6.0
+Pygments==2.21.0
+pytest==9.1.1
+ruff==0.16.5
+tomli==2.4.1; python_version < "3.11"

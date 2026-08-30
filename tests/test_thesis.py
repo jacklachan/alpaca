@@ -108,9 +108,10 @@ def test_explicit_abstention_returns_no_candidate() -> None:
 def test_unknown_or_malformed_selection_abstains(response: object) -> None:
     journal = Journal()
 
-    assert _layer_returning(response).select(
-        [_option_candidate("candidate-a")], _state(), journal
-    ) is None
+    assert (
+        _layer_returning(response).select([_option_candidate("candidate-a")], _state(), journal)
+        is None
+    )
 
     assert journal.events[-1][1] == "CANDIDATE_SELECTION_INVALID"
 
@@ -140,11 +141,14 @@ def test_non_option_candidate_is_never_selectable() -> None:
     journal = Journal()
     layer = _layer_returning({"candidate_id": "equity-a", "rationale": "Try to escape policy."})
 
-    assert layer.select(
-        [_equity_candidate("equity-a"), _option_candidate("option-a")],
-        _state(),
-        journal,
-    ) is None
+    assert (
+        layer.select(
+            [_equity_candidate("equity-a"), _option_candidate("option-a")],
+            _state(),
+            journal,
+        )
+        is None
+    )
 
     assert journal.events[-1][1] == "CANDIDATE_SELECTION_INVALID"
 

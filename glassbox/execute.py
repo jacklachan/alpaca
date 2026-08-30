@@ -39,8 +39,13 @@ log = logging.getLogger("glassbox.execute")
 
 TERMINAL_OK = {"filled"}
 TERMINAL_DEAD = {
-    "canceled", "cancelled", "expired", "rejected", "suspended",
-    "done_for_day", "replaced",
+    "canceled",
+    "cancelled",
+    "expired",
+    "rejected",
+    "suspended",
+    "done_for_day",
+    "replaced",
 }
 
 
@@ -61,15 +66,16 @@ class LegResult:
     `complete` stayed False on a leg that was actually full, so a correctly
     filled strangle was unwound.
     """
+
     leg_index: int
     symbol: str
     # Decimal, not int. Crypto quantities are fractional -- int(0.0968) is 0,
     # which made `complete` true at zero fill and reported a filled order as a
     # failure. The same truncation hit the fill side.
     requested_qty: Decimal
-    settled_qty: Decimal = Decimal(0)       # banked from superseded orders
+    settled_qty: Decimal = Decimal(0)  # banked from superseded orders
     settled_notional: Decimal = Decimal(0)  # price * qty of those fills
-    current_qty: Decimal = Decimal(0)       # fill on the order now working
+    current_qty: Decimal = Decimal(0)  # fill on the order now working
     current_avg: Decimal = Decimal(0)
     client_order_id: str = ""
     broker_order_id: str = ""
@@ -95,7 +101,7 @@ class LegResult:
         """
         self.settled_notional += self.current_avg * self.current_qty
         self.settled_qty += self.current_qty
-        self.current_qty = 0
+        self.current_qty = Decimal(0)
         self.current_avg = Decimal(0)
 
     @property
@@ -121,13 +127,19 @@ class ExecutionResult:
 
     @property
     def premium_paid(self) -> Decimal:
-        return sum((l.avg_price * l.filled_qty * self.multiplier
-                    for l in self.legs), Decimal(0))
+        return sum((l.avg_price * l.filled_qty * self.multiplier for l in self.legs), Decimal(0))
 
 
 class ExecutionEngine:
-    def __init__(self, broker, journal, *, poll_seconds: float = 3.0,
-                 fill_wait_seconds: float = 45.0, max_reprice: int = 2):
+    def __init__(
+        self,
+        broker,
+        journal,
+        *,
+        poll_seconds: float = 3.0,
+        fill_wait_seconds: float = 45.0,
+        max_reprice: int = 2,
+    ):
         self.broker = broker
         self.journal = journal
         self.poll_seconds = poll_seconds
@@ -140,29 +152,57 @@ class ExecutionEngine:
         if not verdict.approved:
             raise ValueError("refusing to execute a plan the kernel did not approve")
 
-        self.journal.append("execute", "EXECUTION_STARTED", {
-            "plan_id": plan.plan_id, "sleeve": plan.sleeve,
-            "instrument": plan.instrument, "symbol": plan.symbol,
-            "legs": len(plan.option_legs) or 1})
+        self.journal.append(
+            "execute",
+            "EXECUTION_STARTED",
+            {
+                "plan_id": plan.plan_id,
+                "sleeve": plan.sleeve,
+                "instrument": plan.instrument,
+                "symbol": plan.symbol,
+                "legs": len(plan.option_legs) or 1,
+            },
+        )
 
         if plan.instrument == "option":
             result = self._execute_legged(plan)
         else:
             result = self._execute_single(plan)
 
-        self.journal.append("execute", "EXECUTION_FINISHED", {
-            "plan_id": plan.plan_id, "ok": result.ok, "reason": result.reason,
-            "premium_paid": str(result.premium_paid), "unwound": result.unwound,
-            "legs": [{"symbol": l.symbol, "requested": l.requested_qty,
-                      "filled": l.filled_qty, "avg_price": str(l.avg_price),
-                      "broker_order_id": l.broker_order_id} for l in result.legs]})
+        self.journal.append(
+            "execute",
+            "EXECUTION_FINISHED",
+            {
+                "plan_id": plan.plan_id,
+                "ok": result.ok,
+                "reason": result.reason,
+                "premium_paid": str(result.premium_paid),
+                "unwound": result.unwound,
+                "legs": [
+                    {
+                        "symbol": l.symbol,
+                        "requested": l.requested_qty,
+                        "filled": l.filled_qty,
+                        "avg_price": str(l.avg_price),
+                        "broker_order_id": l.broker_order_id,
+                    }
+                    for l in result.legs
+                ],
+            },
+        )
         return result
 
-    def _submit_with_reconciliation(self, plan: TradePlan, *, symbol: str,
-                                    qty: Decimal | int, side: str,
-                                    client_order_id: str,
-                                    limit_price: Decimal | None,
-                                    instrument: str):
+    def _submit_with_reconciliation(
+        self,
+        plan: TradePlan,
+        *,
+        symbol: str,
+        qty: Decimal | int,
+        side: str,
+        client_order_id: str,
+        limit_price: Decimal | None,
+        instrument: str,
+    ):
         """Journal intent, submit once, and reconcile an ambiguous response."""
         intent = {
             "plan_id": plan.plan_id,
@@ -176,9 +216,13 @@ class ExecutionEngine:
         self.journal.append("execute", "ORDER_SUBMIT_INTENT", intent)
         try:
             return self.broker.submit(
-                symbol=symbol, qty=qty, side=side,
-                client_order_id=client_order_id, limit_price=limit_price,
-                instrument=instrument)
+                symbol=symbol,
+                qty=qty,
+                side=side,
+                client_order_id=client_order_id,
+                limit_price=limit_price,
+                instrument=instrument,
+            )
         except Exception as submit_error:
             deadline = time.monotonic() + min(self.fill_wait_seconds, 5.0)
             lookup_error: Exception | None = None
@@ -189,23 +233,32 @@ class ExecutionEngine:
                     lookup_error = exc
                     existing = None
                 if existing is not None:
-                    self.journal.append("execute", "ORDER_SUBMIT_RECONCILED", {
-                        **intent,
-                        "broker_order_id": str(existing.id),
-                        "status": str(getattr(existing, "status", "")),
-                        "submit_error": str(submit_error),
-                    })
+                    self.journal.append(
+                        "execute",
+                        "ORDER_SUBMIT_RECONCILED",
+                        {
+                            **intent,
+                            "broker_order_id": str(existing.id),
+                            "status": str(getattr(existing, "status", "")),
+                            "submit_error": str(submit_error),
+                        },
+                    )
                     return existing
                 if time.monotonic() >= deadline:
-                    self.journal.append("execute", "ORDER_SUBMIT_AMBIGUOUS", {
-                        **intent,
-                        "submit_error": str(submit_error),
-                        "lookup_error": (str(lookup_error)
-                                         if lookup_error is not None else None),
-                    })
+                    self.journal.append(
+                        "execute",
+                        "ORDER_SUBMIT_AMBIGUOUS",
+                        {
+                            **intent,
+                            "submit_error": str(submit_error),
+                            "lookup_error": (
+                                str(lookup_error) if lookup_error is not None else None
+                            ),
+                        },
+                    )
                     raise RuntimeError(
-                        f"submit outcome ambiguous for {client_order_id}: "
-                        f"{submit_error}") from submit_error
+                        f"submit outcome ambiguous for {client_order_id}: {submit_error}"
+                    ) from submit_error
                 time.sleep(self.poll_seconds)
 
     # -- options ---------------------------------------------------------------
@@ -215,21 +268,28 @@ class ExecutionEngine:
 
         for i, leg in enumerate(plan.option_legs):
             coid = client_order_id(plan.plan_id, i, event=plan.is_event_trade)
-            r = LegResult(leg_index=i, symbol=leg.symbol,
-                          requested_qty=Decimal(leg.qty), client_order_id=coid)
+            r = LegResult(
+                leg_index=i, symbol=leg.symbol, requested_qty=Decimal(leg.qty), client_order_id=coid
+            )
             try:
                 order = self._submit_with_reconciliation(
                     plan,
-                    symbol=leg.symbol, qty=leg.qty, side=leg.side,
-                    client_order_id=coid, limit_price=leg.limit_price,
-                    instrument="option")
+                    symbol=leg.symbol,
+                    qty=leg.qty,
+                    side=leg.side,
+                    client_order_id=coid,
+                    limit_price=leg.limit_price,
+                    instrument="option",
+                )
                 r.broker_order_id = str(order.id)
                 r.status = "submitted"
             except Exception as exc:
                 r.status = f"submit_failed: {exc}"
-                self.journal.append("execute", "LEG_SUBMIT_FAILED", {
-                    "plan_id": plan.plan_id, "leg": i,
-                    "symbol": leg.symbol, "error": str(exc)})
+                self.journal.append(
+                    "execute",
+                    "LEG_SUBMIT_FAILED",
+                    {"plan_id": plan.plan_id, "leg": i, "symbol": leg.symbol, "error": str(exc)},
+                )
             legs.append(r)
 
         self._await_fills(legs)
@@ -242,16 +302,21 @@ class ExecutionEngine:
             incomplete = [l for l in legs if not l.complete]
             if not incomplete:
                 break
-            self.journal.append("execute", "LEG_REPRICING", {
-                "plan_id": plan.plan_id, "attempt": attempt,
-                "legs": [l.symbol for l in incomplete]})
+            self.journal.append(
+                "execute",
+                "LEG_REPRICING",
+                {
+                    "plan_id": plan.plan_id,
+                    "attempt": attempt,
+                    "legs": [l.symbol for l in incomplete],
+                },
+            )
             for r in incomplete:
                 self._reprice(plan, r, attempt)
             self._await_fills([l for l in legs if not l.complete])
 
         if all(l.complete for l in legs):
-            return ExecutionResult(plan.plan_id, True,
-                                   "all legs filled after repricing", legs)
+            return ExecutionResult(plan.plan_id, True, "all legs filled after repricing", legs)
 
         # Nothing may remain live after execution returns. Confirm terminal
         # state and capture any fill that landed during cancellation before
@@ -264,22 +329,28 @@ class ExecutionEngine:
             r.bank()
         if not cleanup_ok:
             return ExecutionResult(
-                plan.plan_id, False,
+                plan.plan_id,
+                False,
                 "residual order state uncertain; manual intervention required",
-                legs)
+                legs,
+            )
 
         # Could not complete. A flat book beats a naked directional leg into a
         # scheduled macro print.
         filled = [l for l in legs if l.filled_qty > 0]
         if not filled:
-            return ExecutionResult(plan.plan_id, False,
-                                   "no legs filled; nothing to unwind", legs)
+            return ExecutionResult(plan.plan_id, False, "no legs filled; nothing to unwind", legs)
 
-        self.journal.append("execute", "UNWIND_STARTED", {
-            "plan_id": plan.plan_id,
-            "reason": "could not complete all legs; refusing to hold an "
-                      "unbalanced position into the event",
-            "filled_legs": [{"symbol": l.symbol, "qty": l.filled_qty} for l in filled]})
+        self.journal.append(
+            "execute",
+            "UNWIND_STARTED",
+            {
+                "plan_id": plan.plan_id,
+                "reason": "could not complete all legs; refusing to hold an "
+                "unbalanced position into the event",
+                "filled_legs": [{"symbol": l.symbol, "qty": l.filled_qty} for l in filled],
+            },
+        )
 
         unwound = True
         for r in filled:
@@ -287,14 +358,21 @@ class ExecutionEngine:
                 self.broker.close_position(r.symbol)
             except Exception as exc:
                 unwound = False
-                self.journal.append("execute", "UNWIND_FAILED", {
-                    "plan_id": plan.plan_id, "symbol": r.symbol, "error": str(exc)})
+                self.journal.append(
+                    "execute",
+                    "UNWIND_FAILED",
+                    {"plan_id": plan.plan_id, "symbol": r.symbol, "error": str(exc)},
+                )
 
         return ExecutionResult(
-            plan.plan_id, False,
-            "legs incomplete; position unwound to flat" if unwound
+            plan.plan_id,
+            False,
+            "legs incomplete; position unwound to flat"
+            if unwound
             else "legs incomplete; UNWIND FAILED -- manual intervention required",
-            legs, unwound=unwound)
+            legs,
+            unwound=unwound,
+        )
 
     def _reprice(self, plan: TradePlan, r: LegResult, attempt: int) -> None:
         """Cancel the remainder and resubmit wider, within the band."""
@@ -322,21 +400,31 @@ class ExecutionEngine:
         # from the reference price, not from the padded limit.
         bump = C.REPRICE_STEP_PCT * Decimal(attempt + 1)
         if C.LIMIT_TOLERANCE + bump > C.LIMIT_PRICE_BAND_PCT:
-            self.journal.append("execute", "REPRICE_REFUSED", {
-                "plan_id": plan.plan_id, "symbol": r.symbol,
-                "reason": f"next limit would exceed the {C.LIMIT_PRICE_BAND_PCT:.0%} band"})
+            self.journal.append(
+                "execute",
+                "REPRICE_REFUSED",
+                {
+                    "plan_id": plan.plan_id,
+                    "symbol": r.symbol,
+                    "reason": f"next limit would exceed the {C.LIMIT_PRICE_BAND_PCT:.0%} band",
+                },
+            )
             return
         new_limit = (base * (1 + bump)).quantize(Decimal("0.01"))
 
         # New client_order_id: this is a genuinely new order, and reusing the
         # id would be rejected as a duplicate. Offset keeps it deterministic.
-        coid = client_order_id(plan.plan_id, 100 * attempt + r.leg_index,
-                               event=plan.is_event_trade)
+        coid = client_order_id(plan.plan_id, 100 * attempt + r.leg_index, event=plan.is_event_trade)
         try:
             order = self._submit_with_reconciliation(
                 plan,
-                symbol=r.symbol, qty=remaining, side=leg.side,
-                client_order_id=coid, limit_price=new_limit, instrument="option")
+                symbol=r.symbol,
+                qty=remaining,
+                side=leg.side,
+                client_order_id=coid,
+                limit_price=new_limit,
+                instrument="option",
+            )
             r.broker_order_id = str(order.id)
             r.client_order_id = coid
             r.status = "repriced"
@@ -351,19 +439,25 @@ class ExecutionEngine:
             return True
         try:
             final = self.broker.cancel_and_confirm(
-                r.broker_order_id, r.client_order_id,
+                r.broker_order_id,
+                r.client_order_id,
                 timeout=self.fill_wait_seconds,
-                poll_seconds=self.poll_seconds)
+                poll_seconds=self.poll_seconds,
+            )
         except Exception as exc:
             r.order_state_uncertain = True
             r.status = "cancel_uncertain"
-            self.journal.append("execute", "RESIDUAL_ORDER_UNCERTAIN", {
-                "plan_id": plan.plan_id,
-                "symbol": r.symbol,
-                "client_order_id": r.client_order_id,
-                "broker_order_id": r.broker_order_id,
-                "error": str(exc),
-            })
+            self.journal.append(
+                "execute",
+                "RESIDUAL_ORDER_UNCERTAIN",
+                {
+                    "plan_id": plan.plan_id,
+                    "symbol": r.symbol,
+                    "client_order_id": r.client_order_id,
+                    "broker_order_id": r.broker_order_id,
+                    "error": str(exc),
+                },
+            )
             return False
         self._refresh_leg(r, final)
         return r.status in TERMINAL_OK | TERMINAL_DEAD
@@ -385,51 +479,57 @@ class ExecutionEngine:
             prices = self.broker.snapshot_prices([plan.symbol])
             px = prices.get(plan.symbol)
         if not px or px <= 0:
-            return ExecutionResult(plan.plan_id, False,
-                                   f"no snapshot price for {plan.symbol}", [],
-                                   multiplier=1)
+            return ExecutionResult(
+                plan.plan_id, False, f"no snapshot price for {plan.symbol}", [], multiplier=1
+            )
 
-        qty = (plan.notional_usd / px)
-        qty = qty.quantize(Decimal("0.0001")) if plan.instrument == "crypto" \
-            else Decimal(int(qty))
+        qty = plan.notional_usd / px
+        qty = qty.quantize(Decimal("0.0001")) if plan.instrument == "crypto" else Decimal(int(qty))
         if qty <= 0:
-            return ExecutionResult(plan.plan_id, False, "computed quantity is zero",
-                                   [], multiplier=1)
+            return ExecutionResult(
+                plan.plan_id, False, "computed quantity is zero", [], multiplier=1
+            )
 
         # Marketable limit rather than a market order: paper fills are
         # unrealistically generous and a market order would hide that.
         pad = C.LIMIT_TOLERANCE if plan.side == "buy" else -C.LIMIT_TOLERANCE
         limit = (px * (1 + pad)).quantize(Decimal("0.01"))
 
-        r = LegResult(leg_index=0, symbol=plan.symbol, requested_qty=qty,
-                      client_order_id=coid)
+        r = LegResult(leg_index=0, symbol=plan.symbol, requested_qty=qty, client_order_id=coid)
         try:
             order = self._submit_with_reconciliation(
                 plan,
-                symbol=plan.symbol, qty=qty, side=plan.side,
-                client_order_id=coid, limit_price=limit,
-                instrument=plan.instrument)
+                symbol=plan.symbol,
+                qty=qty,
+                side=plan.side,
+                client_order_id=coid,
+                limit_price=limit,
+                instrument=plan.instrument,
+            )
             r.broker_order_id = str(order.id)
             r.status = "submitted"
         except Exception as exc:
             r.status = f"submit_failed: {exc}"
-            return ExecutionResult(plan.plan_id, False, f"submit failed: {exc}", [r],
-                                   multiplier=1)
+            return ExecutionResult(plan.plan_id, False, f"submit failed: {exc}", [r], multiplier=1)
 
         self._await_fills([r])
         if not r.complete:
             if not self._cancel_leg(plan, r):
                 return ExecutionResult(
-                    plan.plan_id, False,
+                    plan.plan_id,
+                    False,
                     "residual order state uncertain; manual intervention required",
-                    [r], multiplier=1)
+                    [r],
+                    multiplier=1,
+                )
             r.bank()
         ok = r.filled_qty > 0
-        reason = "filled" if r.complete else (
-            "partial fill; residual canceled" if ok
-            else "no fill; residual canceled")
-        return ExecutionResult(plan.plan_id, ok,
-                               reason, [r], multiplier=1)
+        reason = (
+            "filled"
+            if r.complete
+            else ("partial fill; residual canceled" if ok else "no fill; residual canceled")
+        )
+        return ExecutionResult(plan.plan_id, ok, reason, [r], multiplier=1)
 
     # -- fill polling ----------------------------------------------------------
 

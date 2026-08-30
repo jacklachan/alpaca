@@ -15,8 +15,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from glassbox.journal import GENESIS, Journal
 
 
@@ -31,12 +29,12 @@ class TestTornLine:
     def test_partial_final_line_does_not_prevent_startup(self, tmp_path):
         p = tmp_path / "journal.jsonl"
         j = _seed(p)
-        seq_before, head_before = j.seq, j.head
+        seq_before = j.seq
 
         with p.open("a") as fh:
             fh.write('{"seq": 99, "ts": "2026-09-01T00:00:00Z", "act')
 
-        recovered = Journal(p)                 # must not raise
+        recovered = Journal(p)  # must not raise
         ok, why = recovered.verify()
         assert ok, why
         # +1 for the TORN_ENTRY_DISCARDED marker the recovery writes.
@@ -50,8 +48,7 @@ class TestTornLine:
             fh.write('{"seq": 99, "partial')
 
         records = list(Journal(p).read())
-        assert any(r["seq"] == seq_before and r["hash"] == head_before
-                   for r in records)
+        assert any(r["seq"] == seq_before and r["hash"] == head_before for r in records)
 
     def test_recovery_is_recorded_in_the_chain(self, tmp_path):
         p = tmp_path / "journal.jsonl"

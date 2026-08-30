@@ -5,14 +5,15 @@ from __future__ import annotations
 
 import os
 import sys
+from typing import Any
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
 from alpaca.trading.client import TradingClient  # noqa: E402
-from alpaca.trading.requests import GetOrdersRequest  # noqa: E402
 from alpaca.trading.enums import QueryOrderStatus  # noqa: E402
+from alpaca.trading.requests import GetOrdersRequest  # noqa: E402
 
 
 def main() -> int:
@@ -21,7 +22,7 @@ def main() -> int:
         print("no credentials")
         return 1
 
-    tc = TradingClient(key, sec, paper=True)
+    tc: Any = TradingClient(key, sec, paper=True)
     a = tc.get_account()
 
     print("NETWORK           : reachable")

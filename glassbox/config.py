@@ -17,10 +17,22 @@ UTC = ZoneInfo("UTC")
 # Hard-coded. The kernel refuses anything outside these sets, which also means an
 # LLM hallucinating a ticker cannot cost money.
 
-EQUITY_ALLOWLIST: frozenset[str] = frozenset({
-    "SPY", "QQQ", "IWM",
-    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "AVGO", "JPM", "XOM",
-})
+EQUITY_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "SPY",
+        "QQQ",
+        "IWM",
+        "AAPL",
+        "MSFT",
+        "NVDA",
+        "AMZN",
+        "GOOGL",
+        "META",
+        "AVGO",
+        "JPM",
+        "XOM",
+    }
+)
 
 CRYPTO_ALLOWLIST: frozenset[str] = frozenset({"BTC/USD", "ETH/USD"})
 
@@ -75,7 +87,7 @@ CONVEX_DAILY_BURN_CAP = Decimal("8000")
 # weakening the daily cap.
 EVENT_TRADE_DAILY_CAP = Decimal("18000")
 
-OPTION_STRIKE_BAND_PCT = Decimal("0.02")   # within ~2% of spot
+OPTION_STRIKE_BAND_PCT = Decimal("0.02")  # within ~2% of spot
 
 # AUDIT NOTE: this was 3, calibrated when we believed the measurement was Fri
 # 4 Sep 09:30. Alpaca's guidelines put it at EOD Thu 3 Sep, which pulls every
@@ -90,8 +102,8 @@ OPTION_STRIKE_BAND_PCT = Decimal("0.02")   # within ~2% of spot
 # snapshot) and by the 14:30 ET force-close -- not by days-since-entry, which
 # is only a proxy for it. With the measurement moved, the proxy and the real
 # constraint disagreed, so we kept the real one.
-OPTION_MIN_DTE = 2                          # trading days at ENTRY
-OPTION_MAX_DTE = 10                         # trading days at ENTRY
+OPTION_MIN_DTE = 2  # trading days at ENTRY
+OPTION_MAX_DTE = 10  # trading days at ENTRY
 
 # AUDIT NOTE: Alpaca stops accepting options orders at 15:30 ET on expiration
 # day. The original plan force-closed at 15:45 ET -- after the cutoff -- which
@@ -121,15 +133,15 @@ OPTION_FORCE_CLOSE_ET = (14, 30)
 #   because for a long-premium-only book the binding constraint is the premium
 #   cap (invariants 03/04) -- loss is bounded by premium regardless of delta.
 #   Do not describe this one as the risk control; the premium caps are.
-CONCENTRATION_CAPITAL_PCT = Decimal("0.25")     # equity/crypto, notional
-OPTION_NET_DELTA_MAX_PCT = Decimal("2.0")       # options, net delta notional
+CONCENTRATION_CAPITAL_PCT = Decimal("0.25")  # equity/crypto, notional
+OPTION_NET_DELTA_MAX_PCT = Decimal("2.0")  # options, net delta notional
 CONCENTRATION_BASIS = "net"
 
 MAX_CORE_POSITIONS = 6
 MAX_CRYPTO_POSITIONS = 2
 MAX_OPTION_LEGS = 6
 
-CORE_GROSS_EXPOSURE_MAX = Decimal("1.0")   # no equity margin leverage anywhere
+CORE_GROSS_EXPOSURE_MAX = Decimal("1.0")  # no equity margin leverage anywhere
 
 # --- Kill switch --------------------------------------------------------------
 # AUDIT NOTE: a single portfolio switch at 88% of starting equity fires in the
@@ -138,7 +150,7 @@ CORE_GROSS_EXPOSURE_MAX = Decimal("1.0")   # no equity margin leverage anywhere
 # exactly what it was designed to do is mis-specified. Split per sleeve:
 # the convex sleeve is *permitted* to go to zero; the core sleeve is not.
 
-CORE_DRAWDOWN_KILL_PCT = Decimal("0.06")    # core sleeve down 6% -> halt
+CORE_DRAWDOWN_KILL_PCT = Decimal("0.06")  # core sleeve down 6% -> halt
 
 # AUDIT NOTE: this was 0.15, which reintroduced the exact bug the per-sleeve
 # split above exists to prevent. The convex sleeve is 25% of equity and is
@@ -161,8 +173,7 @@ KILL_SWITCH_STATE_FILE = "state/kill_switch.json"
 
 # Which catalysts we have already positioned for today. Persisted so a restart
 # does not re-buy the same event.
-POSITIONED_STATE_FILE = _os.getenv("GLASSBOX_POSITIONED_FILE",
-                                   "state/positioned_for.json")
+POSITIONED_STATE_FILE = _os.getenv("GLASSBOX_POSITIONED_FILE", "state/positioned_for.json")
 
 # Stops, targets and time exits. Persisted so a restart does not leave open
 # positions with no exit logic attached to them.
@@ -178,8 +189,8 @@ MAX_ORDERS_PER_SYMBOL_PER_DAY = 8
 
 # --- Sanity band --------------------------------------------------------------
 
-LIMIT_PRICE_BAND_PCT = Decimal("0.05")      # limit within 5% of snapshot
-NOTIONAL_SANITY_MULTIPLE = Decimal("10")    # vs rolling median order size
+LIMIT_PRICE_BAND_PCT = Decimal("0.05")  # limit within 5% of snapshot
+NOTIONAL_SANITY_MULTIPLE = Decimal("10")  # vs rolling median order size
 
 # --- Max-loss estimation ------------------------------------------------------
 # AUDIT NOTE: "every position had a computable maximum loss before it was opened"
@@ -187,13 +198,13 @@ NOTIONAL_SANITY_MULTIPLE = Decimal("10")    # vs rolling median order size
 # crypto, where price gaps straight through a stop. Stated honestly per
 # instrument so the claim survives cross-examination.
 
-GAP_MULTIPLIER = Decimal("1.5")   # applied to stop distance for equity/crypto
+GAP_MULTIPLIER = Decimal("1.5")  # applied to stop distance for equity/crypto
 
 # --- Operations ---------------------------------------------------------------
 
-RATE_LIMIT_PER_MIN = 150          # against Alpaca's 200 ceiling
+RATE_LIMIT_PER_MIN = 150  # against Alpaca's 200 ceiling
 HEARTBEAT_INTERVAL_MIN = 15
-LLM_TIMEOUT_SECONDS = 45          # a *hung* thesis call stalls the tick loop
+LLM_TIMEOUT_SECONDS = 45  # a *hung* thesis call stalls the tick loop
 
 # Overridable so drills and tests can point at a scratch journal without
 # touching the real one. Production leaves these unset.
@@ -205,8 +216,8 @@ SLEEVES = ("core", "crypto", "convex")
 
 # --- Event-driven volatility strategy -----------------------------------------
 
-EVENT_MIN_TIER = 2                  # 1 = payrolls only; 2 = every scheduled print
-EVENT_LOOKAHEAD_HOURS = 30          # how far ahead a catalyst counts as actionable
+EVENT_MIN_TIER = 2  # 1 = payrolls only; 2 = every scheduled print
+EVENT_LOOKAHEAD_HOURS = 30  # how far ahead a catalyst counts as actionable
 
 # Buy convexity only when it is cheap. Above this, the underlying is already
 # realising more than the options imply and we are not paid to own gamma.

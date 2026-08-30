@@ -19,10 +19,12 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date
+from typing import Any
 
 try:
     from dotenv import load_dotenv
+
     load_dotenv()
 except ImportError:
     pass
@@ -66,20 +68,20 @@ def main() -> int:
         bad("ALPACA_PAPER_TRADE is not true. Refusing to continue.")
         return 1
     if not key.startswith("PK"):
-        bad(f"key does not look like a paper key (expected PK prefix). REFUSING.")
+        bad("key does not look like a paper key (expected PK prefix). REFUSING.")
         return 1
     ok("paper credentials confirmed")
 
     try:
-        from alpaca.trading.client import TradingClient
         from alpaca.data.historical.option import OptionHistoricalDataClient
         from alpaca.data.historical.stock import StockHistoricalDataClient
         from alpaca.data.requests import OptionChainRequest, StockSnapshotRequest
+        from alpaca.trading.client import TradingClient
     except ImportError:
         bad("alpaca-py not installed. Run: pip install -r requirements.txt")
         return 1
 
-    trading = TradingClient(key, secret, paper=True)
+    trading: Any = TradingClient(key, secret, paper=True)
 
     # --- 2. account -----------------------------------------------------------
     print("\n2. Account")
@@ -130,7 +132,9 @@ def main() -> int:
     print("\n4. Clock and calendar")
     try:
         clock = trading.get_clock()
-        ok(f"market open={clock.is_open}  next open={clock.next_open}  next close={clock.next_close}")
+        ok(
+            f"market open={clock.is_open}  next open={clock.next_open}  next close={clock.next_close}"
+        )
     except Exception as exc:
         bad(f"clock unavailable: {exc}")
         failures += 1
@@ -180,7 +184,7 @@ def main() -> int:
                 strike = int(sym[10:]) / 1000
             except Exception:
                 continue
-            if abs(strike - spot) / spot >= 0.01:      # near the money only
+            if abs(strike - spot) / spot >= 0.01:  # near the money only
                 continue
 
             # Relative bid/ask spread. This decides whether a mark means
@@ -189,14 +193,19 @@ def main() -> int:
             spread = float("nan")
             q = getattr(c, "latest_quote", None)
             if q is not None:
-                bid, ask = float(getattr(q, "bid_price", 0) or 0), float(getattr(q, "ask_price", 0) or 0)
+                bid, ask = (
+                    float(getattr(q, "bid_price", 0) or 0),
+                    float(getattr(q, "ask_price", 0) or 0),
+                )
                 if bid > 0 and ask > 0:
                     spread = (ask - bid) / ((ask + bid) / 2)
             by_exp.setdefault(exp, []).append((strike, float(iv), spread))
 
         if not by_exp:
-            warn("no implied vols in the chain -- the free tier feed is indicative; "
-                 "compute IV locally if this stays empty")
+            warn(
+                "no implied vols in the chain -- the free tier feed is indicative; "
+                "compute IV locally if this stays empty"
+            )
         else:
             print("\n   ATM implied vol and quote width by expiry:")
             print(f"     {'expiry':<12}{'dte':>5}{'IV':>8}{'spread':>9}   n")
@@ -204,8 +213,8 @@ def main() -> int:
             for exp in sorted(by_exp)[:10]:
                 rows = by_exp[exp]
                 avg = sum(v for _, v, _ in rows) / len(rows)
-                sp = [s for _, _, s in rows if s == s]     # drop NaN
-                spread_txt = f"{sum(sp)/len(sp):7.1%}" if sp else "      -"
+                sp = [s for _, _, s in rows if s == s]  # drop NaN
+                spread_txt = f"{sum(sp) / len(sp):7.1%}" if sp else "      -"
                 dte = (exp - today).days
                 print(f"     {exp}  {dte:>4}d {avg:7.1%} {spread_txt}   {len(rows)}")
             print("\n     A spread above ~6% disqualifies an expiry: the mark stops")
@@ -221,8 +230,11 @@ def main() -> int:
         failures += 1
 
     print("\n" + "=" * 60)
-    print("PASS -- safe to build on this account\n" if not failures
-          else f"{failures} check(s) FAILED -- resolve before building\n")
+    print(
+        "PASS -- safe to build on this account\n"
+        if not failures
+        else f"{failures} check(s) FAILED -- resolve before building\n"
+    )
     return 1 if failures else 0
 
 

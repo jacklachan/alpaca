@@ -17,8 +17,7 @@ PLAN_PREFIX = "gbp-"
 
 def stable_plan_id(namespace: str, *parts: object) -> str:
     """Return a deterministic identity for one semantic trade opportunity."""
-    body = json.dumps(
-        [namespace, *parts], sort_keys=True, separators=(",", ":"), default=str)
+    body = json.dumps([namespace, *parts], sort_keys=True, separators=(",", ":"), default=str)
     digest = hashlib.sha256(body.encode()).hexdigest()
     return f"{PLAN_PREFIX}{digest[:32]}"
 

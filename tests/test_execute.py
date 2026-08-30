@@ -36,10 +36,14 @@ class FakeOrder:
 class FakeBroker:
     """Fill behaviour is scripted per symbol: fraction of requested qty."""
 
-    def __init__(self, fill: dict[str, float] | None = None, price=Decimal("5.00"),
-                 cancel_fill: dict[str, list[float]] | None = None,
-                 uncertain_cancel: set[str] | None = None,
-                 accepted_then_timeout: set[str] | None = None):
+    def __init__(
+        self,
+        fill: dict[str, float] | None = None,
+        price=Decimal("5.00"),
+        cancel_fill: dict[str, list[float]] | None = None,
+        uncertain_cancel: set[str] | None = None,
+        accepted_then_timeout: set[str] | None = None,
+    ):
         self.fill = fill or {}
         self.price = price
         self.cancel_fill = cancel_fill or {}
@@ -52,19 +56,28 @@ class FakeBroker:
         self.bucket = TokenBucket(10_000)
         self._n = 0
 
-    def submit(self, *, symbol, qty, side, client_order_id, limit_price=None,
-               instrument="equity"):
+    def submit(self, *, symbol, qty, side, client_order_id, limit_price=None, instrument="equity"):
         self._n += 1
         o = FakeOrder(f"broker-{self._n}", client_order_id, qty, symbol)
         frac = self.fill.get(symbol, 1.0)
         o.filled_qty = Decimal(str(qty)) * Decimal(str(frac))
         if o.filled_qty:
             o.filled_avg_price = limit_price or self.price
-        o.status = "filled" if o.filled_qty >= float(qty) else (
-            "partially_filled" if o.filled_qty else "new")
+        o.status = (
+            "filled"
+            if o.filled_qty >= float(qty)
+            else ("partially_filled" if o.filled_qty else "new")
+        )
         self.orders[client_order_id] = o
-        self.submitted.append({"symbol": symbol, "qty": qty, "side": side,
-                               "limit": limit_price, "coid": client_order_id})
+        self.submitted.append(
+            {
+                "symbol": symbol,
+                "qty": qty,
+                "side": side,
+                "limit": limit_price,
+                "coid": client_order_id,
+            }
+        )
         if symbol in self.accepted_then_timeout:
             self.accepted_then_timeout.remove(symbol)
             raise TimeoutError("response lost after broker acceptance")
@@ -104,46 +117,61 @@ def journal(tmp_path):
 
 def strangle(qty: int = 10) -> TradePlan:
     return TradePlan(
-        sleeve="convex", action="open", instrument="option", symbol="SPY",
-        side="buy", is_event_trade=True,
+        sleeve="convex",
+        action="open",
+        instrument="option",
+        symbol="SPY",
+        side="buy",
+        is_event_trade=True,
         option_legs=[
             OptionLeg(symbol=occ("C", 778), side="buy", qty=qty, limit_price=Decimal("3.50")),
             OptionLeg(symbol=occ("P", 760), side="buy", qty=qty, limit_price=Decimal("3.40")),
         ],
-        notional_usd=Decimal("6900"), max_loss_usd=Decimal("6900"),
+        notional_usd=Decimal("6900"),
+        max_loss_usd=Decimal("6900"),
         thesis="Scheduled payrolls print one hour before measurement with implied "
-               "volatility near the lows. Buying the move, not the direction.",
-        evidence=["macro_cal: NFP 2026-09-04 08:30 ET"], confidence=0.6)
+        "volatility near the lows. Buying the move, not the direction.",
+        evidence=["macro_cal: NFP 2026-09-04 08:30 ET"],
+        confidence=0.6,
+    )
 
 
 def single(instrument: str) -> TradePlan:
     symbol = "BTC/USD" if instrument == "crypto" else "SPY"
     sleeve = "crypto" if instrument == "crypto" else "core"
     return TradePlan(
-        sleeve=sleeve, action="open", instrument=instrument, symbol=symbol,
-        side="buy", notional_usd=Decimal("1000"),
+        sleeve=sleeve,
+        action="open",
+        instrument=instrument,
+        symbol=symbol,
+        side="buy",
+        notional_usd=Decimal("1000"),
         max_loss_usd=Decimal("100"),
         thesis="A deterministic test allocation with a bounded requested size "
-               "and an independently checked execution cleanup path.",
+        "and an independently checked execution cleanup path.",
         evidence=["test fixture with literal expected quantities"],
-        confidence=0.5)
+        confidence=0.5,
+    )
 
 
-APPROVED = lambda p: Verdict(plan_id=p.plan_id, approved=True, reason="ok",
-                             checks_passed=13, checks_total=13)
+APPROVED = lambda p: Verdict(
+    plan_id=p.plan_id, approved=True, reason="ok", checks_passed=13, checks_total=13
+)
 
 
 def engine(broker, journal):
-    return ExecutionEngine(broker, journal, poll_seconds=0, fill_wait_seconds=0.01,
-                           max_reprice=2)
+    return ExecutionEngine(broker, journal, poll_seconds=0, fill_wait_seconds=0.01, max_reprice=2)
 
 
 # --- happy path ---------------------------------------------------------------
 
+
 def test_both_legs_fill():
     b = FakeBroker()
     j = Journal.__new__(Journal)
-    import tempfile, pathlib
+    import pathlib
+    import tempfile
+
     j.__init__(pathlib.Path(tempfile.mkdtemp()) / "j.jsonl")
     p = strangle()
     r = engine(b, j).execute(p, APPROVED(p))
@@ -168,6 +196,7 @@ def test_client_order_ids_are_deterministic_and_distinct(journal):
     coids = [s["coid"] for s in b.submitted]
     assert len(set(coids)) == 2
     from glassbox.ids import EVENT_PREFIX, client_order_id
+
     assert coids[0] == client_order_id(p.plan_id, 0, event=p.is_event_trade)
 
     # An event trade must be identifiable from the id alone. reconcile() sees
@@ -178,6 +207,7 @@ def test_client_order_ids_are_deterministic_and_distinct(journal):
 
 
 # --- the ugly cases -----------------------------------------------------------
+
 
 def test_unfilled_second_leg_is_repriced_wider(journal):
     b = FakeBroker(fill={occ("P", 760): 0.0})
@@ -190,6 +220,7 @@ def test_unfilled_second_leg_is_repriced_wider(journal):
 
 def test_repricing_never_exceeds_the_tolerance_band(journal):
     from glassbox import config as C
+
     b = FakeBroker(fill={occ("P", 760): 0.0})
     p = strangle()
     engine(b, journal).execute(p, APPROVED(p))
@@ -273,8 +304,7 @@ def test_single_order_partial_fill_cancels_the_residual(journal, instrument):
 
 def test_single_order_cancel_uncertainty_is_not_success(journal):
     plan = single("equity")
-    broker = FakeBroker(fill={plan.symbol: 0.5},
-                        uncertain_cancel={plan.symbol})
+    broker = FakeBroker(fill={plan.symbol: 0.5}, uncertain_cancel={plan.symbol})
 
     result = engine(broker, journal).execute(plan, APPROVED(plan))
 
@@ -314,11 +344,18 @@ def test_failed_unwind_says_so_loudly(journal):
 
 # --- guards and the record ----------------------------------------------------
 
+
 def test_refuses_to_execute_an_unapproved_plan(journal):
     b = FakeBroker()
     p = strangle()
-    v = Verdict(plan_id=p.plan_id, approved=False, reason="naked short",
-                checks_passed=1, checks_total=13, failed_invariant="02_bounded_max_loss")
+    v = Verdict(
+        plan_id=p.plan_id,
+        approved=False,
+        reason="naked short",
+        checks_passed=1,
+        checks_total=13,
+        failed_invariant="02_bounded_max_loss",
+    )
     with pytest.raises(ValueError):
         engine(b, journal).execute(p, v)
     assert b.submitted == []
@@ -348,6 +385,7 @@ def test_execution_records_broker_side_identifiers(journal):
 
 # --- rate limiter -------------------------------------------------------------
 
+
 def test_token_bucket_allows_burst_then_throttles():
     b = TokenBucket(rate_per_min=60)
     assert all(b.take() for _ in range(60))
@@ -356,7 +394,8 @@ def test_token_bucket_allows_burst_then_throttles():
 
 def test_token_bucket_refills():
     import time as t
-    b = TokenBucket(rate_per_min=600)   # 10/sec
+
+    b = TokenBucket(rate_per_min=600)  # 10/sec
     for _ in range(600):
         b.take()
     t.sleep(0.25)

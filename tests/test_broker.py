@@ -7,23 +7,25 @@ refuses everything and looks like it is working.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
 
 import glassbox.broker as broker_module
-from glassbox import config as C
 from glassbox.broker import Broker
 from glassbox.macro import trading_days_between
 
 
 def _horizon(today: date, days: int = 45) -> dict[date, int]:
     """Mirrors what Broker.reconcile builds."""
-    return {date.fromordinal(today.toordinal() + d):
-            trading_days_between(today, date.fromordinal(today.toordinal() + d))
-            for d in range(1, days + 1)}
+    return {
+        date.fromordinal(today.toordinal() + d): trading_days_between(
+            today, date.fromordinal(today.toordinal() + d)
+        )
+        for d in range(1, days + 1)
+    }
 
 
 def test_horizon_covers_every_expiry_in_the_scored_window():
@@ -31,8 +33,13 @@ def test_horizon_covers_every_expiry_in_the_scored_window():
     invariant 10 refused every option plan with 'no trading-day count'. The
     convex strategy would have been dead at Monday's open."""
     h = _horizon(date(2026, 8, 31))
-    for expiry in (date(2026, 9, 4), date(2026, 9, 8),
-                   date(2026, 9, 9), date(2026, 9, 11), date(2026, 9, 18)):
+    for expiry in (
+        date(2026, 9, 4),
+        date(2026, 9, 8),
+        date(2026, 9, 9),
+        date(2026, 9, 11),
+        date(2026, 9, 18),
+    ):
         assert expiry in h, f"{expiry} missing from the reconciled horizon"
         assert h[expiry] > 0
 
@@ -46,8 +53,12 @@ def test_horizon_skips_weekends_and_labor_day():
 
 def test_reconcile_supplies_what_the_expiry_guard_needs():
     from glassbox.kernel import PortfolioState
-    s = PortfolioState(equity=Decimal("100000"), cash=Decimal("100000"),
-                       trading_days_to=_horizon(date(2026, 8, 31)))
+
+    s = PortfolioState(
+        equity=Decimal("100000"),
+        cash=Decimal("100000"),
+        trading_days_to=_horizon(date(2026, 8, 31)),
+    )
     assert s.trading_days_to, "an empty map refuses every option trade"
     assert date(2026, 9, 8) in s.trading_days_to
 
@@ -90,17 +101,17 @@ def test_assert_ready_accepts_the_expected_returned_account(monkeypatch):
 def test_cancel_and_confirm_returns_the_terminal_late_fill():
     broker = Broker.__new__(Broker)
     cancel_calls = []
-    states = iter([
-        SimpleNamespace(status="partially_filled", filled_qty="1"),
-        SimpleNamespace(status="canceled", filled_qty="3",
-                        filled_avg_price="5.25"),
-    ])
+    states = iter(
+        [
+            SimpleNamespace(status="partially_filled", filled_qty="1"),
+            SimpleNamespace(status="canceled", filled_qty="3", filled_avg_price="5.25"),
+        ]
+    )
     broker.cancel = lambda order_id: cancel_calls.append(order_id)
     broker.get_order_by_coid = lambda coid: next(states)
     broker._log = lambda actor, event, payload: None
 
-    final = broker.cancel_and_confirm(
-        "broker-1", "client-1", timeout=0.1, poll_seconds=0)
+    final = broker.cancel_and_confirm("broker-1", "client-1", timeout=0.1, poll_seconds=0)
 
     assert cancel_calls == ["broker-1"]
     assert final.status == "canceled"
@@ -111,12 +122,12 @@ def test_cancel_and_confirm_raises_when_terminal_state_is_unproven():
     broker = Broker.__new__(Broker)
     broker.cancel = lambda order_id: None
     broker.get_order_by_coid = lambda coid: SimpleNamespace(
-        status="partially_filled", filled_qty="1")
+        status="partially_filled", filled_qty="1"
+    )
     broker._log = lambda actor, event, payload: None
 
     with pytest.raises(broker_module.OrderStateUncertain, match="client-1"):
-        broker.cancel_and_confirm(
-            "broker-1", "client-1", timeout=0.01, poll_seconds=0)
+        broker.cancel_and_confirm("broker-1", "client-1", timeout=0.01, poll_seconds=0)
 
 
 def test_cancel_and_confirm_accepts_terminal_state_after_cancel_error():
@@ -126,11 +137,9 @@ def test_cancel_and_confirm_accepts_terminal_state_after_cancel_error():
         raise RuntimeError("order is already canceled")
 
     broker.cancel = already_terminal
-    broker.get_order_by_coid = lambda coid: SimpleNamespace(
-        status="canceled", filled_qty="0")
+    broker.get_order_by_coid = lambda coid: SimpleNamespace(status="canceled", filled_qty="0")
     broker._log = lambda actor, event, payload: None
 
-    final = broker.cancel_and_confirm(
-        "broker-1", "client-1", timeout=0.1, poll_seconds=0)
+    final = broker.cancel_and_confirm("broker-1", "client-1", timeout=0.1, poll_seconds=0)
 
     assert final.status == "canceled"

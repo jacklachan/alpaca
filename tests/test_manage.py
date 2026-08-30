@@ -45,33 +45,49 @@ def mgr(tmp_path, journal):
     ks = KillSwitch(tmp_path / "kill.json", journal=journal)
     # Exit targets are persisted so they survive a restart; point each test at
     # its own file so they do not leak into one another.
-    return PositionManager(FakeBroker(), journal, ks,
-                           targets_path=tmp_path / "targets.json")
+    return PositionManager(FakeBroker(), journal, ks, targets_path=tmp_path / "targets.json")
 
 
 def state(now: datetime, positions=None, **kw) -> PortfolioState:
     base = dict(
-        equity=Decimal("100000"), cash=Decimal("40000"),
-        core_sleeve_value=Decimal("60000"), core_sleeve_cost_basis=Decimal("60000"),
-        positions=positions or [], now_et=now, market_open=True,
-        snapshot_price={"SPY": Decimal("769.28"), "QQQ": Decimal("716.91")})
+        equity=Decimal("100000"),
+        cash=Decimal("40000"),
+        core_sleeve_value=Decimal("60000"),
+        core_sleeve_cost_basis=Decimal("60000"),
+        positions=positions or [],
+        now_et=now,
+        market_open=True,
+        snapshot_price={"SPY": Decimal("769.28"), "QQQ": Decimal("716.91")},
+    )
     base.update(kw)
     return PortfolioState(**base)
 
 
 def opt(symbol=None, qty=10):
     symbol = symbol or occ()
-    return Position(symbol=symbol, instrument="option", qty=Decimal(qty),
-                    market_value=Decimal("3500"), underlying="SPY",
-                    net_delta_shares=Decimal(qty) * 50, premium_paid=Decimal("3500"))
+    return Position(
+        symbol=symbol,
+        instrument="option",
+        qty=Decimal(qty),
+        market_value=Decimal("3500"),
+        underlying="SPY",
+        net_delta_shares=Decimal(qty) * 50,
+        premium_paid=Decimal("3500"),
+    )
 
 
 def eq(symbol="SPY", qty=20):
-    return Position(symbol=symbol, instrument="equity", qty=Decimal(qty),
-                    market_value=Decimal("15000"), net_delta_shares=Decimal(qty))
+    return Position(
+        symbol=symbol,
+        instrument="equity",
+        qty=Decimal(qty),
+        market_value=Decimal("15000"),
+        net_delta_shares=Decimal(qty),
+    )
 
 
 # --- the expiry deadline ------------------------------------------------------
+
 
 def test_closes_options_at_1430_on_expiry_day(mgr):
     """14:30 ET, an hour before Alpaca's 15:30 cutoff."""
@@ -110,6 +126,7 @@ def test_leaves_a_far_dated_option_alone(mgr):
 
 # --- stops, targets, time exits ----------------------------------------------
 
+
 def test_stop_triggers_an_immediate_exit(mgr):
     mgr.register("SPY", stop=Decimal("780"))
     now = datetime(2026, 9, 2, 11, 0, tzinfo=C.ET)
@@ -139,10 +156,12 @@ def test_unregistered_position_is_left_alone(mgr):
 
 # --- the kill switch ----------------------------------------------------------
 
+
 def test_core_drawdown_trips_the_switch(mgr):
     now = datetime(2026, 9, 2, 11, 0, tzinfo=C.ET)
-    mgr.tick(state(now, core_sleeve_value=Decimal("56000"),
-                   core_sleeve_cost_basis=Decimal("60000")))
+    mgr.tick(
+        state(now, core_sleeve_value=Decimal("56000"), core_sleeve_cost_basis=Decimal("60000"))
+    )
     assert mgr.kill.tripped
     assert "core sleeve drawdown" in mgr.kill.state()["reason"]
 
@@ -150,9 +169,14 @@ def test_core_drawdown_trips_the_switch(mgr):
 def test_convex_sleeve_going_to_zero_does_not_trip_it(mgr):
     """The design intends this. A switch that fires here is mis-specified."""
     now = datetime(2026, 9, 4, 9, 35, tzinfo=C.ET)
-    mgr.tick(state(now, equity=Decimal("89000"),
-                   core_sleeve_value=Decimal("60000"),
-                   core_sleeve_cost_basis=Decimal("60000")))
+    mgr.tick(
+        state(
+            now,
+            equity=Decimal("89000"),
+            core_sleeve_value=Decimal("60000"),
+            core_sleeve_cost_basis=Decimal("60000"),
+        )
+    )
     assert not mgr.kill.tripped
 
 
@@ -163,31 +187,49 @@ def test_backstop_does_not_fire_on_the_designed_worst_case(mgr):
     nobody present to re-arm. It must sit BELOW the designed floor.
     """
     now = datetime(2026, 9, 3, 11, 0, tzinfo=C.ET)
-    designed_floor = (C.STARTING_EQUITY - C.CONVEX_SLEEVE_USD
-                      - C.CORE_SLEEVE_USD * C.CORE_DRAWDOWN_KILL_PCT)
+    designed_floor = (
+        C.STARTING_EQUITY - C.CONVEX_SLEEVE_USD - C.CORE_SLEEVE_USD * C.CORE_DRAWDOWN_KILL_PCT
+    )
     # Convex fully spent, core flat: strictly better than the designed floor.
-    mgr.tick(state(now, equity=C.STARTING_EQUITY - C.CONVEX_SLEEVE_USD,
-                   core_sleeve_value=C.CORE_SLEEVE_USD,
-                   core_sleeve_cost_basis=C.CORE_SLEEVE_USD))
+    mgr.tick(
+        state(
+            now,
+            equity=C.STARTING_EQUITY - C.CONVEX_SLEEVE_USD,
+            core_sleeve_value=C.CORE_SLEEVE_USD,
+            core_sleeve_cost_basis=C.CORE_SLEEVE_USD,
+        )
+    )
     assert not mgr.kill.tripped, (
-        "backstop fired on the strategy doing exactly what it is designed to do")
+        "backstop fired on the strategy doing exactly what it is designed to do"
+    )
     assert designed_floor / C.STARTING_EQUITY > (1 - C.PORTFOLIO_DRAWDOWN_KILL_PCT)
 
 
 def test_portfolio_backstop_trips_on_something_pathological(mgr):
     now = datetime(2026, 9, 3, 11, 0, tzinfo=C.ET)
     beyond = C.STARTING_EQUITY * (1 - C.PORTFOLIO_DRAWDOWN_KILL_PCT) - Decimal("1000")
-    mgr.tick(state(now, equity=beyond,
-                   core_sleeve_value=Decimal("60000"),
-                   core_sleeve_cost_basis=Decimal("60000")))
+    mgr.tick(
+        state(
+            now,
+            equity=beyond,
+            core_sleeve_value=Decimal("60000"),
+            core_sleeve_cost_basis=Decimal("60000"),
+        )
+    )
     assert mgr.kill.tripped
     assert "backstop" in mgr.kill.state()["reason"]
 
 
 def test_tripped_switch_flattens_the_convex_sleeve(mgr):
     now = datetime(2026, 9, 2, 11, 0, tzinfo=C.ET)
-    mgr.tick(state(now, [opt()], core_sleeve_value=Decimal("56000"),
-                   core_sleeve_cost_basis=Decimal("60000")))
+    mgr.tick(
+        state(
+            now,
+            [opt()],
+            core_sleeve_value=Decimal("56000"),
+            core_sleeve_cost_basis=Decimal("60000"),
+        )
+    )
     assert mgr.kill.tripped
     assert occ() in mgr.broker.closed
 
@@ -217,6 +259,7 @@ def test_unreadable_state_is_treated_as_tripped(tmp_path):
 
 # --- failure handling ---------------------------------------------------------
 
+
 def test_a_failed_close_is_journalled_not_swallowed(tmp_path, journal):
     ks = KillSwitch(tmp_path / "kill.json", journal=journal)
     m = PositionManager(FakeBroker(fail=True), journal, ks)
@@ -235,8 +278,7 @@ def test_every_exit_is_journalled_with_its_reason(mgr, journal):
 
 def test_corrupt_exit_targets_stop_manager_construction(tmp_path, journal):
     targets = tmp_path / "targets.json"
-    targets.write_text('{"SPY": {"stop": ["not", "decimal"]}}',
-                       encoding="utf-8")
+    targets.write_text('{"SPY": {"stop": ["not", "decimal"]}}', encoding="utf-8")
     kill = KillSwitch(tmp_path / "kill.json", journal)
 
     with pytest.raises(RuntimeError, match="targets"):

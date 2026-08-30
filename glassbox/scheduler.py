@@ -15,18 +15,17 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import signal
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from . import config as C
 from . import env
-from .macro import MEASUREMENT_ET
 from .manage import measurement_countdown
 from .state import StateCorrupt, StateError, atomic_write_json, read_json
 
@@ -34,8 +33,8 @@ log = logging.getLogger("glassbox.scheduler")
 
 # Defaults applied to every job. See the module docstring.
 JOB_DEFAULTS = {
-    "max_instances": 1,      # never two copies of the same job at once
-    "coalesce": True,        # a backlog collapses to one run, not N
+    "max_instances": 1,  # never two copies of the same job at once
+    "coalesce": True,  # a backlog collapses to one run, not N
     "misfire_grace_time": 30,
 }
 
@@ -46,8 +45,11 @@ def discord(message: str, webhook: str | None = None) -> bool:
         return False
     try:
         req = urllib.request.Request(
-            url, data=json.dumps({"content": message[:1900]}).encode(),
-            headers={"Content-Type": "application/json"}, method="POST")
+            url,
+            data=json.dumps({"content": message[:1900]}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
         with urllib.request.urlopen(req, timeout=10):
             return True
     except Exception as exc:
@@ -62,8 +64,7 @@ class Agent:
     kills the scheduler. A crashed tick must cost one tick.
     """
 
-    def __init__(self, broker, journal, kernel, manager, strategies: dict,
-                 thesis=None):
+    def __init__(self, broker, journal, kernel, manager, strategies: dict, thesis=None):
         self.broker = broker
         self.journal = journal
         self.kernel = kernel
@@ -74,8 +75,7 @@ class Agent:
         if self.environment not in {"dev", "scored"}:
             raise ValueError(f"unknown broker environment {self.environment!r}")
         self._state_faulted = False
-        self.scheduler = BackgroundScheduler(
-            timezone="UTC", job_defaults=JOB_DEFAULTS)
+        self.scheduler = BackgroundScheduler(timezone="UTC", job_defaults=JOB_DEFAULTS)
         # Persisted, not in-memory. An in-memory set is empty after any
         # restart, and the agent would happily buy the same catalyst a second
         # time on the tick after coming back up -- which is precisely when we
@@ -88,19 +88,21 @@ class Agent:
 
     def _load_positioned(self) -> set[str]:
         def validate(raw) -> dict:
-            valid = (isinstance(raw, dict)
-                     and isinstance(raw.get("day"), str)
-                     and isinstance(raw.get("keys"), list)
-                     and all(isinstance(key, str) for key in raw["keys"]))
+            valid = (
+                isinstance(raw, dict)
+                and isinstance(raw.get("day"), str)
+                and isinstance(raw.get("keys"), list)
+                and all(isinstance(key, str) for key in raw["keys"])
+            )
             if not valid:
-                raise StateCorrupt(
-                    f"{self._positioned_path}: invalid positioned state")
+                raise StateCorrupt(f"{self._positioned_path}: invalid positioned state")
             return raw
 
         data = read_json(
-            self._positioned_path, default={
-                "day": datetime.now(C.ET).date().isoformat(), "keys": []},
-            validate=validate)
+            self._positioned_path,
+            default={"day": datetime.now(C.ET).date().isoformat(), "keys": []},
+            validate=validate,
+        )
         # Scoped to the trading day: a catalyst traded yesterday must not block
         # a different one today.
         if data.get("day") != datetime.now(C.ET).date().isoformat():
@@ -109,28 +111,35 @@ class Agent:
 
     def _mark_positioned(self, key: str) -> None:
         self._positioned_for.add(key)
-        atomic_write_json(self._positioned_path, {
-            "day": datetime.now(C.ET).date().isoformat(),
-            "keys": sorted(self._positioned_for)})
+        atomic_write_json(
+            self._positioned_path,
+            {"day": datetime.now(C.ET).date().isoformat(), "keys": sorted(self._positioned_for)},
+        )
 
     # -- safety wrapper --------------------------------------------------------
 
-    def _guard(self, name: str, fn) -> None:
-        def wrapped():
+    def _guard(self, name: str, fn: Callable[[], None]) -> Callable[[], None]:
+        def wrapped() -> None:
             try:
                 fn()
             except StateError as exc:
                 self._state_faulted = True
                 log.exception("%s failed closed on durable state", name)
-                self.journal.append("scheduler", "STATE_FAULT_LATCHED", {
-                    "job": name, "error": str(exc),
-                    "impact": "new entries disabled; management continues"})
+                self.journal.append(
+                    "scheduler",
+                    "STATE_FAULT_LATCHED",
+                    {
+                        "job": name,
+                        "error": str(exc),
+                        "impact": "new entries disabled; management continues",
+                    },
+                )
                 discord(f":rotating_light: glassbox state fault in `{name}`: {exc}")
             except Exception as exc:
                 log.exception("%s failed", name)
-                self.journal.append("scheduler", "JOB_FAILED",
-                                    {"job": name, "error": str(exc)})
+                self.journal.append("scheduler", "JOB_FAILED", {"job": name, "error": str(exc)})
                 discord(f":warning: glassbox job `{name}` failed: {exc}")
+
         return wrapped
 
     # -- jobs ------------------------------------------------------------------
@@ -140,8 +149,11 @@ class Agent:
         state = self.broker.reconcile(kill_switch_tripped=self.manager.kill.tripped)
         self.manager.tick(state)
 
-        if (getattr(self, "_state_faulted", False)
-                or self.manager.kill.tripped or not state.market_open):
+        if (
+            getattr(self, "_state_faulted", False)
+            or self.manager.kill.tripped
+            or not state.market_open
+        ):
             return
 
         if self.environment == "scored":
@@ -151,8 +163,7 @@ class Agent:
         for name, strategy in self.strategies.items():
             for plan in strategy.propose_from_state(state, self._positioned_for):
                 self._review_and_execute(plan, state, name)
-                state = self.broker.reconcile(
-                    kill_switch_tripped=self.manager.kill.tripped)
+                state = self.broker.reconcile(kill_switch_tripped=self.manager.kill.tripped)
 
     def _scored_selection_tick(self, state) -> None:
         """Offer deterministic option candidates; execute at most one.
@@ -167,17 +178,22 @@ class Agent:
             for plan in strategy.propose_from_state(state, self._positioned_for):
                 if plan.instrument != "option":
                     self._scored_policy_refusal(
-                        plan, name, "scored account accepts option candidates only")
+                        plan, name, "scored account accepts option candidates only"
+                    )
                     continue
                 candidates.append(plan)
                 candidate_sources[id(plan)] = name
 
         if self.thesis is None:
-            self.journal.append("thesis.llm", "CANDIDATE_SELECTION_UNAVAILABLE", {
-                "error": "bounded selector is disabled",
-                "impact": "scored cycle abstained",
-                "offered": len(candidates),
-            })
+            self.journal.append(
+                "thesis.llm",
+                "CANDIDATE_SELECTION_UNAVAILABLE",
+                {
+                    "error": "bounded selector is disabled",
+                    "impact": "scored cycle abstained",
+                    "offered": len(candidates),
+                },
+            )
             return
 
         selected = self.thesis.select(candidates, state, self.journal)
@@ -186,24 +202,28 @@ class Agent:
 
         # Defense in depth: even a replacement selector implementation may
         # return only the exact original option object it was offered.
-        if (selected.instrument != "option"
-                or not any(selected is candidate for candidate in candidates)):
+        if selected.instrument != "option" or not any(
+            selected is candidate for candidate in candidates
+        ):
             self._scored_policy_refusal(
-                selected, "bounded_ai",
-                "selector returned an object outside the offered option set")
+                selected, "bounded_ai", "selector returned an object outside the offered option set"
+            )
             return
 
-        self._review_and_execute(
-            selected, state, candidate_sources[id(selected)])
+        self._review_and_execute(selected, state, candidate_sources[id(selected)])
 
     def _scored_policy_refusal(self, plan, source: str, reason: str) -> None:
-        self.journal.append("scheduler", "SCORED_POLICY_REFUSED", {
-            "plan_id": getattr(plan, "plan_id", None),
-            "strategy": source,
-            "instrument": getattr(plan, "instrument", None),
-            "symbol": getattr(plan, "symbol", None),
-            "reason": reason,
-        })
+        self.journal.append(
+            "scheduler",
+            "SCORED_POLICY_REFUSED",
+            {
+                "plan_id": getattr(plan, "plan_id", None),
+                "strategy": source,
+                "instrument": getattr(plan, "instrument", None),
+                "symbol": getattr(plan, "symbol", None),
+                "reason": reason,
+            },
+        )
 
     def _review_and_execute(self, plan, state, strategy_name: str) -> None:
         """Kernel first, always. The single path from a plan to an order."""
@@ -211,13 +231,19 @@ class Agent:
         self.journal.append(
             "risk.kernel",
             "PLAN_APPROVED" if verdict.approved else "PLAN_REFUSED",
-            {"plan_id": plan.plan_id, "strategy": strategy_name,
-             "sleeve": plan.sleeve, "symbol": plan.symbol,
-             "thesis": plan.thesis, "evidence": plan.evidence,
-             "checks_passed": verdict.checks_passed,
-             "checks_total": verdict.checks_total,
-             "reason": verdict.reason,
-             "failed_invariant": verdict.failed_invariant})
+            {
+                "plan_id": plan.plan_id,
+                "strategy": strategy_name,
+                "sleeve": plan.sleeve,
+                "symbol": plan.symbol,
+                "thesis": plan.thesis,
+                "evidence": plan.evidence,
+                "checks_passed": verdict.checks_passed,
+                "checks_total": verdict.checks_total,
+                "reason": verdict.reason,
+                "failed_invariant": verdict.failed_invariant,
+            },
+        )
         if verdict.approved:
             self.execute(plan, verdict)
 
@@ -242,24 +268,31 @@ class Agent:
             return
         for plan in strategy.propose_from_state(state, self._positioned_for):
             if plan.instrument != "crypto":
-                continue      # this loop trades the 24/7 venue only
+                continue  # this loop trades the 24/7 venue only
             self._review_and_execute(plan, state, "crypto")
-            state = self.broker.reconcile(
-                kill_switch_tripped=self.manager.kill.tripped)
+            state = self.broker.reconcile(kill_switch_tripped=self.manager.kill.tripped)
 
     def heartbeat(self) -> None:
         state = self.broker.reconcile(kill_switch_tripped=self.manager.kill.tripped)
         head = self.journal.head[:12]
-        msg = (f":green_heart: glassbox | equity ${state.equity:,.2f} | "
-               f"{len(state.positions)} positions | "
-               f"journal seq {self.journal.seq} head {head} | "
-               f"{measurement_countdown(state.now_et)}")
+        msg = (
+            f":green_heart: glassbox | equity ${state.equity:,.2f} | "
+            f"{len(state.positions)} positions | "
+            f"journal seq {self.journal.seq} head {head} | "
+            f"{measurement_countdown(state.now_et)}"
+        )
         if self.manager.kill.tripped:
             msg = f":red_circle: KILL SWITCH LATCHED | {msg}"
         discord(msg)
-        self.journal.append("scheduler", "HEARTBEAT", {
-            "equity": str(state.equity), "positions": len(state.positions),
-            "kill_switch": self.manager.kill.tripped})
+        self.journal.append(
+            "scheduler",
+            "HEARTBEAT",
+            {
+                "equity": str(state.equity),
+                "positions": len(state.positions),
+                "kill_switch": self.manager.kill.tripped,
+            },
+        )
 
     def anchor(self) -> None:
         """Publish the journal head somewhere with a clock we do not control."""
@@ -268,9 +301,11 @@ class Agent:
     def eod_manage(self) -> None:
         state = self.broker.reconcile(kill_switch_tripped=self.manager.kill.tripped)
         self.manager.tick(state)
-        self.journal.append("scheduler", "EOD_POSTURE", {
-            "equity": str(state.equity),
-            "positions": [p.symbol for p in state.positions]})
+        self.journal.append(
+            "scheduler",
+            "EOD_POSTURE",
+            {"equity": str(state.equity), "positions": [p.symbol for p in state.positions]},
+        )
 
     def daily_review(self) -> None:
         """Write a plain-English, read-only session summary into the journal."""
@@ -286,6 +321,7 @@ class Agent:
 
     def execute(self, plan, verdict) -> None:
         from .execute import ExecutionEngine
+
         engine = ExecutionEngine(self.broker, self.journal)
         result = engine.execute(plan, verdict)
         if result.ok:
@@ -294,14 +330,14 @@ class Agent:
             # print was traded on every tick until the total premium cap bound.
             self._mark_positioned(plan.event_key or plan.symbol)
             if plan.time_exit or plan.stop or plan.target:
-                for leg in (plan.option_legs or []):
-                    self.manager.register(leg.symbol, stop=plan.stop,
-                                          target=plan.target,
-                                          time_exit=plan.time_exit)
+                for leg in plan.option_legs or []:
+                    self.manager.register(
+                        leg.symbol, stop=plan.stop, target=plan.target, time_exit=plan.time_exit
+                    )
                 if not plan.option_legs:
-                    self.manager.register(plan.symbol, stop=plan.stop,
-                                          target=plan.target,
-                                          time_exit=plan.time_exit)
+                    self.manager.register(
+                        plan.symbol, stop=plan.stop, target=plan.target, time_exit=plan.time_exit
+                    )
 
     # -- schedule --------------------------------------------------------------
 
@@ -320,33 +356,44 @@ class Agent:
         # it was crypto_tick -- at or after the close, when an option order
         # will not fill. The position was carried straight past the flatten it
         # was supposed to get. 9-16 covers the closing minute.
-        add(self._guard("equity_tick", self.equity_tick),
-            cron(day_of_week="mon-fri", hour="9-16", minute="*"), id="equity_tick")
+        add(
+            self._guard("equity_tick", self.equity_tick),
+            cron(day_of_week="mon-fri", hour="9-16", minute="*"),
+            id="equity_tick",
+        )
 
         if self.environment == "dev":
-            add(self._guard("crypto_tick", self.crypto_tick),
-                cron(minute="*/5"), id="crypto_tick")
+            add(self._guard("crypto_tick", self.crypto_tick), cron(minute="*/5"), id="crypto_tick")
 
-        add(self._guard("eod_manage", self.eod_manage),
-            cron(day_of_week="mon-fri", hour=14, minute=30), id="eod_manage")
+        add(
+            self._guard("eod_manage", self.eod_manage),
+            cron(day_of_week="mon-fri", hour=14, minute=30),
+            id="eod_manage",
+        )
 
-        add(self._guard("daily_review", self.daily_review),
-            cron(day_of_week="mon-fri", hour=16, minute=15), id="daily_review")
+        add(
+            self._guard("daily_review", self.daily_review),
+            cron(day_of_week="mon-fri", hour=16, minute=15),
+            id="daily_review",
+        )
 
-        add(self._guard("heartbeat", self.heartbeat),
-            cron(minute=f"*/{C.HEARTBEAT_INTERVAL_MIN}"), id="heartbeat")
+        add(
+            self._guard("heartbeat", self.heartbeat),
+            cron(minute=f"*/{C.HEARTBEAT_INTERVAL_MIN}"),
+            id="heartbeat",
+        )
 
-        add(self._guard("anchor", self.anchor),
-            cron(minute=0), id="anchor")
+        add(self._guard("anchor", self.anchor), cron(minute=0), id="anchor")
 
         return s
 
     def run(self) -> None:
         info = self.broker.assert_ready()
-        log.info("glassbox starting against account %s (%s)",
-                 info["account_number"], info["env"])
-        discord(f":rocket: glassbox up | account {info['account_number']} | "
-                f"equity ${float(info['equity']):,.2f} | env={info['env']}")
+        log.info("glassbox starting against account %s (%s)", info["account_number"], info["env"])
+        discord(
+            f":rocket: glassbox up | account {info['account_number']} | "
+            f"equity ${float(info['equity']):,.2f} | env={info['env']}"
+        )
 
         s = self.build()
         s.start()
@@ -362,11 +409,13 @@ class Agent:
         signal.signal(signal.SIGTERM, stop)
 
         import time
+
         try:
             while not stopping["now"]:
                 time.sleep(1)
         finally:
-            self.journal.append("scheduler", "SHUTDOWN",
-                                {"at": datetime.now(timezone.utc).isoformat()})
+            self.journal.append(
+                "scheduler", "SHUTDOWN", {"at": datetime.now(timezone.utc).isoformat()}
+            )
             discord(":octagonal_sign: glassbox shutting down")
             s.shutdown(wait=False)

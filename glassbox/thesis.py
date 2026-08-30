@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -39,16 +40,16 @@ class Selection(BaseModel):
 
 
 class ThesisLayer:
-    def __init__(self, model: str = "claude-opus-5",
-                 timeout: int = C.LLM_TIMEOUT_SECONDS):
+    def __init__(self, model: str = "claude-opus-5", timeout: int = C.LLM_TIMEOUT_SECONDS):
         self.model = model
         self.timeout = timeout
-        self._client = None
+        self._client: Any | None = None
 
     @property
-    def client(self):
+    def client(self) -> Any:
         if self._client is None:
             import anthropic
+
             key = env.get("ANTHROPIC_API_KEY")
             if not key:
                 raise RuntimeError("ANTHROPIC_API_KEY not set")
@@ -66,14 +67,18 @@ class ThesisLayer:
         """
         option_candidates = [c for c in candidates if c.instrument == "option"]
         if not option_candidates:
-            self._record(journal, "CANDIDATE_ABSTAINED", {
-                "reason": "no option candidates", "offered": 0})
+            self._record(
+                journal, "CANDIDATE_ABSTAINED", {"reason": "no option candidates", "offered": 0}
+            )
             return None
 
         by_id = {candidate.plan_id: candidate for candidate in option_candidates}
         if len(by_id) != len(option_candidates):
-            self._record(journal, "CANDIDATE_SELECTION_INVALID", {
-                "error": "duplicate candidate IDs", "offered": len(option_candidates)})
+            self._record(
+                journal,
+                "CANDIDATE_SELECTION_INVALID",
+                {"error": "duplicate candidate IDs", "offered": len(option_candidates)},
+            )
             return None
 
         try:
@@ -81,34 +86,51 @@ class ThesisLayer:
             selection = Selection.model_validate(raw)
         except ValidationError as exc:
             log.warning("invalid candidate selection: %s", exc)
-            self._record(journal, "CANDIDATE_SELECTION_INVALID", {
-                "error": str(exc), "offered": len(option_candidates)})
+            self._record(
+                journal,
+                "CANDIDATE_SELECTION_INVALID",
+                {"error": str(exc), "offered": len(option_candidates)},
+            )
             return None
         except Exception as exc:
             log.warning("candidate selection unavailable: %s", exc)
-            self._record(journal, "CANDIDATE_SELECTION_UNAVAILABLE", {
-                "error": str(exc), "impact": "abstained"})
+            self._record(
+                journal,
+                "CANDIDATE_SELECTION_UNAVAILABLE",
+                {"error": str(exc), "impact": "abstained"},
+            )
             return None
 
         if selection.candidate_id is None:
-            self._record(journal, "CANDIDATE_ABSTAINED", {
-                "reason": selection.rationale, "offered": len(option_candidates)})
+            self._record(
+                journal,
+                "CANDIDATE_ABSTAINED",
+                {"reason": selection.rationale, "offered": len(option_candidates)},
+            )
             return None
 
         selected = by_id.get(selection.candidate_id)
         if selected is None:
-            self._record(journal, "CANDIDATE_SELECTION_INVALID", {
-                "error": "unknown or non-option candidate ID",
-                "candidate_id": selection.candidate_id,
-                "offered_ids": sorted(by_id),
-            })
+            self._record(
+                journal,
+                "CANDIDATE_SELECTION_INVALID",
+                {
+                    "error": "unknown or non-option candidate ID",
+                    "candidate_id": selection.candidate_id,
+                    "offered_ids": sorted(by_id),
+                },
+            )
             return None
 
-        self._record(journal, "CANDIDATE_SELECTED", {
-            "candidate_id": selected.plan_id,
-            "rationale": selection.rationale,
-            "offered": len(option_candidates),
-        })
+        self._record(
+            journal,
+            "CANDIDATE_SELECTED",
+            {
+                "candidate_id": selected.plan_id,
+                "rationale": selection.rationale,
+                "offered": len(option_candidates),
+            },
+        )
         return selected
 
     @staticmethod
@@ -118,9 +140,9 @@ class ThesisLayer:
 
     def _selection_context(self, candidates: list[TradePlan], state) -> dict:
         upcoming = [
-            {"event": e.name, "when_et": e.when.isoformat(), "tier": e.tier,
-             "source": e.source}
-            for e in CALENDAR if e.when > state.now_et
+            {"event": e.name, "when_et": e.when.isoformat(), "tier": e.tier, "source": e.source}
+            for e in CALENDAR
+            if e.when > state.now_et
         ]
         return {
             "now_et": state.now_et.isoformat(),
@@ -129,10 +151,10 @@ class ThesisLayer:
             "cash": str(state.cash),
             "convex_premium_outstanding": str(state.convex_premium_outstanding),
             "convex_budget_remaining": str(
-                C.CONVEX_TOTAL_PREMIUM_CAP - state.convex_premium_outstanding),
+                C.CONVEX_TOTAL_PREMIUM_CAP - state.convex_premium_outstanding
+            ),
             "macro_calendar": upcoming,
-            "candidates": [self._candidate_summary(candidate)
-                           for candidate in candidates],
+            "candidates": [self._candidate_summary(candidate) for candidate in candidates],
         }
 
     @staticmethod
@@ -151,8 +173,9 @@ class ThesisLayer:
             ],
             "notional_usd": str(candidate.notional_usd),
             "max_loss_usd": str(candidate.max_loss_usd),
-            "time_exit": (candidate.time_exit.isoformat()
-                          if candidate.time_exit is not None else None),
+            "time_exit": (
+                candidate.time_exit.isoformat() if candidate.time_exit is not None else None
+            ),
             "thesis": candidate.thesis,
             "evidence": candidate.evidence,
         }
@@ -163,13 +186,17 @@ class ThesisLayer:
             max_tokens=500,
             temperature=0.2,
             system=SYSTEM,
-            messages=[{"role": "user", "content":
-                       "Choose one of these immutable, pre-priced option "
-                       "candidates or abstain.\n\n"
-                       f"{json.dumps(payload, indent=2)}\n\n"
-                       "Return exactly {\"candidate_id\": \"<existing id>\", "
-                       "\"rationale\": \"<brief reason>\"} or use null for "
-                       "candidate_id to abstain. Return no other fields."}],
+            messages=[
+                {
+                    "role": "user",
+                    "content": "Choose one of these immutable, pre-priced option "
+                    "candidates or abstain.\n\n"
+                    f"{json.dumps(payload, indent=2)}\n\n"
+                    'Return exactly {"candidate_id": "<existing id>", '
+                    '"rationale": "<brief reason>"} or use null for '
+                    "candidate_id to abstain. Return no other fields.",
+                }
+            ],
         )
         text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
         return _extract_json_object(text)
@@ -182,20 +209,25 @@ class ThesisLayer:
         Read-only: this cannot produce an order under any circumstance.
         """
         recent = list(journal.read())[-60:]
-        events = [{"ts": e["ts"], "actor": e["actor"], "event": e["event"]}
-                  for e in recent]
+        events = [{"ts": e["ts"], "actor": e["actor"], "event": e["event"]} for e in recent]
         msg = self.client.messages.create(
-            model=self.model, max_tokens=700, temperature=0.3,
+            model=self.model,
+            max_tokens=700,
+            temperature=0.3,
             system="You write a short, factual end-of-day note for a trading "
-                   "agent's audit log. No speculation, no advice, no predictions. "
-                   "Describe what the system did and why, in plain English.",
-            messages=[{"role": "user", "content":
-                       f"Equity: {state.equity}. Positions: "
-                       f"{[p.symbol for p in state.positions]}.\n"
-                       f"Recent journal events:\n{json.dumps(events, indent=1)}\n\n"
-                       "Write 4-6 sentences summarising the session."}])
-        return "".join(b.text for b in msg.content
-                       if getattr(b, "type", "") == "text").strip()
+            "agent's audit log. No speculation, no advice, no predictions. "
+            "Describe what the system did and why, in plain English.",
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"Equity: {state.equity}. Positions: "
+                    f"{[p.symbol for p in state.positions]}.\n"
+                    f"Recent journal events:\n{json.dumps(events, indent=1)}\n\n"
+                    "Write 4-6 sentences summarising the session.",
+                }
+            ],
+        )
+        return "".join(b.text for b in msg.content if getattr(b, "type", "") == "text").strip()
 
 
 def _extract_json_object(text: str) -> dict:
@@ -209,7 +241,7 @@ def _extract_json_object(text: str) -> dict:
     if start == -1 or end == -1:
         return {}
     try:
-        parsed = json.loads(t[start:end + 1])
+        parsed = json.loads(t[start : end + 1])
         return parsed if isinstance(parsed, dict) else {}
     except json.JSONDecodeError:
         return {}

@@ -21,7 +21,6 @@ from __future__ import annotations
 import json
 import os
 from collections import Counter
-from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -29,8 +28,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from glassbox import config as C
 from glassbox.journal import Journal
-from glassbox.macro import (CALENDAR, MEASUREMENT_ET, MEASUREMENT_SOURCE,
-                            post_measurement_events)
+from glassbox.macro import CALENDAR, MEASUREMENT_ET, MEASUREMENT_SOURCE, post_measurement_events
 
 app = FastAPI(title="Glassbox", docs_url=None, redoc_url=None)
 
@@ -39,22 +37,41 @@ JOURNAL_PATH = os.getenv("GLASSBOX_JOURNAL_PATH", C.JOURNAL_PATH)
 # Events that carry the story. Anything else is plumbing and stays out of the
 # default timeline so the interesting entries are not buried.
 HEADLINE = {
-    "PLAN_APPROVED", "PLAN_REFUSED", "PLAN_DISCARDED_INVALID",
-    "ORDER_ACCEPTED", "ORDER_CANCELLED", "POSITION_CLOSED",
-    "EXIT_TRIGGERED", "KILL_SWITCH_TRIPPED", "KILL_SWITCH_REARMED",
-    "THESIS_COMPLETE", "THESIS_UNAVAILABLE", "DAILY_REVIEW",
-    "STARTUP", "TORN_ENTRY_DISCARDED", "ANCHOR_PUBLISHED", "JOB_FAILED",
-    "LEG_SUBMIT_FAILED", "EXIT_FAILED",
+    "PLAN_APPROVED",
+    "PLAN_REFUSED",
+    "PLAN_DISCARDED_INVALID",
+    "ORDER_ACCEPTED",
+    "ORDER_CANCELLED",
+    "POSITION_CLOSED",
+    "EXIT_TRIGGERED",
+    "KILL_SWITCH_TRIPPED",
+    "KILL_SWITCH_REARMED",
+    "THESIS_COMPLETE",
+    "THESIS_UNAVAILABLE",
+    "DAILY_REVIEW",
+    "STARTUP",
+    "TORN_ENTRY_DISCARDED",
+    "ANCHOR_PUBLISHED",
+    "JOB_FAILED",
+    "LEG_SUBMIT_FAILED",
+    "EXIT_FAILED",
 }
 
 TONE = {
-    "PLAN_REFUSED": "refuse", "PLAN_DISCARDED_INVALID": "refuse",
-    "KILL_SWITCH_TRIPPED": "alarm", "JOB_FAILED": "alarm",
-    "LEG_SUBMIT_FAILED": "alarm", "EXIT_FAILED": "alarm",
+    "PLAN_REFUSED": "refuse",
+    "PLAN_DISCARDED_INVALID": "refuse",
+    "KILL_SWITCH_TRIPPED": "alarm",
+    "JOB_FAILED": "alarm",
+    "LEG_SUBMIT_FAILED": "alarm",
+    "EXIT_FAILED": "alarm",
     "TORN_ENTRY_DISCARDED": "alarm",
-    "ORDER_ACCEPTED": "act", "POSITION_CLOSED": "act", "EXIT_TRIGGERED": "act",
+    "ORDER_ACCEPTED": "act",
+    "POSITION_CLOSED": "act",
+    "EXIT_TRIGGERED": "act",
     "PLAN_APPROVED": "approve",
-    "STARTUP": "sys", "ANCHOR_PUBLISHED": "sys", "STARTUP_": "sys",
+    "STARTUP": "sys",
+    "ANCHOR_PUBLISHED": "sys",
+    "STARTUP_": "sys",
 }
 
 
@@ -68,7 +85,7 @@ def _load() -> list[dict]:
             try:
                 out.append(json.loads(line))
             except json.JSONDecodeError:
-                continue          # a torn tail is expected; never 500 on it
+                continue  # a torn tail is expected; never 500 on it
     return out
 
 
@@ -93,7 +110,7 @@ def _summary(records: list[dict]) -> dict:
                 except (TypeError, ValueError):
                     pass
 
-    ok, why = (Journal(JOURNAL_PATH).verify() if records else (True, "no entries yet"))
+    ok, why = Journal(JOURNAL_PATH).verify() if records else (True, "no entries yet")
     return {
         "entries": len(records),
         "plans_proposed": proposed,
@@ -130,6 +147,7 @@ def _equity_series(records: list[dict]) -> list[dict]:
 
 # ----------------------------------------------------------------- JSON API
 
+
 @app.get("/api/summary")
 def api_summary() -> JSONResponse:
     return JSONResponse(_summary(_load()))
@@ -160,6 +178,7 @@ def healthz() -> PlainTextResponse:
 
 
 # ----------------------------------------------------------------- the page
+
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> HTMLResponse:
@@ -408,12 +427,18 @@ wire(); calendar(); tick(); setInterval(tick, 20000);
 @app.get("/api/calendar")
 def api_calendar() -> JSONResponse:
     post = {e.name for e in post_measurement_events()}
-    return JSONResponse({
-        "measurement": MEASUREMENT_ET.strftime("%a %d %b %Y %H:%M ET"),
-        "source": MEASUREMENT_SOURCE,
-        "events": [{"name": e.name,
+    return JSONResponse(
+        {
+            "measurement": MEASUREMENT_ET.strftime("%a %d %b %Y %H:%M ET"),
+            "source": MEASUREMENT_SOURCE,
+            "events": [
+                {
+                    "name": e.name,
                     "when": e.when.strftime("%a %d %b %H:%M"),
                     "tier": e.tier,
-                    "in_window": e.name not in post}
-                   for e in CALENDAR],
-    })
+                    "in_window": e.name not in post,
+                }
+                for e in CALENDAR
+            ],
+        }
+    )
