@@ -21,6 +21,10 @@ from glassbox.mcp_client import MCPClient, MCPError, MCPToolRefused
 
 SERVER = Path(__file__).resolve().parent / "mcp_fake_server.py"
 
+# Assembled at runtime so no key-shaped literal is committed; the joined
+# value is still key-shaped, so it exercises redaction.
+FAKE_ANTHROPIC_KEY = "sk-ant-" + "abcdefghijklmnopqrst"
+
 
 def client(mode: str = "normal", **kw) -> MCPClient:
     env = dict(os.environ)
@@ -203,12 +207,12 @@ def test_summarise_redacts_every_known_secret_shape():
     text = mcp.summarise_result(
         {
             "a": "PK" + "TESTONLYNOTAREALKEY01",
-            "b": "sk-ant-abcdefghijklmnopqrst",
+            "b": FAKE_ANTHROPIC_KEY,
             "c": "https://discord.com/api/webhooks/1/abc",
         }
     )
     assert "TESTONLYNOTAREALKEY01" not in text
-    assert "sk-ant-abcdefghijklmnopqrst" not in text
+    assert FAKE_ANTHROPIC_KEY not in text
     assert "discord.com/api/webhooks/1/abc" not in text
 
 

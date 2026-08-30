@@ -136,8 +136,15 @@ def test_no_committed_file_looks_like_a_live_credential():
     """
     import subprocess
 
+    # --cached --others --exclude-standard, not plain ls-files: a brand-new
+    # file is untracked, so a tracked-only scan passes right up until the
+    # moment the file is committed -- which is exactly when it matters.
     tracked = subprocess.run(
-        ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout.split()
 
     offenders = []
