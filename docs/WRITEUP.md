@@ -55,6 +55,11 @@ Around it sit the gates that matter once real orders exist:
   new entries. Exits sell the exact owned quantity under a deterministic ID;
   symbol-wide liquidation is never used, and "flat" requires a terminal order
   **and** a zero venue quantity.
+- **Option-surface gates.** Alpaca publishes Greeks and implied volatility;
+  a long strangle that aggregates net short gamma or vega is mislabelled and
+  refused, as is convexity bought at implied volatility rich enough that the
+  post-event collapse outweighs a correct directional call, or theta decay
+  that outruns the event. Missing Greeks abstain rather than pass.
 - **Latching kill switch** on drawdown, re-armed only by a human.
 - **Crash recovery.** State is written atomically and checksummed; corruption
   refuses to heal to empty. One scheduler may own a state directory.
@@ -108,7 +113,7 @@ premise of the project.
 
 ## What is proven, and what is not
 
-Verified: 548 automated tests, a 13/13 crash-recovery drill, format, lint,
+Verified: 552 automated tests, a 13/13 crash-recovery drill, format, lint,
 types, hash-locked dependencies, and a green CI on every commit.
 
 Not claimed: no live paper order has been placed from this repository, no CLI

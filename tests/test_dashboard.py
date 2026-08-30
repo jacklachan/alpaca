@@ -313,3 +313,80 @@ def test_lineage_limit_is_bounded(tmp_path, monkeypatch):
     client = TestClient(app_module.app)
     assert len(client.get("/api/lineage?limit=5").json()) == 5
     assert len(client.get("/api/lineage?limit=9999").json()) <= 50
+
+
+def test_verification_endpoint_reports_every_check(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    app_module = _journal_with(tmp_path, monkeypatch, [("s", "STARTUP", {"equity": "100000"})])
+    body = TestClient(app_module.app).get("/api/verification").json()
+
+    assert {"ok", "passed", "failed", "skipped", "checks"} <= set(body)
+    names = [c["name"] for c in body["checks"]]
+    assert "journal hash chain" in names
+    assert "AI only ever selected an offered candidate" in names
+
+
+def test_verification_endpoint_reports_a_broken_chain_as_failed(tmp_path, monkeypatch):
+    import json as _json
+
+    from fastapi.testclient import TestClient
+
+    app_module = _journal_with(
+        tmp_path,
+        monkeypatch,
+        [("s", "STARTUP", {"equity": "100000"}), ("s", "HEARTBEAT", {"equity": "101000"})],
+    )
+    path = tmp_path / "journal.jsonl"
+    lines = path.read_text().splitlines()
+    record = _json.loads(lines[0])
+    record["payload"]["equity"] = "999999"
+    lines[0] = _json.dumps(record)
+    path.write_text("\n".join(lines) + "\n")
+
+    body = TestClient(app_module.app).get("/api/verification").json()
+    assert body["ok"] is False
+    chain = next(c for c in body["checks"] if c["name"] == "journal hash chain")
+    assert chain["status"] == "FAIL"
+
+
+def test_lineage_shows_the_kernel_verdict_on_a_candidate_not_taken(tmp_path, monkeypatch):
+    """The counterfactual is the evidence that the model chose inside a
+    pre-vetted set, so it has to be visible."""
+    from fastapi.testclient import TestClient
+
+    app_module = _journal_with(
+        tmp_path,
+        monkeypatch,
+        [
+            ("s", "CANDIDATE_SET_BUILT", {"plan_id": "gbp-1", "count": 2}),
+            (
+                "kernel.shadow",
+                "CANDIDATE_KERNEL_VERDICT",
+                {"plan_id": "gbp-2", "approved": False, "reason": "concentration cap"},
+            ),
+        ],
+    )
+    rows = TestClient(app_module.app).get("/api/lineage").json()
+    steps = {s["event"]: s for chain in rows for s in chain["steps"]}
+
+    assert "CANDIDATE_KERNEL_VERDICT" in steps
+    assert "would refuse" in steps["CANDIDATE_KERNEL_VERDICT"]["detail"]
+
+
+def test_lineage_shows_a_surface_refusal(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    app_module = _journal_with(
+        tmp_path,
+        monkeypatch,
+        [
+            (
+                "strategy.event_vol",
+                "CANDIDATE_SURFACE_REFUSED",
+                {"plan_id": "gbp-9", "reason": "position is not net long gamma (-0.05)"},
+            )
+        ],
+    )
+    rows = TestClient(app_module.app).get("/api/lineage").json()
+    assert "not net long gamma" in rows[0]["steps"][0]["detail"]

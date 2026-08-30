@@ -169,6 +169,8 @@ def _equity_series(records: list[dict]) -> list[dict]:
 #: refusals, which are the steps that prove the AI could not act alone.
 LINEAGE_STAGES = (
     ("CANDIDATE_SET_BUILT", "deterministic candidates built"),
+    ("CANDIDATE_SURFACE_REFUSED", "option surface refused the candidate"),
+    ("CANDIDATE_KERNEL_VERDICT", "kernel verdict on a candidate not taken"),
     ("CANDIDATE_SELECTED", "AI selected one candidate id"),
     ("CANDIDATE_ABSTAINED", "AI abstained"),
     ("CANDIDATE_SELECTION_INVALID", "AI response refused"),
@@ -249,6 +251,11 @@ def _lineage(records: list[dict], limit: int = 12) -> list[dict]:
 
 def _lineage_detail(event: str, payload: dict) -> str:
     """One short, safe line per step. Never raw provider or model text."""
+    if event == "CANDIDATE_KERNEL_VERDICT":
+        outcome = "would approve" if payload.get("approved") else "would refuse"
+        return f"{payload.get('plan_id', '')}: {outcome} - {str(payload.get('reason', ''))[:90]}"
+    if event == "CANDIDATE_SURFACE_REFUSED":
+        return str(payload.get("reason", ""))[:140]
     if event == "CANDIDATE_SET_BUILT":
         return f"{payload.get('count', '?')} candidates, set hash {str(payload.get('manifest_hash', ''))[:12]}"
     if event == "CANDIDATE_SELECTED":
@@ -291,6 +298,25 @@ def api_journal(limit: int = 300, all_events: bool = False) -> JSONResponse:
 @app.get("/api/equity")
 def api_equity() -> JSONResponse:
     return JSONResponse(_equity_series(_load()))
+
+
+@app.get("/api/verification")
+def api_verification() -> JSONResponse:
+    """The same checks tools/verify_submission.py runs, for the page.
+
+    Local artifacts only: no credentials, no network, nothing mutated.
+    """
+    from glassbox import verification as V
+
+    root = Path(__file__).resolve().parents[1]
+    report = V.run_all(
+        root,
+        journal_path=Path(JOURNAL_PATH),
+        manifest_path=root / "state" / "release.json",
+        ledger_path=Path(C.LEDGER_STATE_FILE),
+        tracked=(),
+    )
+    return JSONResponse(report.as_dict())
 
 
 @app.get("/api/performance")
@@ -413,6 +439,13 @@ td{padding:8px 10px;border-bottom:1px solid var(--rule)}
 
   <h2>Account equity</h2>
   <div class="card"><div id="chart"></div></div>
+
+  <h2>Verify this yourself</h2>
+  <p class="sub" style="margin:0 0 10px">The same checks
+  <code>python tools/verify_submission.py</code> runs, against local artifacts
+  only. A <b>skip</b> means the evidence does not exist yet &mdash; it is never
+  a waived check.</p>
+  <div class="card" id="verify"><div class="empty">loading&hellip;</div></div>
 
   <h2>Risk-adjusted performance</h2>
   <div class="card">
@@ -599,6 +632,23 @@ function perf(p){
     `Volatility ${Number(p.volatility_pct).toFixed(1)}% annualised &middot; source: ${esc(p.source||"journal")}`;
 }
 
+function verification(v){
+  const tone = {PASS:"var(--pos)", FAIL:"var(--neg)", SKIP:"var(--muted)"};
+  const head = v.ok
+    ? `<b style="color:var(--pos)">VERIFIED</b>`
+    : `<b style="color:var(--neg)">CONTRADICTION FOUND</b>`;
+  document.getElementById("verify").innerHTML = `
+    <div style="margin-bottom:10px">${head}
+      <span class="n2">${v.passed} passed &middot; ${v.failed} failed &middot;
+      ${v.skipped} not yet applicable</span></div>
+    ${v.checks.map(c=>`
+      <div style="padding:6px 0;border-top:1px solid var(--rule)">
+        <span class="mono" style="color:${tone[c.status]||"inherit"}">[${esc(c.status)}]</span>
+        ${esc(c.name)}
+        ${c.detail?`<div class="n2" style="margin-left:22px">${esc(c.detail)}</div>`:""}
+      </div>`).join("")}`;
+}
+
 function lineage(rows){
   const el = document.getElementById("lineage");
   if(!rows.length){ el.innerHTML = '<div class="empty">no decisions recorded yet</div>'; return; }
@@ -616,10 +666,10 @@ function lineage(rows){
 
 async function tick(){
   try{
-    const [s,v,e,p,l]=await Promise.all([
+    const [s,v,e,p,l,ver]=await Promise.all([
       j("/api/summary"),j("/api/verify"),j("/api/equity"),
-      j("/api/performance"),j("/api/lineage")]);
-    stats(s); chain(v,s); chart(e); perf(p); lineage(l); await timeline();
+      j("/api/performance"),j("/api/lineage"),j("/api/verification")]);
+    stats(s); chain(v,s); chart(e); perf(p); lineage(l); verification(ver); await timeline();
   }catch(err){ console.error(err); }
 }
 wire(); calendar(); tick(); setInterval(tick, 20000);

@@ -101,6 +101,12 @@ candidate, or attempts to add trade fields, the scored cycle abstains.
   reported with the sample size behind them and stay marked indicative below
   twenty observations: an annualised Sharpe from five daily points is not a
   result, and publishing it as one would contradict everything else here.
+- Long-convexity candidates are gated on the option surface Alpaca
+  publishes. A position that aggregates net short gamma or vega is not the
+  trade its own thesis describes and is refused; so is convexity bought at
+  implied volatility high enough that the post-event collapse outweighs the
+  move, or decay that outruns the event. Missing Greeks record their absence
+  and abstain rather than being rendered as healthy Greeks.
 - The optional trade-update stream is a latency hint, never an authority. A
   REST snapshot always wins, and a stream gap blocks new entries until REST
   reconciles.
@@ -168,6 +174,7 @@ glassbox/
   kernel.py       deterministic 13-invariant risk review
   execute.py      intent journal, reconciliation, fill/cancel/reprice state machine
   order_lifecycle.py  pure reducer over observed order states
+  greeks.py           deterministic option-surface gates (delta/gamma/theta/vega/IV)
   mcp_client.py       read-only MCP client that cannot place an order
   verification.py     checks a third party can run against our claims
   performance.py      equity-curve metrics with sample-size caveats
