@@ -9,13 +9,14 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 
 from glassbox import config as C
 from glassbox.journal import Journal
 from glassbox.kernel import PortfolioState, Position
-from glassbox.manage import KillSwitch, PositionManager
+from glassbox.manage import ExitOrder, KillSwitch, PositionManager
 
 EXP = date(2026, 9, 8)
 
@@ -283,3 +284,161 @@ def test_corrupt_exit_targets_stop_manager_construction(tmp_path, journal):
 
     with pytest.raises(RuntimeError, match="targets"):
         PositionManager(FakeBroker(), journal, kill, targets_path=targets)
+
+
+# -- ledger-backed exact exits (Task E) ---------------------------------------
+
+
+class ExitBroker:
+    """Records submits and confirms them terminal. Never closes symbol-wide."""
+
+    def __init__(self, fill: str = "full", terminal_filled: str | None = None):
+        self.submitted: list[dict] = []
+        self.closed: list[str] = []
+        self.confirmed: list[str] = []
+        self.fill = fill
+        # Alpaca reports filled_qty cumulatively per order, so the terminal
+        # read is the total for that order -- never less than an earlier read.
+        self.terminal_filled = terminal_filled if terminal_filled is not None else fill
+
+    def close_position(self, symbol):  # pragma: no cover - must never run here
+        self.closed.append(symbol)
+
+    def submit(self, *, symbol, qty, side, client_order_id, limit_price=None, instrument="equity"):
+        self.submitted.append(
+            {"symbol": symbol, "qty": Decimal(str(qty)), "side": side, "coid": client_order_id}
+        )
+        filled = Decimal(str(qty)) if self.fill == "full" else Decimal(self.fill)
+        return SimpleNamespace(
+            id=f"broker-{len(self.submitted)}",
+            client_order_id=client_order_id,
+            symbol=symbol,
+            status="filled" if filled >= Decimal(str(qty)) else "partially_filled",
+            filled_qty=filled,
+            filled_avg_price="4.00",
+        )
+
+    def cancel_and_confirm(self, order_id, client_order_id, **kw):
+        self.confirmed.append(client_order_id)
+        return SimpleNamespace(
+            id=order_id,
+            client_order_id=client_order_id,
+            status="canceled",
+            filled_qty=Decimal(self.terminal_filled),
+            filled_avg_price="4.00",
+        )
+
+
+def _ledger_manager(tmp_path, journal, broker, *, owned: str | None = "10"):
+    from glassbox.position_ledger import PositionLedger
+
+    book = PositionLedger(account_id="PA-1", environment="scored")
+    if owned is not None:
+        book.record_entry_fill(
+            plan_id="gbp-1",
+            symbol=occ(),
+            client_order_id="gbx-entry-1",
+            filled_qty=Decimal(owned),
+            side="buy",
+        )
+    ks = KillSwitch(tmp_path / "kill.json", journal=journal)
+    manager = PositionManager(
+        broker,
+        journal,
+        ks,
+        targets_path=tmp_path / "targets.json",
+        ledger=book,
+        ledger_path=tmp_path / "ledger.json",
+    )
+    return manager, book
+
+
+def test_exit_sells_the_exact_owned_quantity_and_never_closes_symbol_wide(tmp_path, journal):
+    broker = ExitBroker()
+    manager, book = _ledger_manager(tmp_path, journal, broker)
+
+    manager._close(ExitOrder(symbol=occ(), qty=Decimal(10), reason="target"))
+
+    assert broker.closed == [], "a symbol-wide close ran on the scored path"
+    assert len(broker.submitted) == 1
+    submitted = broker.submitted[0]
+    assert submitted["qty"] == Decimal(10)
+    assert submitted["side"] == "sell"
+    assert submitted["coid"].startswith("gbx-x-")
+    assert book.entries[occ()].signed_qty == Decimal(0)
+
+
+def test_exit_intent_is_durable_before_submit(tmp_path, journal):
+    """The exit client id must be on disk before the order is sent, so a crash
+    in between finds the same id instead of minting a second order."""
+    ledger_path = tmp_path / "ledger.json"
+    seen: dict[str, object] = {}
+
+    class CrashingBroker(ExitBroker):
+        def submit(self, **kw):
+            from glassbox.position_ledger import PositionLedger
+
+            # What is on disk at the moment of the mutation?
+            saved = PositionLedger.load(ledger_path, account_id="PA-1", environment="scored")
+            seen["exit_coids"] = saved.entries[occ()].exit_coids
+            return super().submit(**kw)
+
+    broker = CrashingBroker()
+    manager, _ = _ledger_manager(tmp_path, journal, broker)
+    manager._close(ExitOrder(symbol=occ(), qty=Decimal(10), reason="target"))
+
+    assert seen["exit_coids"], "the exit intent was not durable before submit"
+    assert seen["exit_coids"] == (broker.submitted[0]["coid"],)
+
+
+def test_exit_refuses_exposure_the_strategy_does_not_own(tmp_path, journal):
+    broker = ExitBroker()
+    manager, _ = _ledger_manager(tmp_path, journal, broker, owned=None)
+
+    manager._close(ExitOrder(symbol=occ(), qty=Decimal(10), reason="target"))
+
+    assert broker.submitted == []
+    assert broker.closed == [], "foreign exposure was liquidated"
+    events = [e["event"] for e in journal.read()]
+    assert "EXIT_REFUSED_UNOWNED" in events
+
+
+def test_partial_exit_cancels_residual_and_preserves_remaining_target(tmp_path, journal):
+    """Six of ten sold, residual cancelled terminal. Four remain ours, and the
+    next tick must be free to exit them."""
+    broker = ExitBroker(fill="6", terminal_filled="6")
+    manager, book = _ledger_manager(tmp_path, journal, broker)
+
+    manager._close(ExitOrder(symbol=occ(), qty=Decimal(10), reason="target"))
+
+    assert broker.confirmed, "the residual was never confirmed terminal"
+    assert book.entries[occ()].signed_qty == Decimal(4)
+    assert book.entries[occ()].exit_qty == Decimal(4)
+    assert occ() not in manager._exits_sent, "a partial exit blocked the retry"
+
+    terminal = [e for e in journal.read() if e["event"] == "EXIT_ORDER_TERMINAL"]
+    assert terminal[-1]["payload"]["remaining_qty"] == "4"
+
+
+def test_late_exit_fill_after_cancel_reconciles_to_exact_flat(tmp_path, journal):
+    """Six filled on the working order, four more on the way out during the
+    cancel, so the terminal read reports ten. The ledger must land at zero."""
+    broker = ExitBroker(fill="6", terminal_filled="10")
+    manager, book = _ledger_manager(tmp_path, journal, broker)
+
+    manager._close(ExitOrder(symbol=occ(), qty=Decimal(10), reason="target"))
+
+    assert book.entries[occ()].signed_qty == Decimal(0)
+    assert book.is_flat(occ(), venue_qty=Decimal(0), exit_orders_terminal=True) is True
+
+
+def test_second_exit_attempt_uses_a_distinct_deterministic_id(tmp_path, journal):
+    broker = ExitBroker(fill="6", terminal_filled="6")
+    manager, _ = _ledger_manager(tmp_path, journal, broker)
+
+    manager._close(ExitOrder(symbol=occ(), qty=Decimal(10), reason="target"))
+    manager._close(ExitOrder(symbol=occ(), qty=Decimal(4), reason="target"))
+
+    first, second = broker.submitted[0]["coid"], broker.submitted[1]["coid"]
+    assert first != second
+    assert broker.submitted[1]["qty"] == Decimal(4)

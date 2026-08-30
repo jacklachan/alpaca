@@ -20,12 +20,19 @@ from decimal import Decimal
 from pathlib import Path
 
 from . import config as C
+from .ids import exit_client_order_id
 from .kernel import PortfolioState, Position
 from .macro import MEASUREMENT_ET
+from .order_lifecycle import OrderObservation, apply, initial_state
+from .position_ledger import PositionLedger
 from .schema import OptionContract
 from .state import StateCorrupt, atomic_write_json, read_json
 
 log = logging.getLogger("glassbox.manage")
+
+
+class UnownedExposure(RuntimeError):
+    """Refusing to close exposure this strategy cannot prove it owns."""
 
 
 @dataclass
@@ -104,10 +111,17 @@ class PositionManager:
         journal,
         kill_switch: KillSwitch | None = None,
         targets_path: str | Path | None = None,
+        ledger: PositionLedger | None = None,
+        ledger_path: str | Path | None = None,
     ):
         self.broker = broker
         self.journal = journal
         self.kill = kill_switch or KillSwitch(journal=journal)
+        # When a ledger is supplied the manager exits exactly what this
+        # strategy owns. Without one it falls back to the development
+        # symbol-wide path, which must never run on the scored account.
+        self.ledger = ledger
+        self._ledger_path = Path(ledger_path) if ledger_path else None
         # AUDIT NOTE: this was an in-memory dict and nothing rebuilt it. After
         # any restart every registered stop, target and time exit was silently
         # gone, leaving positions open with no exit logic at all -- only the
@@ -124,6 +138,7 @@ class PositionManager:
         # one-minute loop, the 14:30 expiry close-out could issue ~90 duplicate
         # market orders for one contract.
         self._exits_sent: set[str] = set()
+        self._exit_attempts: dict[str, int] = {}
 
     # -- persistence -----------------------------------------------------------
 
@@ -329,7 +344,10 @@ class PositionManager:
             {"symbol": e.symbol, "qty": str(e.qty), "reason": e.reason, "urgency": e.urgency},
         )
         try:
-            self.broker.close_position(e.symbol)
+            if self.ledger is not None:
+                self._close_exact(e)
+            else:
+                self.broker.close_position(e.symbol)
         except Exception as exc:
             # A failed close must be retryable, so release the guard.
             self._exits_sent.discard(e.symbol)
@@ -337,6 +355,96 @@ class PositionManager:
                 "manage", "EXIT_FAILED", {"symbol": e.symbol, "reason": e.reason, "error": str(exc)}
             )
             log.error("failed to close %s: %s", e.symbol, exc)
+
+    def _close_exact(self, e: ExitOrder) -> None:
+        """Sell exactly what this strategy owns, under a deterministic id.
+
+        `close_position` liquidates whatever the account holds in the contract.
+        If anything else in the account is in the same contract, a symbol-wide
+        close takes it too, and its acceptance proves nothing about our
+        quantity. So: exact size, deterministic id, intent durable before the
+        mutation, and flatness proven from a terminal order plus a zero venue
+        quantity rather than from the close being accepted.
+        """
+        assert self.ledger is not None
+        entry = self.ledger.entries.get(e.symbol)
+        if entry is None:
+            # Exposure we never recorded is not ours to close.
+            self.journal.append(
+                "manage",
+                "EXIT_REFUSED_UNOWNED",
+                {"symbol": e.symbol, "reason": e.reason},
+            )
+            raise UnownedExposure(f"{e.symbol} is not in the strategy ledger")
+
+        qty = entry.exit_qty
+        if qty <= 0:
+            self.journal.append("manage", "EXIT_ALREADY_FLAT", {"symbol": e.symbol})
+            return
+
+        coid = exit_client_order_id(entry.plan_id, e.symbol, self._exit_attempts.get(e.symbol, 0))
+
+        # Durable before the mutation: a crash here must find the same id.
+        self.ledger.register_exit_intent(e.symbol, coid)
+        if self._ledger_path is not None:
+            self.ledger.save(self._ledger_path)
+        self.journal.append(
+            "manage",
+            "EXIT_INTENT",
+            {
+                "symbol": e.symbol,
+                "plan_id": entry.plan_id,
+                "qty": str(qty),
+                "side": "sell",
+                "client_order_id": coid,
+                "reason": e.reason,
+            },
+        )
+
+        order = self.broker.submit(
+            symbol=e.symbol,
+            qty=qty,
+            side="sell",
+            client_order_id=coid,
+            instrument="option",
+        )
+
+        state = apply(
+            initial_state(coid, qty, broker_order_id=str(getattr(order, "id", ""))),
+            OrderObservation.from_order(order, sequence=0),
+        )
+        if not state.terminal:
+            final = self.broker.cancel_and_confirm(state.broker_order_id, coid)
+            state = apply(state, OrderObservation.from_order(final, sequence=1))
+
+        if state.filled_qty > 0:
+            self.ledger.record_exit_fill(
+                symbol=e.symbol,
+                client_order_id=coid,
+                filled_qty=state.filled_qty,
+                side="sell",
+            )
+        self._exit_attempts[e.symbol] = self._exit_attempts.get(e.symbol, 0) + 1
+        if self._ledger_path is not None:
+            self.ledger.save(self._ledger_path)
+
+        remaining = self.ledger.entries[e.symbol].exit_qty
+        self.journal.append(
+            "manage",
+            "EXIT_ORDER_TERMINAL",
+            {
+                "symbol": e.symbol,
+                "client_order_id": coid,
+                "status": state.status,
+                "filled_qty": str(state.filled_qty),
+                "remaining_qty": str(remaining),
+                "terminal": state.terminal,
+            },
+        )
+        if remaining > 0:
+            # A partial exit is not a failure, but it is not flat either. Let
+            # the next tick size a fresh exit from what is left.
+            self._exits_sent.discard(e.symbol)
 
 
 def measurement_countdown(now: datetime) -> str:

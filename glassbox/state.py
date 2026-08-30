@@ -83,3 +83,85 @@ def atomic_write_json(path: str | Path, value: Any) -> None:
                 temporary.unlink(missing_ok=True)
             except OSError:
                 pass
+
+
+class StateLocked(StateError):
+    """Another live process already owns this state directory."""
+
+
+class ProcessLock:
+    """Exclusive ownership of one state directory.
+
+    Two schedulers against one account is not a degraded mode, it is two
+    independent decision loops reconciling against each other's orders. Refusing
+    to start is strictly safer, so acquisition is exclusive-create and failure
+    is fatal by default.
+
+    A lock left behind by a killed process is detected by probing the recorded
+    pid, not by age: a stale file must not outlive its owner, and a live owner
+    must never be evicted because it was slow.
+    """
+
+    def __init__(self, path: str | Path):
+        self.path = Path(path)
+        self._descriptor: int | None = None
+
+    def _owner_alive(self) -> bool:
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+            pid = int(raw["pid"])
+        except Exception:
+            # Unreadable lock: treat as held. Fail closed.
+            return True
+        if pid == os.getpid():
+            return True
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            # Exists, owned by another user.
+            return True
+        except OSError:
+            return True
+        return True
+
+    def acquire(self) -> ProcessLock:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self._descriptor = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            if self._owner_alive():
+                raise StateLocked(
+                    f"{self.path}: another scheduler already owns this state directory"
+                ) from None
+            # The recorded owner is gone. Reclaim, then retry exactly once.
+            try:
+                self.path.unlink()
+            except FileNotFoundError:
+                pass
+            try:
+                self._descriptor = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            except FileExistsError:
+                raise StateLocked(f"{self.path}: lost the race to reclaim a stale lock") from None
+        payload = json.dumps({"pid": os.getpid()}).encode("utf-8")
+        os.write(self._descriptor, payload)
+        os.fsync(self._descriptor)
+        return self
+
+    def release(self) -> None:
+        if self._descriptor is not None:
+            try:
+                os.close(self._descriptor)
+            finally:
+                self._descriptor = None
+        try:
+            self.path.unlink()
+        except FileNotFoundError:
+            pass
+
+    def __enter__(self) -> ProcessLock:
+        return self.acquire()
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.release()

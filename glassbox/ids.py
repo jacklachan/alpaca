@@ -33,3 +33,17 @@ def client_order_id(plan_id: str, leg_index: int = 0, *, event: bool = False) ->
     """
     digest = hashlib.sha256(f"{plan_id}:{leg_index}".encode()).hexdigest()
     return f"{EVENT_PREFIX if event else PREFIX}{digest[:32]}"
+
+
+EXIT_PREFIX = "gbx-x-"
+
+
+def exit_client_order_id(plan_id: str, symbol: str, attempt: int = 0) -> str:
+    """Deterministic identity for one exit order on one contract.
+
+    Derived, not minted: a crash between registering the intent and submitting
+    must produce the same id on restart, so the recovery path looks the order
+    up instead of sending a second one.
+    """
+    digest = hashlib.sha256(f"exit:{plan_id}:{symbol}:{attempt}".encode()).hexdigest()
+    return f"{EXIT_PREFIX}{digest[:26]}"
