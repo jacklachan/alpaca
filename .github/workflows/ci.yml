@@ -83,6 +83,9 @@ jobs:
           print(f"sleeves OK: {total}")
           PY
 
+      - name: Submission claims verify against local artifacts
+        run: python tools/verify_submission.py --skip-claims
+
       - name: Measurement date matches Alpaca's guidelines
         run: |
           python - <<'PY'

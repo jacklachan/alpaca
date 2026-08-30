@@ -24,10 +24,14 @@ gates are deliberately still open:
 - **CLI proof pending.** `tools/capture_alpaca_proof.py` builds and captures
   read-only Alpaca CLI evidence and is tested against fakes, but no proof
   bundle has been captured from a real CLI against a real account.
+- **MCP client built, official-server run pending.** `glassbox/mcp_client.py`
+  is a read-only MCP client exercised end-to-end against a real MCP server
+  subprocess over stdio in the test suite. It has not yet been run against the
+  official Alpaca MCP server with live credentials.
 
 Do not describe any gate as complete until its broker or VPS evidence is in
 the journal. The programmatic integration is `alpaca-py` against the Alpaca
-paper Trading and Data APIs. No MCP integration exists or is claimed.
+paper Trading and Data APIs.
 
 ## Scored data flow
 
@@ -164,6 +168,8 @@ glassbox/
   kernel.py       deterministic 13-invariant risk review
   execute.py      intent journal, reconciliation, fill/cancel/reprice state machine
   order_lifecycle.py  pure reducer over observed order states
+  mcp_client.py       read-only MCP client that cannot place an order
+  verification.py     checks a third party can run against our claims
   performance.py      equity-curve metrics with sample-size caveats
   trade_stream.py     optional trade-update hint; REST stays authoritative
   position_ledger.py  per-contract ownership and exact venue reconciliation
@@ -176,9 +182,25 @@ glassbox/
 dashboard/app.py  credential-free, read-only journal dashboard
 tools/live_check.py           bounded dev venue proof
 tools/capture_alpaca_proof.py read-only Alpaca CLI evidence capture
+tools/verify_mcp_surface.py   MCP discovery, refusal proof, read-only capture
+tools/verify_submission.py    one-command verification of every claim
 tools/build_notices.py        regenerates THIRD_PARTY_NOTICES.md from the lock
 deploy/setup.sh   exact-SHA deployment
 ```
+
+## Verify it yourself
+
+```bash
+python tools/verify_submission.py
+```
+
+No credentials, no network, nothing mutated. It re-derives what can be
+re-derived and inspects what cannot: the journal hash chain, that every AI
+selection names a candidate that was actually offered, that no recorded model
+response carried an executable field, release-manifest integrity, position
+ledger checksums, dependency pinning, and whether the CLI/MCP proof bundles
+exist. A `SKIP` means the evidence does not exist yet - it is never a waived
+check. The same command runs in CI on every commit.
 
 ## Submission write-up
 

@@ -1,8 +1,8 @@
 PYTHON ?= python
 
-.PHONY: verify format-check lint type test kernel crash env-parity compile dashboard-check notices
+.PHONY: verify format-check lint type test kernel crash env-parity compile dashboard-check notices submission
 
-verify: format-check lint type test kernel crash env-parity compile dashboard-check notices
+verify: format-check lint type test kernel crash env-parity compile dashboard-check notices submission
 
 format-check:
 	$(PYTHON) -m ruff format --check .
@@ -34,3 +34,8 @@ dashboard-check:
 
 notices:
 	$(PYTHON) tools/build_notices.py --check
+
+# The same verification a judge can run. Kept in the gate so the claims
+# cannot drift from the artifacts between releases.
+submission:
+	$(PYTHON) tools/verify_submission.py --skip-claims

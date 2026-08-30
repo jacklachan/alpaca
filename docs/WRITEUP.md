@@ -68,9 +68,33 @@ order submission with deterministic client order IDs, order and position
 reconciliation, and `get_portfolio_history` for equity. A read-only **Alpaca
 CLI** evidence capture tool builds commands from an allowlist and refuses any
 mutating token before a process starts, so it cannot become a second order
-path. An optional trade-update stream is implemented as a *hint*: REST
-snapshots always win, and a stream gap blocks new entries until REST
-reconciles.
+path.
+
+A read-only **MCP client** is implemented the inverse of a normal one. The
+official server's default toolset includes `place_option_market_order`,
+`close_position` and `cancel_orders`; rather than trusting configuration to
+hide them, the client declares the only tools it will ever call, discovers what
+the server actually exposes, and enforces three independent barriers: an exact
+allowlist, a mutating-verb scan that runs even for allowlisted names, and a
+discovery gate so no path reaches a call without inspection. Its tests run
+against a real MCP server subprocess that advertises those dangerous tools on
+purpose. It has not yet been run against the official Alpaca MCP server with
+live credentials.
+
+An optional trade-update stream is implemented as a *hint*: REST snapshots
+always win, and a stream gap blocks new entries until REST reconciles.
+
+## Verify it without trusting us
+
+`python tools/verify_submission.py` re-derives what can be re-derived and
+inspects what cannot, using local artifacts only. It checks the journal hash
+chain, that **every AI selection names a candidate that was actually offered**,
+that no recorded model response carried an executable field, release-manifest
+integrity, ledger checksums, and dependency pinning. That second check turns
+the central design claim into something falsifiable: if it ever fails on real
+evidence, the model authored a trade. Every offered candidate also carries an
+independent kernel verdict, including the ones the model declined, so the
+alternatives are on the record too.
 
 ## Performance measurement
 
@@ -84,7 +108,7 @@ premise of the project.
 
 ## What is proven, and what is not
 
-Verified: 522 automated tests, a 13/13 crash-recovery drill, format, lint,
+Verified: 523 automated tests, a 13/13 crash-recovery drill, format, lint,
 types, hash-locked dependencies, and a green CI on every commit.
 
 Not claimed: no live paper order has been placed from this repository, no CLI

@@ -235,3 +235,18 @@ def test_the_writeup_keeps_its_unproven_gates_visible():
     text = WRITEUP.read_text(encoding="utf-8").lower()
     assert "no live paper order" in text
     assert "no mcp integration" in text
+
+
+def test_any_mcp_mention_keeps_the_official_server_caveat():
+    """The MCP client is real and tested against a real server subprocess, but
+    it has not been run against Alpaca's official server. That distinction is
+    the difference between an accurate claim and a disqualifying one."""
+    for name in ("README.md", "docs/WRITEUP.md"):
+        # Collapse whitespace: a claim guard must not be defeated by reflowing
+        # a paragraph, which is the most likely way this text gets edited.
+        text = re.sub(r"\s+", " ", _doc(name).lower())
+        if "mcp" not in text:
+            continue
+        assert "not yet been run against the official" in text, (
+            f"{name} mentions MCP without the official-server caveat"
+        )
