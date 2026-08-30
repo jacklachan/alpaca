@@ -34,6 +34,7 @@ from decimal import Decimal
 from . import config as C
 from .broker import BrokerError
 from .ids import client_order_id
+from .order_lifecycle import OrderObservation
 from .schema import TradePlan, Verdict
 
 log = logging.getLogger("glassbox.execute")
@@ -467,11 +468,18 @@ class ExecutionEngine:
 
     @staticmethod
     def _refresh_leg(r: LegResult, order) -> None:
-        """Copy the broker order's current fill and normalized status."""
-        r.current_qty = Decimal(str(getattr(order, "filled_qty", 0) or 0))
-        avg = getattr(order, "filled_avg_price", None)
-        r.current_avg = Decimal(str(avg)) if avg else Decimal(0)
-        r.status = str(getattr(order, "status", "")).lower().split(".")[-1]
+        """Fold the broker's view of the working order into the leg.
+
+        Monotonic on purpose. Alpaca can answer an older poll after a newer
+        one, and `remaining` is derived from this number -- letting it regress
+        is how the engine orders a quantity it has already filled. See
+        glassbox/order_lifecycle.py for the same rule stated as a reducer.
+        """
+        observation = OrderObservation.from_order(order)
+        if observation.filled_qty >= r.current_qty:
+            r.current_qty = observation.filled_qty
+            r.current_avg = observation.avg_price
+        r.status = observation.status or r.status
 
     # -- equity and crypto -----------------------------------------------------
 

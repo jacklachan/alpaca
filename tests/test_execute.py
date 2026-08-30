@@ -461,3 +461,21 @@ def test_unknown_lookup_while_polling_fills_marks_the_leg_uncertain(journal):
     events = [entry["event"] for entry in journal.read()]
     assert "ORDER_STATE_UNKNOWN" in events
     assert plan.symbol not in broker.closed, "a symbol-wide close ran on unknown state"
+
+
+def test_stale_order_read_cannot_reduce_a_leg_fill(journal):
+    """Regression guard for the reducer rule: `remaining` is derived from the
+    leg fill, so a fill that goes backwards re-orders what already filled."""
+    from glassbox.execute import LegResult
+
+    r = LegResult(leg_index=0, symbol="SPY", requested_qty=Decimal(10))
+    fresh = FakeOrder("broker-1", "gbx-1", 10, "SPY")
+    fresh.filled_qty, fresh.filled_avg_price, fresh.status = 7, "5.00", "partially_filled"
+    ExecutionEngine._refresh_leg(r, fresh)
+    assert r.filled_qty == Decimal(7)
+
+    stale = FakeOrder("broker-1", "gbx-1", 10, "SPY")
+    stale.filled_qty, stale.filled_avg_price, stale.status = 3, "5.00", "partially_filled"
+    ExecutionEngine._refresh_leg(r, stale)
+
+    assert r.filled_qty == Decimal(7), "a stale read reduced the observed fill"
