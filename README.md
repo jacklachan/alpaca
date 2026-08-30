@@ -92,6 +92,14 @@ candidate, or attempts to add trade fields, the scored cycle abstains.
   fails before writing if any credential value appears in it.
 - Only one scheduler may own a state directory; a lock is reclaimed only when
   its recorded process is verifiably gone.
+- Performance is measured on total account equity from Alpaca's own portfolio
+  history, not reconstructed from our fill log. Risk-adjusted ratios are
+  reported with the sample size behind them and stay marked indicative below
+  twenty observations: an annualised Sharpe from five daily points is not a
+  result, and publishing it as one would contradict everything else here.
+- The optional trade-update stream is a latency hint, never an authority. A
+  REST snapshot always wins, and a stream gap blocks new entries until REST
+  reconciles.
 - The journal is append-only and SHA-256 chained. This detects edits to the
   recorded file; it is not called tamper-proof. Broker IDs and timestamps make
   order claims reconcilable against records we do not control. A local hash
@@ -156,6 +164,8 @@ glassbox/
   kernel.py       deterministic 13-invariant risk review
   execute.py      intent journal, reconciliation, fill/cancel/reprice state machine
   order_lifecycle.py  pure reducer over observed order states
+  performance.py      equity-curve metrics with sample-size caveats
+  trade_stream.py     optional trade-update hint; REST stays authoritative
   position_ledger.py  per-contract ownership and exact venue reconciliation
   candidates.py   canonical candidate sets, manifests, selection receipts
   option_data.py  Alpaca option contract and quote acquisition
@@ -169,6 +179,12 @@ tools/capture_alpaca_proof.py read-only Alpaca CLI evidence capture
 tools/build_notices.py        regenerates THIRD_PARTY_NOTICES.md from the lock
 deploy/setup.sh   exact-SHA deployment
 ```
+
+## Submission write-up
+
+`docs/WRITEUP.md` is the one-page write-up covering AI logic, risk gates, and
+Alpaca infrastructure. Its claims are enforced by `tests/test_claims.py`,
+including the test count, so the document cannot quietly drift from the code.
 
 ## License
 

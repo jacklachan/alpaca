@@ -14,11 +14,11 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 README = (ROOT / "README.md").read_text(encoding="utf-8")
-PUBLIC_DOCS = ("README.md", "SOCIAL.md", "PLAN.md", "DECISIONS.md")
+PUBLIC_DOCS = ("README.md", "SOCIAL.md", "PLAN.md", "DECISIONS.md", "docs/WRITEUP.md")
 
 
 def _doc(name: str) -> str:
-    return (ROOT / name).read_text(encoding="utf-8")
+    return (ROOT / name).read_text(encoding="utf-8")  # accepts nested paths
 
 
 # -- what the AI is allowed to be described as doing ---------------------------
@@ -178,3 +178,53 @@ def test_every_action_pin_records_the_release_it_came_from():
     for line in workflow.splitlines():
         if "uses:" in line and "@" in line:
             assert re.search(r"#\s*v[\d.]+", line), f"pin has no version comment: {line.strip()}"
+
+
+# -- the submission write-up ---------------------------------------------------
+
+WRITEUP = ROOT / "docs" / "WRITEUP.md"
+
+
+def test_the_required_one_page_writeup_exists_and_covers_all_three_topics():
+    """The event requires a write-up covering AI logic, risk gates, and Alpaca
+    infrastructure. Missing one is a missing submission requirement."""
+    text = WRITEUP.read_text(encoding="utf-8").lower()
+    assert "ai logic" in text
+    assert "risk gate" in text
+    assert "alpaca infrastructure" in text
+
+
+def test_the_writeup_test_count_matches_the_real_suite():
+    """A number in the document judges read must be true, and stay true. If
+    this fails, the suite changed -- update the write-up, do not delete this."""
+    import subprocess
+    import sys
+
+    text = WRITEUP.read_text(encoding="utf-8")
+    stated = re.search(r"([\d,]+)\s+automated tests", text)
+    assert stated, "the write-up no longer states a test count"
+    claimed = int(stated.group(1).replace(",", ""))
+
+    collected = subprocess.run(
+        # sys.executable, not "python": a different interpreter on PATH has
+        # different dependencies and silently collects a different suite.
+        [sys.executable, "-m", "pytest", "--collect-only", "-q"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    found = re.search(r"(\d+) tests collected", collected.stdout)
+    assert found, f"could not count the suite: {collected.stdout[-400:]}"
+    actual = int(found.group(1))
+
+    assert claimed == actual, (
+        f"docs/WRITEUP.md claims {claimed} automated tests, the suite has {actual}"
+    )
+
+
+def test_the_writeup_keeps_its_unproven_gates_visible():
+    """A write-up that drops the 'not claimed' section is the single easiest
+    way this project becomes dishonest."""
+    text = WRITEUP.read_text(encoding="utf-8").lower()
+    assert "no live paper order" in text
+    assert "no mcp integration" in text
