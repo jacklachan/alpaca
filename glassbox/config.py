@@ -243,6 +243,12 @@ OPTION_MAX_SESSIONS_AT_MEASUREMENT = 6
 # rather than sit unfilled -- but never chase beyond this.
 LIMIT_TOLERANCE = Decimal("0.03")
 
+# Option candidates use Alpaca's free indicative feed until the dedicated
+# account proves a different entitlement. Quote age may not exceed the cache
+# window; a slower mark is evidence to abstain, never to widen the limit.
+OPTION_DATA_FEED = "indicative"
+MAX_OPTION_QUOTE_AGE_SECONDS = Decimal("30")
+
 # Max ATM relative bid/ask for an expiry to be tradeable. Measured 29 Aug:
 # Fridays quote ~4.0-4.2%, the post-holiday Tuesday 5.3%, mid-week dailies
 # 6.0%. 5.5% cleanly separates the liquid expiries from the thin ones.

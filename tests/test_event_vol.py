@@ -6,13 +6,19 @@ term structure, not by an argument someone made on a Saturday.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
 from pydantic import ValidationError
 
 from glassbox import config as C
+from glassbox.candidates import (
+    CANDIDATE_SCHEMA_VERSION,
+    LIMIT_PRICE_RULE_VERSION,
+    OptionQuoteSnapshot,
+    derive_limit_price,
+)
 from glassbox.macro import CALENDAR, MEASUREMENT_ET, next_event, sessions_remaining_at_measurement
 from glassbox.strategies.event_vol import ChainLeg, EventVolStrategy, ExpiryQuote, select_expiry
 
@@ -143,18 +149,39 @@ def test_returns_none_when_nothing_qualifies():
 # --- plan construction --------------------------------------------------------
 
 
-def chain_for(exp: date) -> dict[date, list[ChainLeg]]:
+def chain_for(exp: date, *, verified: bool = True) -> dict[date, list[ChainLeg]]:
     legs = []
+    observed_at = datetime(2026, 9, 2, 14, 30, tzinfo=timezone.utc)
     for k in range(750, 800, 1):
         strike = Decimal(k)
         for right in ("C", "P"):
+            symbol = f"SPY{exp:%y%m%d}{right}{int(strike * 1000):08d}"
+            snapshot = (
+                OptionQuoteSnapshot.capture(
+                    contract_id=f"contract-{symbol}",
+                    symbol=symbol,
+                    status="active",
+                    tradable=True,
+                    quote_source="alpaca_option_chain",
+                    feed="indicative",
+                    venue_timestamp=observed_at - timedelta(seconds=4),
+                    observed_at=observed_at,
+                    bid=Decimal("5.00"),
+                    ask=Decimal("5.20"),
+                    max_age_seconds=Decimal("30"),
+                    max_spread_pct=Decimal("0.055"),
+                )
+                if verified
+                else None
+            )
             legs.append(
                 ChainLeg(
-                    symbol=f"SPY{exp:%y%m%d}{right}{int(strike * 1000):08d}",
+                    symbol=symbol,
                     strike=strike,
                     right=right,
                     ask=Decimal("5.20"),
                     bid=Decimal("5.00"),
+                    quote_snapshot=snapshot,
                 )
             )
     return {exp: legs}
@@ -199,6 +226,42 @@ def test_same_event_opportunity_has_the_same_plan_id_after_restart():
     restarted = EventVolStrategy().propose(**kwargs)[0]
 
     assert first.plan_id == restarted.plan_id
+
+
+def test_candidate_requires_verified_chain_quote_provenance():
+    plans = EventVolStrategy().propose(
+        now=WED,
+        spot=SPOT,
+        iv_vs_rv=Decimal("1.05"),
+        expiry_candidates=FLAT,
+        chain=chain_for(date(2026, 9, 4), verified=False),
+        measurement=MEASUREMENT_ET,
+        remaining_budget=Decimal("18000"),
+    )
+
+    assert plans == []
+
+
+def test_candidate_carries_quote_provenance_and_versioned_decimal_limits():
+    plan = EventVolStrategy().propose(
+        now=WED,
+        spot=SPOT,
+        iv_vs_rv=Decimal("1.05"),
+        expiry_candidates=FLAT,
+        chain=chain_for(date(2026, 9, 4)),
+        measurement=MEASUREMENT_ET,
+        remaining_budget=Decimal("18000"),
+    )[0]
+
+    assert plan.candidate_schema_version == CANDIDATE_SCHEMA_VERSION
+    assert plan.limit_price_rule_version == LIMIT_PRICE_RULE_VERSION
+    assert tuple(quote.symbol for quote in plan.quote_snapshots) == tuple(
+        leg.symbol for leg in plan.option_legs
+    )
+    assert tuple(leg.limit_price for leg in plan.option_legs) == tuple(
+        derive_limit_price(quote, tolerance=C.LIMIT_TOLERANCE) for quote in plan.quote_snapshots
+    )
+    assert len(plan.content_hash) == 64
 
 
 def test_priced_candidate_is_immutable():

@@ -14,3 +14,11 @@ ignore_missing_imports = true
 show_error_codes = true
 warn_redundant_casts = true
 warn_unused_configs = true
+
+[tool.pytest.ini_options]
+# alpaca-py 0.44 imports the compatibility namespace while supporting multiple
+# websockets releases. Glassbox does not import that deprecated namespace
+# directly; keep all other deprecations visible.
+filterwarnings = [
+    "ignore:websockets\\.legacy is deprecated.*:DeprecationWarning:websockets\\.legacy",
+]

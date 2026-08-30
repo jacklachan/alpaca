@@ -19,10 +19,11 @@ import logging
 import math
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from statistics import median
+from typing import Any, Callable
 
 from . import config as C
-from . import env
+from .candidates import ActiveOptionContract
+from .option_data import OptionDataGateway
 from .strategies.event_vol import ChainLeg, ExpiryQuote
 
 log = logging.getLogger("glassbox.data")
@@ -76,13 +77,27 @@ def overnight_gap(prev_close: float, today_open: float) -> float:
 class MarketData:
     """Everything the strategies need, cached briefly to respect the budget."""
 
-    def __init__(self, broker, cache_seconds: int = 30):
+    def __init__(
+        self,
+        broker,
+        cache_seconds: int = 30,
+        *,
+        option_data_client: Any | None = None,
+        clock: Callable[[], datetime] | None = None,
+    ):
         self.broker = broker
         self.cache_seconds = cache_seconds
+        self.clock = clock or (lambda: datetime.now(timezone.utc))
         self._cache: dict[str, tuple[datetime, object]] = {}
+        self.options = OptionDataGateway(
+            broker,
+            cache_seconds,
+            option_data_client=option_data_client,
+            clock=self.clock,
+        )
 
     def _cached(self, key: str, fn):
-        now = datetime.now(timezone.utc)
+        now = self.clock()
         hit = self._cache.get(key)
         if hit and (now - hit[0]).total_seconds() < self.cache_seconds:
             return hit[1]
@@ -110,97 +125,24 @@ class MarketData:
         return realised_vol(self.daily_closes(symbol, days + 5)[-(days + 1) :])
 
     def option_chain(self, underlying: str) -> dict:
-        def fetch():
+        return self.options.option_chain(underlying)
 
-            from alpaca.data.historical.option import OptionHistoricalDataClient
-            from alpaca.data.requests import OptionChainRequest
-
-            client = OptionHistoricalDataClient(
-                env.get("ALPACA_API_KEY"), env.get("ALPACA_SECRET_KEY")
-            )
-            return self.broker._call(
-                lambda: client.get_option_chain(OptionChainRequest(underlying_symbol=underlying)),
-                f"chain:{underlying}",
-            )
-
-        return self._cached(f"chain:{underlying}", fetch)
+    def active_option_contracts(
+        self, underlying: str, expiry: date
+    ) -> dict[str, ActiveOptionContract]:
+        return self.options.active_contracts(underlying, expiry)
 
     # -- shaping for the strategy ---------------------------------------------
 
     def expiry_quotes(
         self, underlying: str, spot: Decimal, band: float = 0.01
     ) -> list[ExpiryQuote]:
-        """ATM implied vol and quote width per expiry -- the term structure the
-        expiry selector consumes."""
-        chain = self.option_chain(underlying)
-        rows: dict[date, list[tuple[float, float, float]]] = {}
-
-        for sym, c in chain.items():
-            iv = getattr(c, "implied_volatility", None)
-            if iv is None:
-                continue
-            parsed = _parse_occ(sym)
-            if parsed is None:
-                continue
-            exp, _, strike = parsed
-            if abs(strike - float(spot)) / float(spot) >= band:
-                continue
-            spread = float("nan")
-            q = getattr(c, "latest_quote", None)
-            mid = float("nan")
-            if q is not None:
-                bid = float(getattr(q, "bid_price", 0) or 0)
-                ask = float(getattr(q, "ask_price", 0) or 0)
-                if bid > 0 and ask > 0:
-                    mid = (bid + ask) / 2
-                    spread = (ask - bid) / mid
-            rows.setdefault(exp, []).append((float(iv), spread, mid))
-
-        out: list[ExpiryQuote] = []
-        for exp, vals in sorted(rows.items()):
-            ivs = [v for v, _, _ in vals]
-            spreads = [s for _, s, _ in vals if s == s]
-            mids = [m for _, _, m in vals if m == m]
-            out.append(
-                ExpiryQuote(
-                    expiry=exp,
-                    atm_iv=Decimal(str(round(sum(ivs) / len(ivs), 4))),
-                    atm_straddle_px=Decimal(str(round(median(mids) * 2, 2)))
-                    if mids
-                    else Decimal(0),
-                    bid_ask_pct=Decimal(str(round(median(spreads), 4)))
-                    if spreads
-                    else Decimal("1"),
-                )
-            )  # no quote -> unusable, filter rejects it
-        return out
+        return self.options.expiry_quotes(underlying, spot, band)
 
     def chain_legs(
         self, underlying: str, expiry: date, spot: Decimal, band: float = 0.05
     ) -> dict[date, list[ChainLeg]]:
-        """Quotable contracts near the money for one expiry."""
-        chain = self.option_chain(underlying)
-        legs: list[ChainLeg] = []
-        for sym, c in chain.items():
-            parsed = _parse_occ(sym)
-            if parsed is None:
-                continue
-            exp, right, strike = parsed
-            if exp != expiry:
-                continue
-            if abs(strike - float(spot)) / float(spot) > band:
-                continue
-            q = getattr(c, "latest_quote", None)
-            if q is None:
-                continue
-            bid = Decimal(str(getattr(q, "bid_price", 0) or 0))
-            ask = Decimal(str(getattr(q, "ask_price", 0) or 0))
-            if ask <= 0:
-                continue
-            legs.append(
-                ChainLeg(symbol=sym, strike=Decimal(str(strike)), right=right, ask=ask, bid=bid)
-            )
-        return {expiry: legs}
+        return self.options.chain_legs(underlying, expiry, spot, band)
 
     def feature_table(self, symbols: list[str], state) -> dict:
         """The small table of meaningful numbers handed to the model.
@@ -234,13 +176,3 @@ class MarketData:
             except Exception as exc:
                 log.warning("features failed for %s: %s", sym, exc)
         return out
-
-
-def _parse_occ(sym: str) -> tuple[date, str, float] | None:
-    try:
-        root = "".join(ch for ch in sym[:6] if ch.isalpha())
-        rest = sym[len(root) :]
-        exp = date(2000 + int(rest[0:2]), int(rest[2:4]), int(rest[4:6]))
-        return exp, rest[6], int(rest[7:]) / 1000
-    except Exception:
-        return None

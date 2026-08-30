@@ -1,11 +1,18 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
 
 from glassbox import config as C
+from glassbox.candidates import (
+    CANDIDATE_SCHEMA_VERSION,
+    LIMIT_PRICE_RULE_VERSION,
+    OptionQuoteSnapshot,
+    build_candidate_manifest,
+    canonical_hash,
+)
 from glassbox.kernel import PortfolioState
 from glassbox.schema import OptionLeg, TradePlan
 from glassbox.thesis import ThesisLayer
@@ -29,8 +36,22 @@ def _state() -> PortfolioState:
 
 def _option_candidate(plan_id: str, underlying: str = "SPY") -> TradePlan:
     root = f"{underlying}260904C00600000"
+    observed_at = datetime(2026, 8, 31, 14, 0, tzinfo=timezone.utc)
+    quote = OptionQuoteSnapshot.capture(
+        contract_id=f"contract-{root}",
+        symbol=root,
+        status="active",
+        tradable=True,
+        quote_source="alpaca_option_chain",
+        feed="indicative",
+        venue_timestamp=observed_at - timedelta(seconds=3),
+        observed_at=observed_at,
+        bid=Decimal("2.05"),
+        ask=Decimal("2.09"),
+        max_age_seconds=Decimal("30"),
+        max_spread_pct=Decimal("0.055"),
+    )
     return TradePlan(
-        plan_id=plan_id,
         sleeve="convex",
         action="open",
         instrument="option",
@@ -46,9 +67,13 @@ def _option_candidate(plan_id: str, underlying: str = "SPY") -> TradePlan:
         side="buy",
         notional_usd=Decimal("215"),
         max_loss_usd=Decimal("215"),
+        event_key=f"fixture-{plan_id}",
         thesis="Deterministic candidate with a fully bounded premium at risk.",
         evidence=["Deterministic surface and calendar screen passed."],
         confidence=0.7,
+        candidate_schema_version=CANDIDATE_SCHEMA_VERSION,
+        limit_price_rule_version=LIMIT_PRICE_RULE_VERSION,
+        quote_snapshots=(quote,),
     )
 
 
@@ -77,13 +102,42 @@ def _layer_returning(response: object) -> ThesisLayer:
 def test_selection_returns_the_exact_original_candidate() -> None:
     candidates = [_option_candidate("candidate-a"), _option_candidate("candidate-b", "QQQ")]
     journal = Journal()
-    layer = _layer_returning({"candidate_id": "candidate-b", "rationale": "Best bounded setup."})
+    layer = _layer_returning(
+        {"candidate_id": candidates[1].plan_id, "rationale": "Best bounded setup."}
+    )
 
     selected = layer.select(candidates, _state(), journal)
 
     assert selected is candidates[1]
     assert journal.events[-1][1] == "CANDIDATE_SELECTED"
-    assert journal.events[-1][2]["candidate_id"] == "candidate-b"
+    assert journal.events[-1][2]["candidate_id"] == candidates[1].plan_id
+
+
+def test_selector_receipt_binds_prompt_model_candidate_set_and_response_hashes() -> None:
+    candidates = [_option_candidate("candidate-b", "QQQ"), _option_candidate("candidate-a")]
+    response = {"candidate_id": candidates[1].plan_id, "rationale": "Best bounded setup."}
+    journal = Journal()
+    captured: dict = {}
+    layer = ThesisLayer(model="selector-model-v1")
+
+    def select(payload: dict) -> object:
+        captured.update(payload)
+        return response
+
+    layer._ask_selection = select  # type: ignore[method-assign]
+
+    selected = layer.select(candidates, _state(), journal)
+
+    manifest = build_candidate_manifest(candidates)
+    assert selected is candidates[1]
+    assert [row["candidate_id"] for row in captured["candidates"]] == list(manifest.candidate_ids)
+    assert captured["candidate_manifest_hash"] == manifest.manifest_hash
+    assert journal.events[0][1] == "CANDIDATE_SET_BUILT"
+    receipt = journal.events[-1][2]["selector_receipt"]
+    assert receipt["candidate_manifest_hash"] == manifest.manifest_hash
+    assert receipt["model_hash"] == canonical_hash("selector-model-v1")
+    assert receipt["input_hash"] == canonical_hash(captured)
+    assert receipt["output_hash"] == canonical_hash(response)
 
 
 def test_candidate_trade_fields_are_deeply_immutable() -> None:
@@ -123,11 +177,11 @@ def test_explicit_abstention_returns_no_candidate() -> None:
 )
 def test_unknown_or_malformed_selection_abstains(response: object) -> None:
     journal = Journal()
+    candidate = _option_candidate("candidate-a")
+    if isinstance(response, dict) and response.get("candidate_id") == "candidate-a":
+        response = {**response, "candidate_id": candidate.plan_id}
 
-    assert (
-        _layer_returning(response).select([_option_candidate("candidate-a")], _state(), journal)
-        is None
-    )
+    assert _layer_returning(response).select([candidate], _state(), journal) is None
 
     assert journal.events[-1][1] == "CANDIDATE_SELECTION_INVALID"
 

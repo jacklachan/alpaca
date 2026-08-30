@@ -20,6 +20,12 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .candidates import (
+    CANDIDATE_SCHEMA_VERSION,
+    LIMIT_PRICE_RULE_VERSION,
+    OptionQuoteSnapshot,
+    canonical_hash,
+)
 from .ids import stable_plan_id
 
 Sleeve = Literal["core", "crypto", "convex"]
@@ -122,6 +128,15 @@ class TradePlan(BaseModel):
     evidence: tuple[str, ...] = Field(min_length=1)
     confidence: float = Field(ge=0, le=1)
 
+    # Scored option candidates attach the exact active-contract and quote
+    # snapshots used to derive executable limits. Defaults keep historical
+    # journal/test payloads readable; the candidate manifest rejects missing
+    # provenance before bounded AI selection.
+    candidate_schema_version: str | None = None
+    limit_price_rule_version: str | None = None
+    quote_snapshots: tuple[OptionQuoteSnapshot, ...] = ()
+    content_hash: str = ""
+
     @field_validator("symbol")
     @classmethod
     def _upper(cls, v: str) -> str:
@@ -132,9 +147,28 @@ class TradePlan(BaseModel):
             raise ValueError("option plan must carry at least one leg")
         if self.instrument != "option" and self.option_legs:
             raise ValueError("non-option plan must not carry option legs")
+        if self.quote_snapshots:
+            if self.instrument != "option":
+                raise ValueError("only option plans may carry quote provenance")
+            if self.candidate_schema_version != CANDIDATE_SCHEMA_VERSION:
+                raise ValueError("unsupported candidate schema version")
+            if self.limit_price_rule_version != LIMIT_PRICE_RULE_VERSION:
+                raise ValueError("unsupported limit-price rule version")
+            leg_symbols = tuple(leg.symbol for leg in self.option_legs)
+            quote_symbols = tuple(quote.symbol for quote in self.quote_snapshots)
+            if quote_symbols != leg_symbols:
+                raise ValueError("quote provenance must match option legs in order")
+
+        payload = self.model_dump(mode="python", exclude={"plan_id", "content_hash"})
+        expected_content_hash = canonical_hash(payload)
+        if self.content_hash and self.content_hash != expected_content_hash:
+            raise ValueError("candidate content hash does not match executable fields")
+        object.__setattr__(self, "content_hash", expected_content_hash)
+        expected_plan_id = stable_plan_id("plan", expected_content_hash)
+        if self.quote_snapshots and self.plan_id and self.plan_id != expected_plan_id:
+            raise ValueError("candidate plan ID does not match executable content")
         if not self.plan_id:
-            payload = self.model_dump(mode="json", exclude={"plan_id"})
-            object.__setattr__(self, "plan_id", stable_plan_id("plan", payload))
+            object.__setattr__(self, "plan_id", expected_plan_id)
 
 
 class Verdict(BaseModel):

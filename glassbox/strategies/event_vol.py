@@ -22,7 +22,12 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from .. import config as C
-from ..ids import stable_plan_id
+from ..candidates import (
+    CANDIDATE_SCHEMA_VERSION,
+    LIMIT_PRICE_RULE_VERSION,
+    OptionQuoteSnapshot,
+    derive_limit_price,
+)
 from ..macro import CALENDAR, MacroEvent, next_event, sessions_remaining_at_measurement
 from ..schema import OptionLeg, TradePlan
 
@@ -163,7 +168,7 @@ def _round_strike(px: Decimal, increment: Decimal = Decimal("1")) -> Decimal:
     return (px / increment).quantize(Decimal("1")) * increment
 
 
-@dataclass
+@dataclass(frozen=True)
 class ChainLeg:
     """A concrete quotable contract, as seen in the chain."""
 
@@ -172,6 +177,7 @@ class ChainLeg:
     right: str
     ask: Decimal
     bid: Decimal
+    quote_snapshot: OptionQuoteSnapshot | None = None
 
     @property
     def mid(self) -> Decimal:
@@ -230,12 +236,14 @@ class EventVolStrategy:
         put = self._nearest(legs_available, "P", put_target)
         if call is None or put is None:
             return []
+        if call.quote_snapshot is None or put.quote_snapshot is None:
+            return []
 
         # Marketable limit with a tolerance band -- we are pricing off an
         # indicative feed, so pay up slightly rather than sit unfilled, but
         # never chase beyond the band.
-        call_limit = (call.ask * (1 + C.LIMIT_TOLERANCE)).quantize(Decimal("0.01"))
-        put_limit = (put.ask * (1 + C.LIMIT_TOLERANCE)).quantize(Decimal("0.01"))
+        call_limit = derive_limit_price(call.quote_snapshot, tolerance=C.LIMIT_TOLERANCE)
+        put_limit = derive_limit_price(put.quote_snapshot, tolerance=C.LIMIT_TOLERANCE)
 
         pair_cost = (call_limit + put_limit) * 100
         if pair_cost <= 0:
@@ -247,13 +255,8 @@ class EventVolStrategy:
             return []
 
         premium = pair_cost * qty
-        plan_id = stable_plan_id(
-            "event-vol", event.name, self.underlying, choice.expiry, call.symbol, put.symbol
-        )
-
         return [
             TradePlan(
-                plan_id=plan_id,
                 sleeve="convex",
                 action="open",
                 instrument="option",
@@ -284,12 +287,19 @@ class EventVolStrategy:
                     f"premium_at_risk={premium} max_loss={premium}",
                 ),
                 confidence=0.6,
+                candidate_schema_version=CANDIDATE_SCHEMA_VERSION,
+                limit_price_rule_version=LIMIT_PRICE_RULE_VERSION,
+                quote_snapshots=(call.quote_snapshot, put.quote_snapshot),
             )
         ]
 
     @staticmethod
     def _nearest(legs: list[ChainLeg], right: str, target: Decimal) -> ChainLeg | None:
-        same = [l for l in legs if l.right == right and l.ask > 0]
+        same = [
+            leg
+            for leg in legs
+            if leg.right == right and leg.ask > 0 and leg.quote_snapshot is not None
+        ]
         return min(same, key=lambda l: abs(l.strike - target)) if same else None
 
     # -- scheduler interface ---------------------------------------------------

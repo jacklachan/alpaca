@@ -66,7 +66,7 @@ separate, development-account connectivity proof only.
 | C5 | Truthful product, UI, demo, and practice artifacts | Complete | Dashboard assertions, claim scan, read-only practice regression, deeply immutable candidate test |
 | C6 | Full local verification and hostile self-review | Complete | Fresh verification matrix recorded below; committed at `3fac4c6` |
 | A | Preserve and attest Approach A boundary | Complete | Audit focus suite: 43 passed on 2026-08-30 |
-| B | Candidate provenance and canonical manifest | In progress | Audit-derived TDD rollback boundary |
+| B | Candidate provenance and canonical manifest | Complete | 56 focused and 257 full locked tests; committed rollback boundary |
 | C | Typed Alpaca failures and ambiguity discipline | Pending | Begins only after B is committed |
 | D | Pure order-lifecycle reducer | Pending | Begins only after typed outcomes in C |
 | E | Strategy-owned ledger and restart-safe exits | Pending | Begins only after lifecycle semantics stabilize |
@@ -246,19 +246,30 @@ Run every item from a cleanly understood working tree and record the output in
 
 ### Audit Task B — Candidate Snapshot Provenance and Canonical Manifest
 
-- [ ] Query active option contracts through alpaca-py request objects with
+- [x] Query active option contracts through alpaca-py request objects with
   explicit underlying, active status, expiry, contract type, and pagination.
-- [ ] Reuse one option historical-data client and request an explicit feed.
-- [ ] Capture contract ID/symbol, source/feed, venue timestamp, observation
+- [x] Reuse one option historical-data client and request an explicit feed.
+- [x] Capture contract ID/symbol, source/feed, venue timestamp, observation
   time, age, bid/ask/spread, rule/schema versions, and candidate content hash.
-- [ ] Reject inactive, untradable, missing, zero, crossed, stale, future-dated,
+- [x] Reject inactive, untradable, missing, zero, crossed, stale, future-dated,
   inconsistent, or excessively wide quotes before selection.
-- [ ] Derive executable limits with Decimal arithmetic only.
-- [ ] Canonically order and content-address each candidate set.
-- [ ] Bind selection evidence to prompt, model, candidate-set, input, and
+- [x] Derive executable limits with Decimal arithmetic only.
+- [x] Canonically order and content-address each candidate set, including its
+  schema version.
+- [x] Bind selection evidence to prompt, model, candidate-set, input, and
   response hashes.
-- [ ] Journal one safe refusal reason and submit nothing for invalid data.
-- [ ] Run focused tests and commit B as one rollback boundary.
+- [x] Journal one safe refusal reason and submit nothing for invalid data.
+- [x] Run focused tests and commit B as one rollback boundary.
+
+**Verification evidence (2026-08-30):**
+
+- Task B focus: `56 passed`.
+- Full exact-lock Python 3.12 suite: `257 passed`.
+- Kernel: `33 passed`; crash drill: `13/13`; dashboard: `12 passed`.
+- Ruff format/lint, mypy (33 source files), compileall, environment parity,
+  dependency integrity, and `git diff --check` passed.
+- No credentialed request, order, deployment, push, merge, or submission was
+  performed.
 
 ### Audit Task C — Typed Alpaca Failures and Ambiguity Discipline
 
@@ -376,7 +387,7 @@ not “deployed” or “live-tested.”
 
 ## 6. Immediate Next Actions
 
-1. Complete audit Task B test-first and commit that rollback boundary.
+1. Begin audit Task C with typed Alpaca failure tests before implementation.
 2. Continue C → D → E → G in dependency order with focused tests and review at
    every boundary.
 3. Record the license holder/year and operational proofs as external gates;

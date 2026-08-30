@@ -16,6 +16,11 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from . import config as C
 from . import env
+from .candidates import (
+    CandidateDataInvalid,
+    build_candidate_manifest,
+    build_selection_receipt,
+)
 from .macro import CALENDAR, MEASUREMENT_ET
 from .schema import TradePlan
 
@@ -73,31 +78,74 @@ class ThesisLayer:
             return None
 
         by_id = {candidate.plan_id: candidate for candidate in option_candidates}
-        if len(by_id) != len(option_candidates):
+        try:
+            manifest = build_candidate_manifest(option_candidates)
+        except CandidateDataInvalid as exc:
             self._record(
                 journal,
-                "CANDIDATE_SELECTION_INVALID",
-                {"error": "duplicate candidate IDs", "offered": len(option_candidates)},
+                "CANDIDATE_ABSTAINED",
+                {
+                    "reason": f"candidate_manifest_invalid:{exc}",
+                    "offered": len(option_candidates),
+                },
             )
             return None
 
+        ordered_candidates = [by_id[candidate_id] for candidate_id in manifest.candidate_ids]
+        context = self._selection_context(
+            ordered_candidates,
+            state,
+            candidate_manifest_hash=manifest.manifest_hash,
+        )
+        self._record(
+            journal,
+            "CANDIDATE_SET_BUILT",
+            {
+                "candidate_manifest_hash": manifest.manifest_hash,
+                "candidate_ids": manifest.candidate_ids,
+                "candidate_hashes": tuple(entry.content_hash for entry in manifest.candidates),
+            },
+        )
+
         try:
-            raw = self._ask_selection(self._selection_context(option_candidates, state))
+            raw = self._ask_selection(context)
+            receipt = build_selection_receipt(
+                prompt=SYSTEM,
+                model=self.model,
+                manifest=manifest,
+                selector_input=context,
+                selector_output=raw,
+            )
             selection = Selection.model_validate(raw)
         except ValidationError as exc:
             log.warning("invalid candidate selection: %s", exc)
             self._record(
                 journal,
                 "CANDIDATE_SELECTION_INVALID",
-                {"error": str(exc), "offered": len(option_candidates)},
+                {
+                    "error": "selection_schema_invalid",
+                    "offered": len(option_candidates),
+                    "selector_receipt": receipt.model_dump(mode="json"),
+                },
             )
             return None
         except Exception as exc:
             log.warning("candidate selection unavailable: %s", exc)
+            receipt = build_selection_receipt(
+                prompt=SYSTEM,
+                model=self.model,
+                manifest=manifest,
+                selector_input=context,
+                selector_output={"outcome": "unavailable", "error_type": type(exc).__name__},
+            )
             self._record(
                 journal,
                 "CANDIDATE_SELECTION_UNAVAILABLE",
-                {"error": str(exc), "impact": "abstained"},
+                {
+                    "error_type": type(exc).__name__,
+                    "impact": "abstained",
+                    "selector_receipt": receipt.model_dump(mode="json"),
+                },
             )
             return None
 
@@ -105,7 +153,11 @@ class ThesisLayer:
             self._record(
                 journal,
                 "CANDIDATE_ABSTAINED",
-                {"reason": selection.rationale, "offered": len(option_candidates)},
+                {
+                    "reason": selection.rationale,
+                    "offered": len(option_candidates),
+                    "selector_receipt": receipt.model_dump(mode="json"),
+                },
             )
             return None
 
@@ -118,6 +170,7 @@ class ThesisLayer:
                     "error": "unknown or non-option candidate ID",
                     "candidate_id": selection.candidate_id,
                     "offered_ids": sorted(by_id),
+                    "selector_receipt": receipt.model_dump(mode="json"),
                 },
             )
             return None
@@ -129,6 +182,7 @@ class ThesisLayer:
                 "candidate_id": selected.plan_id,
                 "rationale": selection.rationale,
                 "offered": len(option_candidates),
+                "selector_receipt": receipt.model_dump(mode="json"),
             },
         )
         return selected
@@ -138,7 +192,13 @@ class ThesisLayer:
         if journal is not None:
             journal.append("thesis.llm", event, payload)
 
-    def _selection_context(self, candidates: list[TradePlan], state) -> dict:
+    def _selection_context(
+        self,
+        candidates: list[TradePlan],
+        state,
+        *,
+        candidate_manifest_hash: str,
+    ) -> dict:
         upcoming = [
             {"event": e.name, "when_et": e.when.isoformat(), "tier": e.tier, "source": e.source}
             for e in CALENDAR
@@ -154,6 +214,7 @@ class ThesisLayer:
                 C.CONVEX_TOTAL_PREMIUM_CAP - state.convex_premium_outstanding
             ),
             "macro_calendar": upcoming,
+            "candidate_manifest_hash": candidate_manifest_hash,
             "candidates": [self._candidate_summary(candidate) for candidate in candidates],
         }
 
