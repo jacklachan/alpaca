@@ -65,6 +65,17 @@ separate, development-account connectivity proof only.
 | C4 | Reproducible release and deploy discipline | Complete | Exact locks, quality gates, SHA-pinned deploy harness tests |
 | C5 | Truthful product, UI, demo, and practice artifacts | Complete | Dashboard assertions, claim scan, read-only practice regression, deeply immutable candidate test |
 | C6 | Full local verification and hostile self-review | Complete | Fresh verification matrix recorded below; committed at `3fac4c6` |
+| A | Preserve and attest Approach A boundary | Complete | Audit focus suite: 43 passed on 2026-08-30 |
+| B | Candidate provenance and canonical manifest | In progress | Audit-derived TDD rollback boundary |
+| C | Typed Alpaca failures and ambiguity discipline | Pending | Begins only after B is committed |
+| D | Pure order-lifecycle reducer | Pending | Begins only after typed outcomes in C |
+| E | Strategy-owned ledger and restart-safe exits | Pending | Begins only after lifecycle semantics stabilize |
+| G | Release/account/evidence manifest | Pending | Built on stable candidate, lifecycle, and state schemas |
+| H | Genuine read-only Alpaca CLI proof | Pending external executable/profile proof | No CLI integration claim until captured evidence exists |
+| F | Optional trade-update stream with REST healing | Deferred Should | Polling correctness and paper soak remain prerequisites |
+| I | Dependency, legal, and deployment closure | Partially gated | License holder/year requires user confirmation; no deployment authorized |
+| J | Evidence-derived docs, dashboard, and demo | Pending | Regenerate only from completed evidence schemas |
+| K | Clean verification, soak, and release gate | Offline portion pending | Credentialed/order/deploy portions remain external gates |
 | C7 | Minimal development live venue proof | External gate | Needs dev-only credentials and explicit expected dev/scored account IDs |
 | C8 | Exact-SHA VPS deployment and soak | External gate | Needs VPS/SSH target after C7 and reviewed SHA |
 | C9 | Scored-account activation | Pending | Requires C7–C8 evidence and explicit user direction |
@@ -221,6 +232,90 @@ Run every item from a cleanly understood working tree and record the output in
   an explicit “nothing has been deployed” statement, not completion claims.
 - No live broker order, deployment, push, merge, or submission occurred.
 
+### Audit Task A — Preserve and Attest Approach A
+
+- [x] Refresh the repository rather than trusting the audit's concurrent
+  `973edf8` snapshot.
+- [x] Confirm C5/C6 is already closed at `3fac4c6` with repository handoff
+  documentation above it.
+- [x] Preserve exact candidate-ID-or-abstain authority and original-object
+  retrieval.
+- [x] Preserve SPY/QQQ options-only scored construction and omission of the
+  crypto job.
+- [x] Re-run thesis, scheduler, and audit policy tests: `43 passed`.
+
+### Audit Task B — Candidate Snapshot Provenance and Canonical Manifest
+
+- [ ] Query active option contracts through alpaca-py request objects with
+  explicit underlying, active status, expiry, contract type, and pagination.
+- [ ] Reuse one option historical-data client and request an explicit feed.
+- [ ] Capture contract ID/symbol, source/feed, venue timestamp, observation
+  time, age, bid/ask/spread, rule/schema versions, and candidate content hash.
+- [ ] Reject inactive, untradable, missing, zero, crossed, stale, future-dated,
+  inconsistent, or excessively wide quotes before selection.
+- [ ] Derive executable limits with Decimal arithmetic only.
+- [ ] Canonically order and content-address each candidate set.
+- [ ] Bind selection evidence to prompt, model, candidate-set, input, and
+  response hashes.
+- [ ] Journal one safe refusal reason and submit nothing for invalid data.
+- [ ] Run focused tests and commit B as one rollback boundary.
+
+### Audit Task C — Typed Alpaca Failures and Ambiguity Discipline
+
+- [ ] Return absent only for verified order-not-found.
+- [ ] Distinguish auth, validation, rate-limit, server, network, timeout, and
+  decode failures from absence.
+- [ ] Attempt every mutation once and reconcile ambiguous acceptance only by
+  its original deterministic client-order ID.
+- [ ] Latch unresolved ambiguity and block new risk.
+- [ ] Add the audit's 404/401/403/422/429/500/connect/read-timeout/malformed
+  boundary tests and commit C atomically with executor handling.
+
+### Audit Task D — Pure Order-Lifecycle Reducer
+
+- [ ] Model accepted through terminal/unknown Alpaca states as pure
+  observations.
+- [ ] Enforce monotonic cumulative fill and explicit replacement lineage.
+- [ ] Treat cancel acknowledgement as nonterminal.
+- [ ] Reduce successor quantity after every late fill.
+- [ ] Prove engine return leaves no strategy entry order open unless unknown
+  state has latched the global risk fault.
+- [ ] Add state-machine/property coverage and commit D independently.
+
+### Audit Task E — Strategy-Owned Position Ledger and Restart-Safe Exits
+
+- [ ] Derive signed expected per-contract quantities only from confirmed fills.
+- [ ] Persist versioned/checksummed account, plan, leg, client-ID, fill, and
+  reconciliation state.
+- [ ] Reconcile exact owned quantities against venue positions/open orders.
+- [ ] Fail closed on foreign, unknown, missing, or corrupt exposure.
+- [ ] Route exits through durable intent and the same ambiguity/cancel/partial
+  lifecycle as entries.
+- [ ] Report flat only after terminal orders and exact zero venue quantity.
+- [ ] Enforce singleton ownership of the state directory.
+
+### Audit Tasks F–K — Evidence and Release Sequence
+
+- [ ] **G:** build a versioned release/account/evidence manifest binding the
+  clean commit, locks, redacted config/account, options-only allowlist,
+  candidate/selector/kernel/order evidence, and journal/state heads.
+- [ ] **H Must:** build a pinned, read-only Alpaca CLI proof pack that refuses
+  every mutation token and makes no claim until real output is captured.
+- [ ] **H Should:** add restricted read-only MCP discovery only after the CLI
+  proof, and only if its exact tool surface can be allowlisted and evidenced.
+- [ ] **F Should:** add a default-off trade-update stream only after polling,
+  restart, and position correctness is proven; REST remains authoritative.
+- [ ] **I:** add SBOM/notices, immutable action pins, dependency/license checks,
+  restrictive deploy ownership, and singleton service evidence.
+- [ ] **I legal gate:** do not create an author-owned MIT license until the user
+  confirms the copyright holder and year.
+- [ ] **J:** generate truthful public evidence, demo, security, and provenance
+  documentation plus a redacted proof drawer from completed artifacts.
+- [ ] **K offline:** run the complete clean Python 3.12 verification/release
+  matrix and leave the repository clean at an immutable local SHA.
+- [ ] **K external:** do not run credentialed checks, orders, deployment, soak,
+  push, merge, or submission until their existing authority gates open.
+
 ### C7 — Minimal Development Venue Proof (Externally Blocked)
 
 **Required inputs:**
@@ -281,5 +376,8 @@ not “deployed” or “live-tested.”
 
 ## 6. Immediate Next Actions
 
-1. Wait for dev credentials/account IDs or VPS details; do not improvise those
-   external inputs.
+1. Complete audit Task B test-first and commit that rollback boundary.
+2. Continue C → D → E → G in dependency order with focused tests and review at
+   every boundary.
+3. Record the license holder/year and operational proofs as external gates;
+   continue only safe local work while they are absent.
