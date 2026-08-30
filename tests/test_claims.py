@@ -119,3 +119,42 @@ def test_readme_documents_the_licence_and_notices():
 def test_readme_does_not_hand_maintain_a_test_count():
     """Counts drift silently. Generate them or omit them."""
     assert not re.search(r"\b\d{2,4}\s+tests?\s+pass", README.lower())
+
+
+# -- repository hygiene --------------------------------------------------------
+
+#: The exact pattern .github/workflows/ci.yml scans committed files for.
+_CI_CREDENTIAL_PATTERN = re.compile(r"\b(PK[A-Z0-9]{18,}|sk-ant-[A-Za-z0-9-]{20,})")
+
+
+def test_no_committed_file_looks_like_a_live_credential():
+    """Run CI's committed-credential scan here, portably.
+
+    CI uses GNU grep; macOS git grep treats `\\b` differently and silently
+    matched nothing, so this gate passed locally and failed on the runner. In
+    Python the behaviour is the same everywhere, which is the point.
+    """
+    import subprocess
+
+    tracked = subprocess.run(
+        ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True
+    ).stdout.split()
+
+    offenders = []
+    for name in tracked:
+        if name.endswith(".md") or name.startswith(".github/"):
+            continue  # the same exclusions CI applies
+        path = ROOT / name
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:  # pragma: no cover - unreadable file
+            continue
+        for match in _CI_CREDENTIAL_PATTERN.finditer(text):
+            offenders.append(f"{name}: {match.group(0)[:12]}...")
+
+    assert not offenders, (
+        "these would fail CI's committed-credential scan; build test fixtures "
+        f"at runtime instead of as literals: {offenders}"
+    )

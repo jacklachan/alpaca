@@ -20,6 +20,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 POLICY = {"max_loss": "2000", "underlyings": ["SPY", "QQQ"]}
 
+# Assembled at runtime so no key-shaped literal is ever committed. CI scans
+# tracked files for PK-shaped strings; a fixture that trips that scan would
+# push someone toward loosening a gate whose whole job is catching a real
+# key. The joined value is still PK-shaped, so it exercises redaction.
+FAKE_ALPACA_KEY = "PK" + "TESTONLYNOTAREALKEY01"
+
 
 def manifest(**overrides) -> ReleaseManifest:
     base = ReleaseManifest(
@@ -89,7 +95,7 @@ def test_manifest_binds_options_only_strategy_allowlist():
 
 def test_manifest_never_contains_credentials_or_webhook(tmp_path):
     env = {
-        "ALPACA_API_KEY": "PKLIVEKEYVALUE123456",
+        "ALPACA_API_KEY": FAKE_ALPACA_KEY,
         "ALPACA_SECRET_KEY": "secretsecretsecret123456",
         "ANTHROPIC_API_KEY": "sk-ant-abcdefghijklmnop",
         "DISCORD_WEBHOOK_URL": "https://discord.com/api/webhooks/1/abc",

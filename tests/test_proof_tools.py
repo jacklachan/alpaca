@@ -22,11 +22,17 @@ import capture_alpaca_proof as proof  # noqa: E402
 NOW = datetime(2026, 9, 3, 18, 0, tzinfo=timezone.utc)
 ACCOUNT = "PA3XYZ789012"
 
+# Assembled at runtime so no key-shaped literal is ever committed. CI scans
+# tracked files for PK-shaped strings; a fixture that trips that scan would
+# push someone toward loosening a gate whose whole job is catching a real
+# key. The joined value is still PK-shaped, so it exercises redaction.
+FAKE_ALPACA_KEY = "PK" + "TESTONLYNOTAREALKEY01"
+
 PAPER_ENV = {
     "ALPACA_ENV": "scored",
     "ALPACA_PAPER_TRADE": "true",
     "ALPACA_BASE_URL": "https://paper-api.alpaca.markets",
-    "ALPACA_API_KEY": "PKTESTKEY0123456789",
+    "ALPACA_API_KEY": FAKE_ALPACA_KEY,
     "ALPACA_SECRET_KEY": "secretvalue0123456789",
 }
 
