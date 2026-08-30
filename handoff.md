@@ -2,9 +2,11 @@
 
 **Prepared:** 2026-08-30
 **Branch:** `review` (pushed to `origin/review`; `main` untouched)
-**HEAD at handoff:** `73d230716249c1b50d5e1ca5bf231eeaa735f8e3`
+**Last verified commit:** `feeacf108fb52d9896cdcdfa5feb3bb944df1eb1` (CI green,
+run 33311898521; a later docs commit may update this file itself)
 **Starting point for this session:** `eea74d0` (Task B, candidate provenance)
-**Verification:** `make verify` exits 0; **394 tests pass**; crash drill 13/13
+**Verification:** `make verify` exits 0; **395 tests pass**; crash drill 13/13;
+GitHub Actions green (both `Tests and drills` and `Competition guards`)
 
 This session continued the audit-derived backlog in
 `GLASSBOX-REFERENCE-MASTER-PLAN.md`. It did not reopen the reference audit and
@@ -44,6 +46,14 @@ follow.
   identical modulo `\r`) and normalised. If you see that again, check
   `git diff HEAD --raw` -- it reports the real change set -- before believing
   `git status`. Consider adding a `.gitattributes` with `* text=auto eol=lf`.
+- **`git grep` vs GNU grep.** CI's committed-credential scan uses GNU grep.
+  macOS `git grep -E` treats `\b` differently and matched nothing, so that
+  gate passed locally and failed on the runner. The first push was red for
+  exactly this reason: a PK-shaped fake key in a test fixture. Fixed on the
+  fixture side -- the fake keys are assembled at runtime, since excluding
+  `tests/` from the scan would create the blind spot the scan exists to cover
+  -- and `tests/test_claims.py` now runs the same pattern through Python so
+  local and CI agree everywhere.
 - **Python.** The committed `.venv/` is a Windows venv (`Scripts/`, not
   `bin/`). This session used a separate `.venv-mac/` on Python 3.13.12 because
   3.12 was unavailable on the host. **The release target is still 3.12**; CI
@@ -68,6 +78,8 @@ Each item is one commit and one rollback boundary.
 | `c1bf93c` | I | MIT `LICENSE`, generated `THIRD_PARTY_NOTICES.md` |
 | `ca5bf1a` | J | Public claims checked against the code |
 | `73d2307` | K | Notices gate in `make verify`; measurement date closed |
+| `74e6b90` | - | This handoff |
+| `feeacf1` | - | Test fixtures no longer trip CI's credential scan |
 
 ### C -- typed Alpaca failures (`glassbox/broker.py`, `glassbox/execute.py`)
 
@@ -209,7 +221,7 @@ Run on Python 3.13.12 via `.venv-mac`. **Re-run on 3.12 before release.**
 ruff format --check .                72 files already formatted
 ruff check .                         All checks passed
 mypy glassbox dashboard tools main.py  Success: no issues in 38 source files
-pytest -q                            394 passed
+pytest -q                            395 passed
 pytest tests/test_kernel.py -q       33 passed
 tools/crash_drill.py -n 8 --seed 1   DRILL PASSED 13/13
 tools/env_parity.py .env.example     PARITY OK, 9 variables
