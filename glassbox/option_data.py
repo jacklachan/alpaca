@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 from statistics import median
-from typing import Any, Callable, cast
+from typing import Any, Callable, Sequence, cast
 
 from . import config as C
 from . import env
@@ -56,6 +56,28 @@ class OptionDataGateway:
             )
 
         return cast(dict, self._cached(f"chain:{underlying}", fetch))
+
+    def option_surface(self, underlying: str, symbols: Sequence[str]) -> dict[str, Any]:
+        """Greeks and implied volatility for specific contracts.
+
+        Sourced from the same cached chain snapshot the rest of the module
+        uses, so adding surface analysis costs no extra request against a rate
+        limit that is shared by every loop. A contract whose snapshot carries
+        no usable Greeks is simply absent from the result -- the caller
+        abstains rather than substituting zeros.
+        """
+        from .greeks import LegGreeks
+
+        chain = self.option_chain(underlying)
+        surface: dict[str, Any] = {}
+        for symbol in symbols:
+            snapshot = chain.get(symbol) if isinstance(chain, dict) else None
+            if snapshot is None:
+                continue
+            parsed = LegGreeks.from_snapshot(symbol, snapshot)
+            if parsed is not None:
+                surface[symbol] = parsed
+        return surface
 
     def _option_client(self):
         if self._option_data is None:

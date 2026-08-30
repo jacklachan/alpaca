@@ -228,3 +228,58 @@ def test_missing_quote_timestamp_is_journaled_and_removed() -> None:
             {"symbol": CALL, "reason": "missing_quote_timestamp"},
         )
     ]
+
+
+# -- option surface (Greeks) ---------------------------------------------------
+
+
+def test_option_surface_reads_greeks_from_the_cached_chain():
+    """Sourced from the chain snapshot already fetched, so surface analysis
+    costs no extra request against a shared rate limit."""
+    from types import SimpleNamespace
+
+    from glassbox.option_data import OptionDataGateway
+
+    calls = {"n": 0}
+    call_symbol = "SPY260904C00780000"
+
+    def get_option_chain(request):
+        calls["n"] += 1
+        return {
+            call_symbol: SimpleNamespace(
+                greeks=SimpleNamespace(
+                    delta="0.31", gamma="0.02", theta="-0.12", vega="0.44", rho="0.01"
+                ),
+                implied_volatility="0.38",
+            ),
+            "SPY260904P00760000": SimpleNamespace(greeks=None, implied_volatility="0.4"),
+        }
+
+    gateway = OptionDataGateway(
+        SimpleNamespace(_call=lambda fn, what: fn()),
+        cache_seconds=60,
+        option_data_client=SimpleNamespace(get_option_chain=get_option_chain),
+        clock=lambda: datetime(2026, 9, 3, 14, 0, tzinfo=timezone.utc),
+    )
+
+    surface = gateway.option_surface("SPY", [call_symbol, "SPY260904P00760000"])
+
+    assert calls["n"] == 1, "the surface should reuse one chain snapshot"
+    assert surface[call_symbol].delta == Decimal("0.31")
+    # A contract with no usable greeks is absent, not zero-filled.
+    assert "SPY260904P00760000" not in surface
+
+
+def test_option_surface_is_empty_when_the_chain_has_nothing():
+    from types import SimpleNamespace
+
+    from glassbox.option_data import OptionDataGateway
+
+    gateway = OptionDataGateway(
+        SimpleNamespace(_call=lambda fn, what: fn()),
+        cache_seconds=60,
+        option_data_client=SimpleNamespace(get_option_chain=lambda request: {}),
+        clock=lambda: datetime(2026, 9, 3, 14, 0, tzinfo=timezone.utc),
+    )
+
+    assert gateway.option_surface("SPY", ["SPY260904C00780000"]) == {}
