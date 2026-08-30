@@ -191,3 +191,57 @@ def test_build_describes_this_checkout():
     assert built.runtime_lock_sha256 == R.file_sha256(ROOT / "requirements.lock")
     assert built.expected_account_suffix == "...9012"
     built.validate()
+
+
+# -- the gate as main.py actually builds it ------------------------------------
+
+
+def test_main_builds_an_options_only_manifest_for_the_scored_account(monkeypatch):
+    """The manifest allowlist and the agent's strategy surface must come from
+    one source, or the manifest can certify something the agent does not do."""
+    import main
+
+    monkeypatch.setenv("ALPACA_ENV", "scored")
+    monkeypatch.setenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
+    monkeypatch.setenv("ALPACA_EXPECTED_SCORED_ACCOUNT_ID", "PA3XYZ789012")
+
+    built = main.release_manifest()
+
+    assert built.environment == "scored"
+    assert built.strategy_allowlist == ("event_vol",)
+    assert built.expected_account_suffix == "...9012"
+    built.validate()
+
+    # The scored gate may still refuse a dirty tree; what it must never refuse
+    # is this allowlist.
+    try:
+        built.assert_scored_startable()
+    except ReleaseError as exc:
+        assert "options-only" not in str(exc), exc
+
+
+def test_main_manifest_names_every_dev_strategy(monkeypatch):
+    import main
+
+    monkeypatch.setenv("ALPACA_ENV", "dev")
+    monkeypatch.setenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
+    monkeypatch.setenv("ALPACA_EXPECTED_DEV_ACCOUNT_ID", "PA-DEV-0001")
+
+    built = main.release_manifest()
+
+    assert set(built.strategy_allowlist) == {"core", "crypto", "event_vol"}
+    # A dev manifest must never pass the scored gate.
+    with pytest.raises(ReleaseError):
+        built.assert_scored_startable()
+
+
+def test_strategy_names_matches_the_constructed_surface():
+    import main
+
+    for environment in ("dev", "scored"):
+        names = set(main.strategy_names(environment))
+        built = {
+            n.rsplit("_", 1)[0] if n.startswith("event_vol") else n
+            for n in main.strategy_set(environment, data=None)
+        }
+        assert built == names, f"{environment}: manifest and agent disagree"

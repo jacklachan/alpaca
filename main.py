@@ -13,6 +13,8 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
@@ -20,11 +22,16 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from glassbox import config as C  # noqa: E402
+from glassbox import env  # noqa: E402
 from glassbox.broker import Broker, NotPaperTrading  # noqa: E402
+from glassbox.candidates import CANDIDATE_SCHEMA_VERSION  # noqa: E402
 from glassbox.data import MarketData  # noqa: E402
 from glassbox.journal import Journal  # noqa: E402
 from glassbox.kernel import RiskKernel  # noqa: E402
 from glassbox.manage import KillSwitch, PositionManager  # noqa: E402
+from glassbox.position_ledger import PositionLedger  # noqa: E402
+from glassbox.release import ReleaseError  # noqa: E402
+from glassbox.release import build as build_release  # noqa: E402
 from glassbox.scheduler import Agent, discord  # noqa: E402
 from glassbox.strategies.core import CoreStrategy  # noqa: E402
 from glassbox.strategies.crypto import CryptoStrategy  # noqa: E402
@@ -39,6 +46,15 @@ def setup_logging(verbose: bool = False) -> None:
     )
     logging.getLogger("apscheduler").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+def strategy_names(environment: str) -> tuple[str, ...]:
+    """The strategy families one account role may register, without building
+    any of them. The manifest and the agent read the same source, so a
+    manifest cannot claim options-only while the agent registers more."""
+    if environment not in {"dev", "scored"}:
+        raise ValueError(f"unknown environment {environment!r}")
+    return ("event_vol",) if environment == "scored" else ("core", "crypto", "event_vol")
 
 
 def strategy_set(environment: str, data: Any) -> dict[str, Any]:
@@ -60,12 +76,55 @@ def strategy_set(environment: str, data: Any) -> dict[str, Any]:
     return strategies
 
 
+def release_manifest():
+    """Describe this running release from the tree and the environment.
+
+    The strategy allowlist comes from the same function the agent composes
+    from, so the manifest cannot claim options-only while the agent registers
+    something else.
+    """
+    environment = env.require_choice("ALPACA_ENV", {"dev", "scored"}, default="dev")
+    expected_key = (
+        "ALPACA_EXPECTED_SCORED_ACCOUNT_ID"
+        if environment == "scored"
+        else "ALPACA_EXPECTED_DEV_ACCOUNT_ID"
+    )
+    allowlist = strategy_names(environment)
+    return build_release(
+        root=Path(__file__).resolve().parent,
+        environment=environment,
+        resolved_endpoint=env.get("ALPACA_BASE_URL", "https://paper-api.alpaca.markets"),
+        expected_account_id=env.get(expected_key, ""),
+        strategy_allowlist=allowlist,
+        option_underlyings=tuple(C.SCORED_OPTION_UNDERLYINGS),
+        candidate_schema_version=int(CANDIDATE_SCHEMA_VERSION),
+        policy={
+            "convex_sleeve_usd": str(C.CONVEX_SLEEVE_USD),
+            "event_trade_daily_cap": str(C.EVENT_TRADE_DAILY_CAP),
+            "option_underlyings": list(C.SCORED_OPTION_UNDERLYINGS),
+        },
+        built_at=datetime.now(timezone.utc).isoformat(),
+        pending_gates=("development venue proof", "CLI proof capture", "deployment soak"),
+    )
+
+
 def build(thesis_enabled: bool = True):
     journal = Journal(C.JOURNAL_PATH)
     broker = Broker(journal=journal)
     data = MarketData(broker)
     kill = KillSwitch(journal=journal)
-    manager = PositionManager(broker, journal, kill)
+
+    # The scored account owns option contracts per-contract, so it gets a
+    # ledger and the exact-quantity exit path. The development sleeves are
+    # equity and crypto; they own no contracts and keep the symbol-wide path.
+    ledger = None
+    ledger_path = None
+    if broker.env == "scored":
+        ledger_path = Path(C.LEDGER_STATE_FILE)
+        expected = env.get("ALPACA_EXPECTED_SCORED_ACCOUNT_ID", "")
+        ledger = PositionLedger.load(ledger_path, account_id=expected, environment=broker.env)
+
+    manager = PositionManager(broker, journal, kill, ledger=ledger, ledger_path=ledger_path)
 
     strategies = strategy_set(broker.env, data)
 
@@ -78,7 +137,16 @@ def build(thesis_enabled: bool = True):
         except Exception as exc:
             logging.warning("thesis layer unavailable (%s); deterministic sleeves continue", exc)
 
-    agent = Agent(broker, journal, RiskKernel(), manager, strategies, thesis)
+    agent = Agent(
+        broker,
+        journal,
+        RiskKernel(),
+        manager,
+        strategies,
+        thesis,
+        ledger=ledger,
+        ledger_path=ledger_path,
+    )
     return agent, journal, broker
 
 
@@ -117,6 +185,19 @@ def main() -> int:
         log.critical("JOURNAL CHAIN BROKEN: %s", why)
         discord(f":rotating_light: glassbox journal chain broken: {why}")
         return 3
+
+    # Release identity, before credentials are used for anything. When the
+    # gate is on, a scored run must be a clean, reviewed, options-only,
+    # paper-bound commit -- evidence attributed to an unidentified build is
+    # not evidence.
+    if env.get("GLASSBOX_RELEASE_GATE", "0") == "1":
+        try:
+            manifest = release_manifest()
+            manifest.assert_scored_startable()
+        except ReleaseError as exc:
+            log.critical("RELEASE GATE REFUSED START: %s", exc)
+            return 6
+        log.info("release gate: commit %s, options-only, paper", manifest.commit[:12])
 
     try:
         agent, journal, broker = build(thesis_enabled=not args.no_thesis)

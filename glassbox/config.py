@@ -179,6 +179,10 @@ POSITIONED_STATE_FILE = _os.getenv("GLASSBOX_POSITIONED_FILE", "state/positioned
 # positions with no exit logic attached to them.
 TARGETS_STATE_FILE = _os.getenv("GLASSBOX_TARGETS_FILE", "state/targets.json")
 
+# Per-contract strategy ownership. Only the scored account keeps one: the
+# development sleeves are equity/crypto and do not own option contracts.
+LEDGER_STATE_FILE = _os.getenv("GLASSBOX_LEDGER_FILE", "state/position_ledger.json")
+
 # --- Circuit breakers ---------------------------------------------------------
 # AUDIT NOTE: invariant #11 (idempotency) stops the *same* plan being sent twice.
 # Nothing in the original twelve stopped the agent generating 500 *distinct*

@@ -18,6 +18,7 @@ import logging
 import signal
 import urllib.request
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Callable
 
@@ -64,13 +65,27 @@ class Agent:
     kills the scheduler. A crashed tick must cost one tick.
     """
 
-    def __init__(self, broker, journal, kernel, manager, strategies: dict, thesis=None):
+    def __init__(
+        self,
+        broker,
+        journal,
+        kernel,
+        manager,
+        strategies: dict,
+        thesis=None,
+        ledger=None,
+        ledger_path=None,
+    ):
         self.broker = broker
         self.journal = journal
         self.kernel = kernel
         self.manager = manager
         self.strategies = strategies
         self.thesis = thesis
+        # Per-contract ownership. Present on the scored account only; the
+        # development sleeves do not own option contracts.
+        self.ledger = ledger
+        self.ledger_path = Path(ledger_path) if ledger_path else None
         self.environment = getattr(broker, "env", "dev")
         if self.environment not in {"dev", "scored"}:
             raise ValueError(f"unknown broker environment {self.environment!r}")
@@ -157,6 +172,8 @@ class Agent:
             return
 
         if self.environment == "scored":
+            if not self._ledger_reconciled(state):
+                return
             self._scored_selection_tick(state)
             return
 
@@ -326,6 +343,7 @@ class Agent:
 
         engine = ExecutionEngine(self.broker, self.journal)
         result = engine.execute(plan, verdict)
+        self._record_fills(plan, result)
         if result.ok:
             # Record the CATALYST, not the ticker. Recording plan.symbol meant
             # the strategy's `event.name in done` guard never matched, so one
@@ -340,6 +358,69 @@ class Agent:
                     self.manager.register(
                         plan.symbol, stop=plan.stop, target=plan.target, time_exit=plan.time_exit
                     )
+
+    def _record_fills(self, plan, result) -> None:
+        """Move confirmed fills into the ledger. Nothing else may move it.
+
+        Called on every execution, including a failed one: a plan that returned
+        `ok=False` can still have filled part of a leg, and exposure we do not
+        record is exposure we cannot exit.
+        """
+        if self.ledger is None:
+            return
+        sides = {leg.symbol: leg.side for leg in plan.option_legs or ()}
+        for leg in result.legs:
+            if leg.filled_qty <= 0:
+                continue
+            self.ledger.record_entry_fill(
+                plan_id=plan.plan_id,
+                symbol=leg.symbol,
+                client_order_id=leg.client_order_id,
+                filled_qty=leg.filled_qty,
+                side=sides.get(leg.symbol, "buy"),
+            )
+        if self.ledger_path is not None:
+            self.ledger.save(self.ledger_path)
+
+    def _ledger_reconciled(self, state) -> bool:
+        """Exact per-contract agreement with the venue, before any new risk.
+
+        A mismatch is not a warning. Until expectation and venue agree we do
+        not know what we own, and sizing a new position against an unknown
+        book is how one bad tick compounds.
+        """
+        if self.ledger is None:
+            return True
+
+        venue: dict[str, Decimal] = {}
+        for position in state.positions:
+            if getattr(position, "instrument", "") == "option":
+                venue[position.symbol] = Decimal(str(position.qty))
+
+        try:
+            open_orders = self.broker.open_orders()
+        except Exception as exc:
+            self._journal_fault("LEDGER_RECONCILE_UNAVAILABLE", {"error": str(exc)})
+            return False
+
+        result = self.ledger.reconcile(venue_positions=venue, open_orders=open_orders)
+        if self.ledger_path is not None:
+            self.ledger.save(self.ledger_path)
+        if not result.ok:
+            self._journal_fault("POSITION_RECONCILE_FAULT", {"reasons": list(result.reasons())})
+            return False
+        self.journal.append(
+            "scheduler",
+            "POSITION_RECONCILED",
+            {"symbols": list(result.checked_symbols), "at": result.reconciled_at},
+        )
+        return True
+
+    def _journal_fault(self, event: str, payload: dict) -> None:
+        """Latch the agent out of new entries and say why."""
+        self._state_faulted = True
+        self.journal.append("scheduler", event, payload)
+        log.error("%s: %s", event, payload)
 
     # -- schedule --------------------------------------------------------------
 
