@@ -40,6 +40,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from decimal import Decimal
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -257,6 +258,40 @@ def scenario_idempotency(res: Results) -> None:
     distinct_legs = len(set(first)) == 3
     res.add("client_order_id is deterministic", first == second, f"leg 0 -> {first[0]}")
     res.add("legs do not collide", distinct_legs, f"{len(set(first))} distinct ids for 3 legs")
+
+    from glassbox.position_ledger import PositionLedger
+
+    tmp = Path(tempfile.mkdtemp(prefix="glassbox-drill-"))
+    path = tmp / "ledger.json"
+    try:
+        book = PositionLedger(account_id="PA-DRILL", environment="scored")
+        book.record_entry_fill(
+            plan_id=plan_id,
+            symbol="SPY260904C00600000",
+            client_order_id=first[0],
+            filled_qty=Decimal(4),
+            order_qty=Decimal(10),
+            side="buy",
+        )
+        book.save(path)
+        restarted = PositionLedger.load(path, account_id="PA-DRILL", environment="scored")
+        before = restarted.to_json()
+        delta = restarted.record_entry_fill(
+            plan_id=plan_id,
+            symbol="SPY260904C00600000",
+            client_order_id=first[0],
+            filled_qty=Decimal(4),
+            order_qty=Decimal(10),
+            side="buy",
+        )
+        unchanged = delta == 0 and restarted.to_json() == before
+        res.add(
+            "confirmed fill replay is idempotent",
+            unchanged,
+            "cumulative fill 4 replayed after reload; ownership remained 4",
+        )
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def scenario_broker_is_truth(res: Results) -> None:

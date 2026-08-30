@@ -345,6 +345,7 @@ def _ledger_manager(tmp_path, journal, broker, *, owned: str | None = "10"):
             symbol=occ(),
             client_order_id="gbx-entry-1",
             filled_qty=Decimal(owned),
+            order_qty=Decimal(owned),
             side="buy",
         )
     ks = KillSwitch(tmp_path / "kill.json", journal=journal)

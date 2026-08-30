@@ -153,7 +153,12 @@ def test_release_manifest_check_fails_when_it_was_edited_after_build(tmp_path):
 def test_ledger_check_reports_what_is_held(tmp_path):
     book = PositionLedger(account_id="PA-1", environment="scored")
     book.record_entry_fill(
-        plan_id="gbp-1", symbol=CALL, client_order_id="gbx-1", filled_qty=Decimal(4), side="buy"
+        plan_id="gbp-1",
+        symbol=CALL,
+        client_order_id="gbx-1",
+        filled_qty=Decimal(4),
+        order_qty=Decimal(4),
+        side="buy",
     )
     path = tmp_path / "ledger.json"
     book.save(path)
@@ -166,7 +171,12 @@ def test_ledger_check_reports_what_is_held(tmp_path):
 def test_ledger_check_fails_on_a_tampered_ledger(tmp_path):
     book = PositionLedger(account_id="PA-1", environment="scored")
     book.record_entry_fill(
-        plan_id="gbp-1", symbol=CALL, client_order_id="gbx-1", filled_qty=Decimal(4), side="buy"
+        plan_id="gbp-1",
+        symbol=CALL,
+        client_order_id="gbx-1",
+        filled_qty=Decimal(4),
+        order_qty=Decimal(4),
+        side="buy",
     )
     path = tmp_path / "ledger.json"
     book.save(path)

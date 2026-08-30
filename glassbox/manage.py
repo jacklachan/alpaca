@@ -479,6 +479,7 @@ class PositionManager:
                 symbol=e.symbol,
                 client_order_id=coid,
                 filled_qty=state.filled_qty,
+                order_qty=qty,
                 side="sell",
             )
         self._exit_attempts[e.symbol] = self._exit_attempts.get(e.symbol, 0) + 1

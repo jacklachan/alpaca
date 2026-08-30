@@ -5,8 +5,8 @@
 **Audited base:** `c45b23fdf6cb51be1092ea2b0c76d1e7f0128c69`
 **Preserved branches:** `utk` at `5414498`, teammate `origin/review` at
 `c45b23f`, and `main` at `363808c`
-**Completed checkpoint:** C1 - mandatory scored release gate
-**Next checkpoint:** C2 - idempotent fill and ledger replay
+**Completed checkpoint:** C2 - idempotent fill and ledger replay
+**Next checkpoint:** C3 - unified mutation and exact unwind
 
 The independent readiness audit scores this base at 47/100 and says it is not
 safe for scored activation yet. Its blocking findings and the complete staged
@@ -25,11 +25,21 @@ pending, evidence is less than 24 hours old, every mandatory check is `PASS`,
 and every proof has a valid SHA-256. Development dry-run remains available but
 receives no scored authority.
 
-C1 local verification used managed CPython 3.12.11. The repository collects 576
-tests. It passed 553 tests outside `tests/test_position_ledger.py` and 22 of 23
+C1 is committed at `dd9e73e` and its full Python 3.12 GitHub Actions run passed.
+C2 upgrades the position ledger to schema 2. Each deterministic client-order ID
+now persists one immutable plan/symbol/purpose/side/requested-quantity identity
+and its last cumulative venue fill. Duplicate and stale observations are no-ops;
+higher observations apply only their delta; per-order, aggregate entry, and
+owned-position overfills fail before mutation. Restart replay preserves the
+exact ledger state and does not create a new persistence generation. Old or
+structurally inconsistent schemas fail closed because their aggregate history
+cannot be safely guessed; there is deliberately no automatic lossy migration.
+
+C2 local verification used managed CPython 3.12.11. The repository collects 584
+tests. It passed 554 tests outside `tests/test_position_ledger.py` and 29 of 30
 tests in that file; the one deselected test is the existing unbounded Windows
 dead-PID probe. Ruff format/lint, mypy across 46 source files, 33 kernel tests,
-crash drill 13/13, environment parity for 12 variables, compileall, dependency
+crash drill 14/14, environment parity for 12 variables, compileall, dependency
 integrity, claim/secret checks, and `git diff --check` passed. C4 owns the bounded
 cross-platform dead-PID regression; remote Python 3.12 Linux CI remains the
 authoritative all-tests gate.

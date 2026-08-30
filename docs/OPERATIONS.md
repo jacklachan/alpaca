@@ -25,6 +25,12 @@ python main.py             # run the schedule
 `--dry-run` contacts Alpaca and asserts account identity but never starts the
 clock. Normal and `--once` modes are order-capable.
 
+Position ledgers use schema 2 cumulative-fill cursors. An older ledger cannot be
+upgraded safely because it does not retain the per-order cumulative history;
+startup therefore fails closed instead of inferring ownership. Preserve the
+old file as evidence and reconcile the exact account at the venue before an
+operator creates any replacement state.
+
 Scored mode always requires `GLASSBOX_RELEASE_GATE=1`; an absent, false, or
 mistyped value refuses startup before broker construction. Also set
 `GLASSBOX_APPROVED_COMMIT_SHA` to the externally reviewed full commit SHA and

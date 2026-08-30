@@ -455,17 +455,20 @@ class Agent:
         if self.ledger is None:
             return
         sides = {leg.symbol: leg.side for leg in plan.option_legs or ()}
+        changed = False
         for leg in result.legs:
             if leg.filled_qty <= 0:
                 continue
-            self.ledger.record_entry_fill(
+            delta = self.ledger.record_entry_fill(
                 plan_id=plan.plan_id,
                 symbol=leg.symbol,
                 client_order_id=leg.client_order_id,
                 filled_qty=leg.filled_qty,
+                order_qty=leg.requested_qty,
                 side=sides.get(leg.symbol, "buy"),
             )
-        if self.ledger_path is not None:
+            changed = changed or delta > 0
+        if changed and self.ledger_path is not None:
             self.ledger.save(self.ledger_path)
 
     def _ledger_reconciled(self, state) -> bool:

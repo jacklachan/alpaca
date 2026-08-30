@@ -29,12 +29,19 @@ def ledger() -> PositionLedger:
     return PositionLedger(account_id=ACCOUNT, environment=ENV)
 
 
-def filled_long(book: PositionLedger, symbol: str, qty: str, coid: str = "gbx-1") -> None:
+def filled_long(
+    book: PositionLedger,
+    symbol: str,
+    qty: str,
+    coid: str = "gbx-1",
+    order_qty: str | None = None,
+) -> None:
     book.record_entry_fill(
         plan_id="gbp-1",
         symbol=symbol,
         client_order_id=coid,
         filled_qty=Decimal(qty),
+        order_qty=Decimal(order_qty or qty),
         side="buy",
         asset_id=f"asset-{symbol}",
     )
@@ -55,12 +62,13 @@ def test_expected_quantity_comes_only_from_confirmed_fills():
         symbol=CALL,
         client_order_id="gbx-1",
         filled_qty=Decimal(0),
+        order_qty=Decimal(4),
         side="buy",
     )
     assert book.entries == {}
 
-    filled_long(book, CALL, "4")
-    filled_long(book, CALL, "6", coid="gbx-2")
+    filled_long(book, CALL, "4", order_qty="10")
+    filled_long(book, CALL, "6", coid="gbx-2", order_qty="10")
     entry = book.entries[CALL]
     assert entry.signed_qty == Decimal(10)
     assert entry.cumulative_entry_fill == Decimal(10)
@@ -72,7 +80,13 @@ def test_exit_uses_exact_owned_quantity_not_symbol_wide_close():
     filled_long(book, CALL, "7")
     assert book.entries[CALL].exit_qty == Decimal(7)
 
-    book.record_exit_fill(symbol=CALL, client_order_id="gbx-x1", filled_qty=Decimal(3), side="sell")
+    book.record_exit_fill(
+        symbol=CALL,
+        client_order_id="gbx-x1",
+        filled_qty=Decimal(3),
+        order_qty=Decimal(7),
+        side="sell",
+    )
     assert book.entries[CALL].signed_qty == Decimal(4)
     assert book.entries[CALL].exit_qty == Decimal(4), "the exit must size to what remains"
 
@@ -80,8 +94,144 @@ def test_exit_uses_exact_owned_quantity_not_symbol_wide_close():
 def test_exit_fill_for_an_unowned_contract_is_refused():
     with pytest.raises(KeyError, match=CALL):
         ledger().record_exit_fill(
-            symbol=CALL, client_order_id="gbx-x", filled_qty=Decimal(1), side="sell"
+            symbol=CALL,
+            client_order_id="gbx-x",
+            filled_qty=Decimal(1),
+            order_qty=Decimal(1),
+            side="sell",
         )
+
+
+def test_duplicate_and_stale_entry_observations_are_idempotent():
+    book = ledger()
+
+    assert book.record_entry_fill(
+        plan_id="gbp-1",
+        symbol=CALL,
+        client_order_id="gbx-entry-1",
+        filled_qty=Decimal(4),
+        order_qty=Decimal(10),
+        side="buy",
+    ) == Decimal(4)
+    assert book.record_entry_fill(
+        plan_id="gbp-1",
+        symbol=CALL,
+        client_order_id="gbx-entry-1",
+        filled_qty=Decimal(4),
+        order_qty=Decimal(10),
+        side="buy",
+    ) == Decimal(0)
+    assert book.record_entry_fill(
+        plan_id="gbp-1",
+        symbol=CALL,
+        client_order_id="gbx-entry-1",
+        filled_qty=Decimal(3),
+        order_qty=Decimal(10),
+        side="buy",
+    ) == Decimal(0)
+    assert book.entries[CALL].signed_qty == Decimal(4)
+    assert book.entries[CALL].cumulative_entry_fill == Decimal(4)
+
+
+def test_higher_cumulative_entry_observation_applies_only_the_delta():
+    book = ledger()
+    filled_long(book, CALL, "4", coid="gbx-entry-1", order_qty="10")
+
+    delta = book.record_entry_fill(
+        plan_id="gbp-1",
+        symbol=CALL,
+        client_order_id="gbx-entry-1",
+        filled_qty=Decimal(7),
+        order_qty=Decimal(10),
+        side="buy",
+    )
+
+    assert delta == Decimal(3)
+    assert book.entries[CALL].signed_qty == Decimal(7)
+    assert book.entries[CALL].cumulative_entry_fill == Decimal(7)
+
+
+def test_duplicate_stale_and_higher_exit_observations_are_idempotent():
+    book = ledger()
+    filled_long(book, CALL, "10")
+
+    first = book.record_exit_fill(
+        symbol=CALL,
+        client_order_id="gbx-exit-1",
+        filled_qty=Decimal(6),
+        order_qty=Decimal(10),
+        side="sell",
+    )
+    duplicate = book.record_exit_fill(
+        symbol=CALL,
+        client_order_id="gbx-exit-1",
+        filled_qty=Decimal(6),
+        order_qty=Decimal(10),
+        side="sell",
+    )
+    stale = book.record_exit_fill(
+        symbol=CALL,
+        client_order_id="gbx-exit-1",
+        filled_qty=Decimal(4),
+        order_qty=Decimal(10),
+        side="sell",
+    )
+    final = book.record_exit_fill(
+        symbol=CALL,
+        client_order_id="gbx-exit-1",
+        filled_qty=Decimal(10),
+        order_qty=Decimal(10),
+        side="sell",
+    )
+
+    assert (first, duplicate, stale, final) == tuple(map(Decimal, (6, 0, 0, 4)))
+    assert book.entries[CALL].signed_qty == Decimal(0)
+    assert book.entries[CALL].cumulative_exit_fill == Decimal(10)
+
+
+def test_fill_overflow_or_client_id_reuse_fails_without_mutating_ownership():
+    book = ledger()
+    with pytest.raises(StateCorrupt, match="exceeds requested"):
+        book.record_entry_fill(
+            plan_id="gbp-1",
+            symbol=CALL,
+            client_order_id="gbx-entry-1",
+            filled_qty=Decimal(11),
+            order_qty=Decimal(10),
+            side="buy",
+        )
+    assert book.entries == {}
+
+    filled_long(book, CALL, "4", coid="gbx-entry-1", order_qty="10")
+    with pytest.raises(StateCorrupt, match="identity"):
+        book.record_entry_fill(
+            plan_id="gbp-1",
+            symbol=PUT,
+            client_order_id="gbx-entry-1",
+            filled_qty=Decimal(5),
+            order_qty=Decimal(10),
+            side="buy",
+        )
+    assert book.entries[CALL].signed_qty == Decimal(4)
+    assert PUT not in book.entries
+
+
+def test_aggregate_entry_fills_across_replacements_cannot_exceed_the_plan_quantity():
+    book = ledger()
+    filled_long(book, CALL, "6", coid="gbx-original", order_qty="10")
+
+    with pytest.raises(StateCorrupt, match="aggregate entry fill"):
+        book.record_entry_fill(
+            plan_id="gbp-1",
+            symbol=CALL,
+            client_order_id="gbx-replacement",
+            filled_qty=Decimal(5),
+            order_qty=Decimal(10),
+            side="buy",
+        )
+
+    assert book.entries[CALL].signed_qty == Decimal(6)
+    assert "gbx-replacement" not in book.fill_cursors
 
 
 # -- reconciliation -----------------------------------------------------------
@@ -166,7 +316,13 @@ def test_our_own_open_exit_order_is_not_a_fault():
 def test_flat_is_reported_only_after_orders_terminal_and_venue_qty_zero():
     book = ledger()
     filled_long(book, CALL, "5")
-    book.record_exit_fill(symbol=CALL, client_order_id="gbx-x", filled_qty=Decimal(5), side="sell")
+    book.record_exit_fill(
+        symbol=CALL,
+        client_order_id="gbx-x",
+        filled_qty=Decimal(5),
+        order_qty=Decimal(5),
+        side="sell",
+    )
 
     # Expectation is zero, but an exit order can still fill.
     assert book.is_flat(CALL, venue_qty=Decimal(0), exit_orders_terminal=False) is False
@@ -187,12 +343,20 @@ def test_late_exit_fill_after_cancel_reconciles_to_exact_flat():
     filled_long(book, CALL, "10")
     book.register_exit_intent(CALL, "gbx-exit-1")
     book.record_exit_fill(
-        symbol=CALL, client_order_id="gbx-exit-1", filled_qty=Decimal(8), side="sell"
+        symbol=CALL,
+        client_order_id="gbx-exit-1",
+        filled_qty=Decimal(8),
+        order_qty=Decimal(10),
+        side="sell",
     )
     assert book.entries[CALL].signed_qty == Decimal(2)
 
     book.record_exit_fill(
-        symbol=CALL, client_order_id="gbx-exit-1", filled_qty=Decimal(2), side="sell"
+        symbol=CALL,
+        client_order_id="gbx-exit-1",
+        filled_qty=Decimal(10),
+        order_qty=Decimal(10),
+        side="sell",
     )
     assert book.entries[CALL].signed_qty == Decimal(0)
     assert book.reconcile(venue_positions={CALL: Decimal(0)}, now=NOW).ok is True
@@ -204,7 +368,11 @@ def test_partial_exit_preserves_the_remaining_target():
     filled_long(book, CALL, "10")
     book.register_exit_intent(CALL, "gbx-exit-1")
     book.record_exit_fill(
-        symbol=CALL, client_order_id="gbx-exit-1", filled_qty=Decimal(6), side="sell"
+        symbol=CALL,
+        client_order_id="gbx-exit-1",
+        filled_qty=Decimal(6),
+        order_qty=Decimal(10),
+        side="sell",
     )
 
     assert book.entries[CALL].exit_qty == Decimal(4)
@@ -233,6 +401,53 @@ def test_restart_rebuilds_expected_position_from_intents_and_fills(tmp_path):
         restored.reconcile(venue_positions={CALL: Decimal(10), PUT: Decimal(10)}, now=NOW).ok
         is True
     )
+
+
+def test_restart_then_replay_produces_the_identical_ledger_state(tmp_path):
+    path = tmp_path / "ledger.json"
+    book = ledger()
+    filled_long(book, CALL, "4", coid="gbx-entry-1", order_qty="10")
+    book.save(path)
+
+    restored = PositionLedger.load(path, account_id=ACCOUNT, environment=ENV)
+    before = restored.to_json()
+    delta = restored.record_entry_fill(
+        plan_id="gbp-1",
+        symbol=CALL,
+        client_order_id="gbx-entry-1",
+        filled_qty=Decimal(4),
+        order_qty=Decimal(10),
+        side="buy",
+    )
+
+    assert delta == Decimal(0)
+    assert restored.to_json() == before
+
+
+def test_old_or_structurally_corrupt_fill_cursor_schema_fails_closed(tmp_path):
+    from glassbox import position_ledger as PL
+
+    path = tmp_path / "ledger.json"
+    book = ledger()
+    filled_long(book, CALL, "4", coid="gbx-entry-1", order_qty="10")
+    book.save(path)
+
+    raw = json.loads(path.read_text())
+    raw["schema_version"] = 1
+    body = {k: v for k, v in raw.items() if k != "checksum"}
+    raw["checksum"] = PL._checksum(body)
+    path.write_text(json.dumps(raw))
+    with pytest.raises(StateCorrupt, match="schema"):
+        PositionLedger.load(path, account_id=ACCOUNT, environment=ENV)
+
+    book.save(path)
+    raw = json.loads(path.read_text())
+    raw["fill_cursors"][0]["cumulative_filled_qty"] = "11"
+    body = {k: v for k, v in raw.items() if k != "checksum"}
+    raw["checksum"] = PL._checksum(body)
+    path.write_text(json.dumps(raw))
+    with pytest.raises(StateCorrupt, match="exceeds requested"):
+        PositionLedger.load(path, account_id=ACCOUNT, environment=ENV)
 
 
 def test_a_missing_ledger_loads_empty_but_a_corrupt_one_does_not(tmp_path):

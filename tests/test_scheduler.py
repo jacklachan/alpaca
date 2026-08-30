@@ -252,6 +252,7 @@ def _ledger_agent(tmp_path, monkeypatch, *, positions=(), open_orders=(), owned=
             symbol=symbol,
             client_order_id=f"gbx-{symbol}",
             filled_qty=Decimal(str(qty)),
+            order_qty=Decimal(str(qty)),
             side="buy",
         )
 
@@ -365,9 +366,17 @@ def test_confirmed_fills_are_recorded_and_persisted(tmp_path, monkeypatch):
     result = SimpleNamespace(
         ok=True,
         legs=[
-            SimpleNamespace(symbol=leg_symbol, filled_qty=Decimal(2), client_order_id="gbx-a"),
             SimpleNamespace(
-                symbol="SPY260904C00700000", filled_qty=Decimal(0), client_order_id="gbx-b"
+                symbol=leg_symbol,
+                requested_qty=Decimal(2),
+                filled_qty=Decimal(2),
+                client_order_id="gbx-a",
+            ),
+            SimpleNamespace(
+                symbol="SPY260904C00700000",
+                requested_qty=Decimal(2),
+                filled_qty=Decimal(0),
+                client_order_id="gbx-b",
             ),
         ],
     )
@@ -383,6 +392,30 @@ def test_confirmed_fills_are_recorded_and_persisted(tmp_path, monkeypatch):
     assert restored.entries[leg_symbol].signed_qty == Decimal(2)
 
 
+def test_replaying_the_same_execution_result_does_not_duplicate_the_fill(tmp_path, monkeypatch):
+    agent, book = _ledger_agent(tmp_path, monkeypatch)
+    plan = _option("gbp-replay", "SPY")
+    leg_symbol = plan.option_legs[0].symbol
+    result = SimpleNamespace(
+        ok=True,
+        legs=[
+            SimpleNamespace(
+                symbol=leg_symbol,
+                requested_qty=Decimal(2),
+                filled_qty=Decimal(2),
+                client_order_id="gbx-replay",
+            )
+        ],
+    )
+
+    agent._record_fills(plan, result)
+    first_generation = book.generation
+    agent._record_fills(plan, result)
+
+    assert book.entries[leg_symbol].signed_qty == Decimal(2)
+    assert book.generation == first_generation
+
+
 def test_partial_fills_on_a_failed_execution_are_still_recorded(tmp_path, monkeypatch):
     """Exposure we do not record is exposure we cannot exit."""
     agent, book = _ledger_agent(tmp_path, monkeypatch)
@@ -390,7 +423,14 @@ def test_partial_fills_on_a_failed_execution_are_still_recorded(tmp_path, monkey
     leg_symbol = plan.option_legs[0].symbol
     result = SimpleNamespace(
         ok=False,
-        legs=[SimpleNamespace(symbol=leg_symbol, filled_qty=Decimal(1), client_order_id="gbx-a")],
+        legs=[
+            SimpleNamespace(
+                symbol=leg_symbol,
+                requested_qty=Decimal(2),
+                filled_qty=Decimal(1),
+                client_order_id="gbx-a",
+            )
+        ],
     )
 
     agent._record_fills(plan, result)
