@@ -403,3 +403,26 @@ def test_the_development_agent_has_no_ledger_and_is_unaffected(tmp_path, monkeyp
     agent = Agent(Broker(_state(), "dev"), Journal(), Kernel(), Manager(), {}, Thesis(None))
     assert agent.ledger is None
     assert agent._ledger_reconciled(_state()) is True
+
+
+def test_foreign_equity_on_the_scored_account_blocks_the_tick(tmp_path, monkeypatch):
+    """The scored account is options-only. An equity position on it is
+    unaccounted exposure, and filtering reconciliation to options would hide
+    precisely the case worth catching."""
+    agent, _ = _ledger_agent(
+        tmp_path,
+        monkeypatch,
+        positions=[
+            _pos(CALL, "3"),
+            SimpleNamespace(symbol="SPY", instrument="equity", qty=Decimal("100")),
+        ],
+        owned={CALL: 3},
+    )
+    offered: list = []
+    agent._scored_selection_tick = lambda state: offered.append(state)
+
+    agent.equity_tick()
+
+    assert not offered
+    reasons = [p for _, e, p in agent.journal.events if e == "POSITION_RECONCILE_FAULT"]
+    assert any("SPY" in str(r) for r in reasons)

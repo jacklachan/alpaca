@@ -442,3 +442,71 @@ def test_second_exit_attempt_uses_a_distinct_deterministic_id(tmp_path, journal)
     first, second = broker.submitted[0]["coid"], broker.submitted[1]["coid"]
     assert first != second
     assert broker.submitted[1]["qty"] == Decimal(4)
+
+
+def test_unowned_exposure_is_refused_once_not_re_refused_every_tick(tmp_path, journal):
+    """A foreign position will never become ours. Re-refusing it on a
+    one-minute loop floods the journal and files a correct refusal as a
+    failure."""
+    broker = ExitBroker()
+    manager, _ = _ledger_manager(tmp_path, journal, broker, owned=None)
+    order = ExitOrder(symbol=occ(), qty=Decimal(10), reason="target")
+
+    for _ in range(5):
+        manager._close(order)
+
+    events = [e["event"] for e in journal.read()]
+    assert events.count("EXIT_REFUSED_UNOWNED") == 1, "refusal repeated every tick"
+    assert "EXIT_FAILED" not in events, "a deliberate refusal was filed as a failure"
+    assert broker.submitted == []
+    assert broker.closed == []
+
+
+def test_an_uncertain_exit_latches_instead_of_resubmitting_the_same_id(tmp_path, journal):
+    """The order went out and we cannot prove where it ended. Retrying reuses
+    the deterministic client id, which the venue rejects as a duplicate --
+    forever, while the real fill stays unrecorded."""
+
+    class UncertainBroker(ExitBroker):
+        def cancel_and_confirm(self, order_id, client_order_id, **kw):
+            from glassbox.broker import OrderStateUncertain
+
+            raise OrderStateUncertain(f"{client_order_id} never reached a terminal state")
+
+    broker = UncertainBroker(fill="6")
+    manager, _ = _ledger_manager(tmp_path, journal, broker)
+    order = ExitOrder(symbol=occ(), qty=Decimal(10), reason="target")
+
+    for _ in range(4):
+        manager._close(order)
+
+    assert len(broker.submitted) == 1, "an unprovable exit was resubmitted"
+    events = [e["event"] for e in journal.read()]
+    assert events.count("EXIT_STATE_UNCERTAIN") == 1
+    assert occ() in manager._exit_uncertain
+
+
+def test_a_transient_close_failure_stays_retryable(tmp_path, journal):
+    """The latch must not swallow ordinary failures: those should retry."""
+
+    class FlakyBroker(ExitBroker):
+        def __init__(self):
+            super().__init__()
+            self.attempts = 0
+
+        def submit(self, **kw):
+            self.attempts += 1
+            if self.attempts == 1:
+                raise RuntimeError("connection reset")
+            return super().submit(**kw)
+
+    broker = FlakyBroker()
+    manager, book = _ledger_manager(tmp_path, journal, broker)
+    order = ExitOrder(symbol=occ(), qty=Decimal(10), reason="target")
+
+    manager._close(order)
+    assert "EXIT_FAILED" in [e["event"] for e in journal.read()]
+
+    manager._close(order)
+    assert broker.attempts == 2, "a transient failure was not retried"
+    assert book.entries[occ()].signed_qty == Decimal(0)

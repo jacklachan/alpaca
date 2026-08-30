@@ -392,10 +392,13 @@ class Agent:
         if self.ledger is None:
             return True
 
+        # Every position, not only the options. The scored account is
+        # options-only, so an equity or crypto position on it is exposure
+        # nobody accounted for -- filtering by instrument would hide exactly
+        # the case most worth catching.
         venue: dict[str, Decimal] = {}
         for position in state.positions:
-            if getattr(position, "instrument", "") == "option":
-                venue[position.symbol] = Decimal(str(position.qty))
+            venue[position.symbol] = Decimal(str(position.qty))
 
         try:
             open_orders = self.broker.open_orders()

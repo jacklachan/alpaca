@@ -20,6 +20,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from . import config as C
+from .broker import OrderStateUncertain
 from .ids import exit_client_order_id
 from .kernel import PortfolioState, Position
 from .macro import MEASUREMENT_ET
@@ -139,6 +140,9 @@ class PositionManager:
         # market orders for one contract.
         self._exits_sent: set[str] = set()
         self._exit_attempts: dict[str, int] = {}
+        # Symbols whose exit order reached an unprovable state. Latched:
+        # resubmitting under the same deterministic id cannot succeed.
+        self._exit_uncertain: set[str] = set()
 
     # -- persistence -----------------------------------------------------------
 
@@ -334,7 +338,7 @@ class PositionManager:
         # One exit per symbol per session. The broker takes time to reflect a
         # close, and `tick` re-reads positions every minute, so without this
         # the same contract is closed again on every tick until it disappears.
-        if e.symbol in self._exits_sent:
+        if e.symbol in self._exits_sent or e.symbol in self._exit_uncertain:
             return
         self._exits_sent.add(e.symbol)
 
@@ -348,8 +352,27 @@ class PositionManager:
                 self._close_exact(e)
             else:
                 self.broker.close_position(e.symbol)
+        except UnownedExposure as exc:
+            # Not a failure and not transient: this exposure is not ours and
+            # will never become ours. Keep the guard so a one-minute tick loop
+            # does not re-refuse it forever, and do not file it as EXIT_FAILED
+            # -- mislabelling a correct refusal corrupts the evidence.
+            log.warning("refusing to close %s: %s", e.symbol, exc)
+        except OrderStateUncertain as exc:
+            # The exit order was sent and we cannot prove where it ended up.
+            # Releasing the guard here would retry with the same deterministic
+            # client id, which the venue rejects as a duplicate, forever --
+            # while the real fill stays unrecorded. Latch instead and let
+            # reconciliation resolve it.
+            self._exit_uncertain.add(e.symbol)
+            self.journal.append(
+                "manage",
+                "EXIT_STATE_UNCERTAIN",
+                {"symbol": e.symbol, "reason": e.reason, "error": str(exc)},
+            )
+            log.error("exit state uncertain for %s: %s", e.symbol, exc)
         except Exception as exc:
-            # A failed close must be retryable, so release the guard.
+            # A genuinely transient failure must stay retryable.
             self._exits_sent.discard(e.symbol)
             self.journal.append(
                 "manage", "EXIT_FAILED", {"symbol": e.symbol, "reason": e.reason, "error": str(exc)}
