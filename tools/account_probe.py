@@ -3,9 +3,14 @@ what is it approved for, and has it ever traded."""
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from dotenv import load_dotenv
 
@@ -15,8 +20,21 @@ from alpaca.trading.client import TradingClient  # noqa: E402
 from alpaca.trading.enums import QueryOrderStatus  # noqa: E402
 from alpaca.trading.requests import GetOrdersRequest  # noqa: E402
 
+from glassbox import env as env_module  # noqa: E402
+from glassbox.state import atomic_write_json  # noqa: E402
 
-def main() -> int:
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Read-only Alpaca account probe.")
+    parser.add_argument(
+        "--emit",
+        default="",
+        help="write the account_identity evidence artifact to this path",
+    )
+    args = parser.parse_args(argv)
+    emit = args.emit
+
+    environment = env_module.require_choice("ALPACA_ENV", {"dev", "scored"}, default="dev")
     key, sec = os.getenv("ALPACA_API_KEY"), os.getenv("ALPACA_SECRET_KEY")
     if not key or not sec:
         print("no credentials")
@@ -52,6 +70,43 @@ def main() -> int:
 
     pristine = len(orders) == 0 and len(positions) == 0
     print("\nVERDICT           :", "PRISTINE (never traded)" if pristine else "USED (has history)")
+
+    if emit:
+        # The account_identity artifact the release gate is approved against.
+        # Redacted on purpose: the manifest carries a suffix, and the full id
+        # goes to judges through the submission channel, not through a file
+        # that gets copied around.
+        expected_key = (
+            "ALPACA_EXPECTED_SCORED_ACCOUNT_ID"
+            if environment == "scored"
+            else "ALPACA_EXPECTED_DEV_ACCOUNT_ID"
+        )
+        expected = env_module.get(expected_key, "")
+        returned = str(getattr(a, "account_number", "") or "")
+        matches = bool(expected) and returned == expected
+        atomic_write_json(
+            emit,
+            {
+                "check": "account_identity",
+                "environment": environment,
+                "account_suffix": f"...{returned[-4:]}" if returned else "",
+                "expected_suffix": f"...{expected[-4:]}" if expected else "",
+                "matches_expected": matches,
+                "status": str(getattr(a, "status", "")),
+                "equity": str(getattr(a, "equity", "")),
+                "options_trading_level": str(getattr(a, "options_trading_level", "")),
+                "lifetime_orders": len(orders),
+                "open_positions": len(positions),
+                "pristine": pristine,
+                "captured_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "complete": matches,
+            },
+        )
+        print(
+            f"\nartifact          : {emit} ({'matches' if matches else 'DOES NOT MATCH'} expected)"
+        )
+        if not matches:
+            return 1
     return 0
 
 

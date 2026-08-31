@@ -29,7 +29,7 @@ import platform
 import re
 import subprocess
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -312,6 +312,15 @@ class ReleaseManifest:
             digest = artifacts.get(name)
             if not isinstance(digest, str) or not _FULL_SHA256.fullmatch(digest):
                 raise ReleaseError(f"required release check {name} has no valid artifact SHA-256")
+
+    def with_verification(self, verification: Mapping[str, Any]) -> ReleaseManifest:
+        """A copy carrying this evidence envelope.
+
+        Returns a new manifest rather than mutating: the description of a
+        checkout and the approval granted against it are different objects,
+        and conflating them makes it easy to approve something by accident.
+        """
+        return replace(self, verification=dict(verification))
 
     # -- serialisation ---------------------------------------------------------
 

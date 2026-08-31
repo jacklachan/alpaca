@@ -35,8 +35,9 @@ from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv(ROOT / ".env")
 
-from glassbox import config as C  # noqa: E402
+from glassbox import config as C
 from glassbox import env  # noqa: E402
+from glassbox.state import atomic_write_json  # noqa: E402
 
 GREEN, RED, YELLOW, DIM, RESET = "\033[32m", "\033[31m", "\033[33m", "\033[2m", "\033[0m"
 
@@ -288,6 +289,11 @@ def main() -> int:
         help="place and immediately close ONE small real crypto order",
     )
     ap.add_argument(
+        "--emit",
+        default="",
+        help="write the development_venue_proof evidence artifact to this path",
+    )
+    ap.add_argument(
         "--notional",
         type=Decimal,
         default=LIVE_CHECK_MAX_NOTIONAL_USD,
@@ -425,6 +431,34 @@ def main() -> int:
 
     # -- verdict ---------------------------------------------------------------
     print(f"\n{'-' * 66}")
+    traded = bool(getattr(args, "trade", False))
+    if args.emit:
+        # The development_venue_proof artifact. `complete` is true only for a
+        # clean run that actually placed and reconciled an order: a read-only
+        # pass proves connectivity, not that the order path works, and the
+        # release gate is asking about the order path.
+        atomic_write_json(
+            args.emit,
+            {
+                "check": "development_venue_proof",
+                "traded": traded,
+                "notional_cap": str(getattr(args, "notional", "")),
+                "failures": list(_fails),
+                "warnings": list(_warns),
+                "captured_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "complete": traded and not _fails,
+            },
+        )
+        print(f"{DIM}artifact written to {args.emit}{RESET}")
+        if traded and not _fails:
+            pass
+        else:
+            print(
+                f"{DIM}marked incomplete: "
+                f"{'no order was placed (use --trade)' if not traded else 'run had failures'}"
+                f"{RESET}"
+            )
+
     if _fails:
         print(f"{RED}LIVE CHECK FAILED{RESET}  {len(_fails)} problem(s)")
         for f in _fails:
