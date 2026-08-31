@@ -62,8 +62,9 @@ manager/ledger/scheduler set passed 195 tests. Ruff format/lint, mypy across 47
 source files, 33 kernel tests, crash drill 14/14, environment parity for 12
 variables, compileall, dependency integrity, submission claim/secret checks,
 and `git diff --check` passed. The repeated Windows access-violation diagnostic
-remains an interpreter/host issue; the checkpoint push must still pass the
-authoritative all-tests Linux Python 3.12 CI before C4 begins.
+remains an interpreter/host issue. C3 is committed at `a643a73` and the
+authoritative all-tests Linux Python 3.12 GitHub Actions run `33386055209`
+passed, so C4 may begin.
 
 A development paper credential is now present only in the Git-ignored `.env`.
 Read-only proof on 2026-08-31 confirmed the expected account suffix `...JZAQ`,
