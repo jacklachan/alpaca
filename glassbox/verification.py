@@ -179,6 +179,47 @@ def check_no_unbounded_ai_fields(journal_path: Path) -> CheckResult:
     )
 
 
+def check_candidate_replay(journal_path: Path) -> CheckResult:
+    """Rebuild every recorded candidate set from the parts it recorded.
+
+    This is the check that makes "deterministic" a verb. The agent published a
+    content address for each set it offered; replay recomputes it from the
+    recorded ids and content hashes and compares. A mismatch means the journal
+    was edited or the hashing changed, neither of which is visible by reading
+    the code.
+    """
+    name = "recorded candidate sets replay to the same hash"
+    if not journal_path.exists():
+        return CheckResult(name, SKIP, "no journal yet")
+    from .journal import Journal
+    from .replay import replay_journal
+
+    report = replay_journal(Journal(journal_path).read())
+    if not report.replays:
+        return CheckResult(name, SKIP, "no candidate set has been offered yet")
+    if report.mismatched:
+        return CheckResult(
+            name,
+            FAIL,
+            f"{len(report.mismatched)} recorded set(s) do not rebuild to their published hash",
+            report.as_dict(),
+        )
+    if report.unoffered_selections:
+        return CheckResult(
+            name,
+            FAIL,
+            "a selection named a candidate that was never offered",
+            report.as_dict(),
+        )
+    return CheckResult(
+        name,
+        PASS,
+        f"{report.verified} of {len(report.replays)} set(s) rebuilt exactly"
+        + (f", {len(report.unverifiable)} unaddressable" if report.unverifiable else ""),
+        report.as_dict(),
+    )
+
+
 def check_release_manifest(manifest_path: Path) -> CheckResult:
     """The manifest is internally consistent and was not edited after build."""
     name = "release manifest integrity"
@@ -297,6 +338,7 @@ def run_all(
     report.add(check_journal_chain(journal_path))
     report.add(check_selection_was_offered(journal_path))
     report.add(check_no_unbounded_ai_fields(journal_path))
+    report.add(check_candidate_replay(journal_path))
     report.add(check_release_manifest(manifest_path))
     report.add(check_position_ledger(ledger_path, account_id=account_id, environment=environment))
     report.add(check_no_secrets_committed(root, tracked))

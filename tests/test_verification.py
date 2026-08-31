@@ -291,3 +291,62 @@ def test_the_verifier_runs_against_this_repository():
     payload = json.loads(result.stdout)
     assert payload["failed"] == 0, payload
     assert result.returncode == 0
+
+
+# -- deterministic replay ------------------------------------------------------
+
+
+def _replayable_journal(tmp_path, tamper=False, unoffered=False):
+    """A journal holding one genuinely-addressed candidate set."""
+    import tests.test_candidates as fixtures
+    from glassbox.candidates import CANDIDATE_SCHEMA_VERSION, build_candidate_manifest
+
+    manifest = build_candidate_manifest([fixtures._candidate("SPY"), fixtures._candidate("QQQ")])
+    entries = [
+        {"candidate_id": e.candidate_id, "content_hash": e.content_hash}
+        for e in manifest.candidates
+    ]
+    if tamper:
+        entries[0]["content_hash"] = "tampered"
+
+    path = tmp_path / "j.jsonl"
+    j = Journal(path)
+    j.append(
+        "scheduler",
+        "CANDIDATE_SET_BUILT",
+        {
+            "manifest_hash": manifest.manifest_hash,
+            "manifest_entries": entries,
+            "manifest_schema_version": CANDIDATE_SCHEMA_VERSION,
+            "candidate_ids": list(manifest.candidate_ids),
+            "manifest_unavailable": None,
+        },
+    )
+    chosen = "gbp-never-offered" if unoffered else manifest.candidate_ids[0]
+    j.append("thesis", "CANDIDATE_SELECTED", {"candidate_id": chosen})
+    return path
+
+
+def test_replay_check_passes_on_a_genuine_recorded_set(tmp_path):
+    result = V.check_candidate_replay(_replayable_journal(tmp_path))
+    assert result.status == V.PASS
+    assert result.evidence["sets_verified"] == 1
+
+
+def test_replay_check_fails_when_the_recorded_parts_were_edited(tmp_path):
+    """The published hash no longer follows from what was recorded."""
+    result = V.check_candidate_replay(_replayable_journal(tmp_path, tamper=True))
+    assert result.status == V.FAIL
+    assert "rebuild" in result.detail
+
+
+def test_replay_check_fails_on_a_selection_that_was_never_offered(tmp_path):
+    result = V.check_candidate_replay(_replayable_journal(tmp_path, unoffered=True))
+    assert result.status == V.FAIL
+    assert "never offered" in result.detail
+
+
+def test_replay_check_skips_when_nothing_has_been_offered(tmp_path):
+    path = tmp_path / "j.jsonl"
+    Journal(path).append("s", "STARTUP", {"equity": "100000"})
+    assert V.check_candidate_replay(path).status == V.SKIP

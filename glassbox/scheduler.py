@@ -246,11 +246,18 @@ class Agent:
             return
         manifest_unavailable = ""
         try:
-            from .candidates import build_candidate_manifest
+            from .candidates import CANDIDATE_SCHEMA_VERSION, build_candidate_manifest
 
             manifest = build_candidate_manifest(candidates)
             manifest_hash = manifest.manifest_hash
             candidate_ids = list(manifest.candidate_ids)
+            # The parts the hash was built from, so the hash can be rebuilt
+            # from the journal alone. Recording only the result would make
+            # determinism a claim; recording the inputs makes it checkable.
+            manifest_entries = [
+                {"candidate_id": entry.candidate_id, "content_hash": entry.content_hash}
+                for entry in manifest.candidates
+            ]
         except Exception as exc:
             # Say why rather than quietly emitting an empty hash. A candidate
             # without provenance is a real condition worth seeing in the
@@ -259,6 +266,7 @@ class Agent:
             log.warning("candidate manifest unavailable: %s", manifest_unavailable)
             manifest_hash = ""
             candidate_ids = [getattr(c, "plan_id", "") for c in candidates]
+            manifest_entries = []
 
         self.journal.append(
             "scheduler",
@@ -267,6 +275,8 @@ class Agent:
                 "count": len(candidates),
                 "candidate_ids": candidate_ids,
                 "manifest_hash": manifest_hash,
+                "manifest_entries": manifest_entries,
+                "manifest_schema_version": CANDIDATE_SCHEMA_VERSION,
                 "manifest_unavailable": manifest_unavailable or None,
             },
         )
