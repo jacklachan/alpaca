@@ -45,6 +45,30 @@ Expect:
 release gate: commit f8821cf17009, options-only, paper
 ```
 
+## Release evidence, and where the soak applies
+
+A scored run must show four checks on any host: `journal_chain`,
+`account_identity`, `cli_proof`, and `development_venue_proof`. Each protects
+the *account* -- the journal is intact, the account is the expected one, the
+venue integration is real, and an order has actually been submitted and
+reconciled once under a capped development proof.
+
+`deployment_soak` is required only when the agent runs as a deployed service.
+It proves the box stays up, that systemd restarts what it promised to restart,
+and that the unit file is valid -- properties of a *host*, not of the account.
+Demanding it of a laptop run gates scored startup on infrastructure that is not
+in use, and `tools/crash_drill.py` already covers the recovery logic.
+
+Deployment is detected from `GLASSBOX_DEPLOYMENT=1` (or `vps`), or from
+`INVOCATION_ID`, which systemd sets for every unit it starts. A VPS run started
+by hand outside systemd and without the flag is **not** detected, so set the
+flag when you deploy.
+
+Running locally means nothing has proven the process survives its host. On a
+laptop the real threats are sleep, network drops, and no supervisor to restart
+a dead process -- `caffeinate -is`, a restart loop, and watching the Discord
+heartbeat are the cheap mitigations.
+
 ## Exit codes
 
 | Code | Meaning |

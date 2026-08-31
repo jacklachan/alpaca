@@ -147,10 +147,18 @@ def test_scored_start_refuses_pending_or_incomplete_release_evidence():
     with pytest.raises(ReleaseError, match="cli_proof"):
         skipped.assert_scored_startable(approved_commit="a" * 40, now=NOW)
 
+    # deployment_soak is only demanded of a deployed run, so assert the
+    # missing-artifact rule where the check actually applies.
     no_hash = manifest()
     del no_hash.verification["artifact_sha256"]["deployment_soak"]
     with pytest.raises(ReleaseError, match="deployment_soak"):
-        no_hash.assert_scored_startable(approved_commit="a" * 40, now=NOW)
+        no_hash.assert_scored_startable(approved_commit="a" * 40, now=NOW, deployed=True)
+
+    # A core check missing its artifact hash must raise on any host.
+    core_no_hash = manifest()
+    del core_no_hash.verification["artifact_sha256"]["cli_proof"]
+    with pytest.raises(ReleaseError, match="cli_proof"):
+        core_no_hash.assert_scored_startable(approved_commit="a" * 40, now=NOW, deployed=False)
 
 
 @pytest.mark.parametrize(
@@ -385,3 +393,85 @@ def test_strategy_names_matches_the_constructed_surface():
             for n in main.strategy_set(environment, data=None)
         }
         assert built == names, f"{environment}: manifest and agent disagree"
+
+
+# -- deployment_soak is scoped to deployed runs, not deleted -------------------
+
+
+def test_a_local_run_does_not_demand_the_deployment_soak():
+    """The soak proves a host stays up and systemd restarts what it promised.
+    Those are properties of infrastructure, so demanding them of a laptop run
+    gates scored startup on something that is not in use."""
+    local = manifest()
+    del local.verification["checks"]["deployment_soak"]
+    del local.verification["artifact_sha256"]["deployment_soak"]
+
+    local.assert_scored_startable(approved_commit="a" * 40, now=NOW, deployed=False)
+
+
+def test_a_deployed_run_still_demands_the_deployment_soak():
+    """Scoped, not deleted. Deploy, and the evidence is required again."""
+    deployed = manifest()
+    del deployed.verification["checks"]["deployment_soak"]
+
+    with pytest.raises(ReleaseError, match="deployment_soak"):
+        deployed.assert_scored_startable(approved_commit="a" * 40, now=NOW, deployed=True)
+
+
+@pytest.mark.parametrize(
+    ("environment", "expected"),
+    [
+        ({}, False),
+        ({"GLASSBOX_DEPLOYMENT": "1"}, True),
+        ({"GLASSBOX_DEPLOYMENT": "vps"}, True),
+        ({"GLASSBOX_DEPLOYMENT": "true"}, True),
+        ({"GLASSBOX_DEPLOYMENT": "0"}, False),
+        ({"GLASSBOX_DEPLOYMENT": ""}, False),
+        ({"INVOCATION_ID": "0f2c"}, True),  # systemd sets this for every unit
+        ({"INVOCATION_ID": ""}, False),
+    ],
+)
+def test_deployment_is_detected_from_an_explicit_flag_or_systemd(environment, expected):
+    assert R.is_deployed(environment) is expected
+
+
+def test_the_core_checks_are_required_on_every_host():
+    """Whatever the host, these four protect the account rather than the box,
+    so none of them may be scoped away."""
+    for check in R.CORE_RELEASE_CHECKS:
+        assert check in R.required_release_checks(deployed=False)
+        assert check in R.required_release_checks(deployed=True)
+
+
+def test_the_development_venue_proof_survives_the_relaxation():
+    """The check that proves an order can actually be submitted and reconciled
+    is the one most worth keeping right before trading a scored account for the
+    first time. Dropping it with the soak would have been the wrong half."""
+    assert "development_venue_proof" in R.CORE_RELEASE_CHECKS
+
+    missing = manifest()
+    del missing.verification["checks"]["development_venue_proof"]
+    with pytest.raises(ReleaseError, match="development_venue_proof"):
+        missing.assert_scored_startable(approved_commit="a" * 40, now=NOW, deployed=False)
+
+
+def test_the_full_set_is_still_the_union():
+    assert set(R.REQUIRED_RELEASE_CHECKS) == set(R.CORE_RELEASE_CHECKS) | set(
+        R.DEPLOYMENT_RELEASE_CHECKS
+    )
+
+
+def test_an_undeclared_deployment_falls_back_to_the_environment(monkeypatch):
+    """deployed=None asks the environment rather than assuming."""
+    monkeypatch.setenv("GLASSBOX_DEPLOYMENT", "vps")
+    deployed = manifest()
+    del deployed.verification["checks"]["deployment_soak"]
+    with pytest.raises(ReleaseError, match="deployment_soak"):
+        deployed.assert_scored_startable(approved_commit="a" * 40, now=NOW)
+
+    monkeypatch.delenv("GLASSBOX_DEPLOYMENT")
+    monkeypatch.delenv("INVOCATION_ID", raising=False)
+    local = manifest()
+    del local.verification["checks"]["deployment_soak"]
+    del local.verification["artifact_sha256"]["deployment_soak"]
+    local.assert_scored_startable(approved_commit="a" * 40, now=NOW)

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import platform
 import re
 import subprocess
@@ -42,13 +43,56 @@ SCHEMA_VERSION = 1
 PAPER_ENDPOINT = "https://paper-api.alpaca.markets"
 
 #: External evidence that must be present before the scored process can start.
-REQUIRED_RELEASE_CHECKS = (
+#: Required before any scored run, on any host. Each one protects the account
+#: rather than the infrastructure: the journal is intact, the account is the
+#: one we expect, the venue integration is real, and an order has actually been
+#: submitted and reconciled once under a capped development proof.
+CORE_RELEASE_CHECKS = (
     "journal_chain",
     "account_identity",
     "cli_proof",
     "development_venue_proof",
-    "deployment_soak",
 )
+
+#: Required only when the agent is actually deployed. tools/soak.sh proves the
+#: box stays up, that systemd restarts what it promised to restart, and that
+#: the unit file is valid -- all of which are properties of a host, not of the
+#: account. Demanding it when the agent runs locally gates scored startup on
+#: infrastructure that is not in use, while the crash drill already covers the
+#: recovery logic. Scoped, not deleted: deploy, and it is required again.
+DEPLOYMENT_RELEASE_CHECKS = ("deployment_soak",)
+
+#: Everything, for a deployed run. Kept as the name callers already import.
+REQUIRED_RELEASE_CHECKS = CORE_RELEASE_CHECKS + DEPLOYMENT_RELEASE_CHECKS
+
+
+def is_deployed(environment: Mapping[str, str] | None = None) -> bool:
+    """True when this process is running as a deployed service.
+
+    Two signals, either sufficient. GLASSBOX_DEPLOYMENT is the explicit one an
+    operator sets; INVOCATION_ID is set by systemd for every unit it starts,
+    which covers the path deploy/setup.sh actually installs.
+
+    A VPS run started by hand, outside systemd and without the flag, is not
+    detected -- so the flag is the mechanism to rely on. That is a deliberate
+    limit rather than an oversight: the supported deployment path installs a
+    systemd unit, and the alternative to this scoping was deleting the check
+    outright.
+    """
+    env_map = environment if environment is not None else os.environ
+    if (env_map.get("GLASSBOX_DEPLOYMENT") or "").strip().lower() in {"1", "true", "yes", "vps"}:
+        return True
+    return bool((env_map.get("INVOCATION_ID") or "").strip())
+
+
+def required_release_checks(
+    *, deployed: bool | None = None, environment: Mapping[str, str] | None = None
+) -> tuple[str, ...]:
+    """The checks a scored run must show, for where it is actually running."""
+    if deployed is None:
+        deployed = is_deployed(environment)
+    return REQUIRED_RELEASE_CHECKS if deployed else CORE_RELEASE_CHECKS
+
 
 RELEASE_EVIDENCE_MAX_AGE = timedelta(hours=24)
 RELEASE_EVIDENCE_CLOCK_SKEW = timedelta(minutes=5)
@@ -199,8 +243,14 @@ class ReleaseManifest:
         approved_commit: str = "",
         now: datetime | None = None,
         evidence_max_age: timedelta = RELEASE_EVIDENCE_MAX_AGE,
+        deployed: bool | None = None,
     ) -> None:
-        """The gate a scored run must pass before it may place anything."""
+        """The gate a scored run must pass before it may place anything.
+
+        `deployed` selects which evidence is demanded; None asks the
+        environment. A deployed run must additionally show the soak, because
+        there the host is a thing that can fail.
+        """
         self.validate()
         if self.dirty:
             raise ReleaseError("refusing to start scored: the working tree is dirty")
@@ -256,7 +306,7 @@ class ReleaseManifest:
             raise ReleaseError(
                 "release verification evidence has no required checks or artifact hashes"
             )
-        for name in REQUIRED_RELEASE_CHECKS:
+        for name in required_release_checks(deployed=deployed):
             if checks.get(name) != "PASS":
                 raise ReleaseError(f"required release check {name} is missing, skipped, or failed")
             digest = artifacts.get(name)
