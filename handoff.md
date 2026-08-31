@@ -6,6 +6,8 @@
 **Preserved branches:** `utk` at `5414498`, teammate `origin/review` at
 `c45b23f`, and `main` at `363808c`
 **Completed checkpoint:** C4 - runtime ownership and broker boundaries
+**C4 CI:** green at `555ff04` after the fix below. The `b661162` run failed and
+that failure is now closed.
 **Next checkpoint:** C5 - semantic verification and official CLI proof
 
 The independent readiness audit scores this base at 47/100 and says it is not
@@ -104,6 +106,43 @@ authorized. Ordinary checkpoint pushes are authorized only to
 `origin/utk-review` after their complete gates pass.
 
 ---
+
+
+## C4 follow-up: cross-platform typing and two scored-account gaps
+
+Three fixes after C4, all CI-green (`555ff04`, `8fc7c19`).
+
+**The CI failure was misdiagnosed as Linux-specific.** It was not. `mypy`
+narrows on `sys.platform`, not `os.name`, so the Windows-only `ctypes.WinDLL`
+probe written under `if os.name == "nt":` was type-checked on every platform
+and failed on all of them except Windows. It reproduces identically on macOS.
+The type gate was green on exactly one machine - the author's - which is the
+worst possible place for a gate to be green. Fixed by guarding with
+`sys.platform == "win32"`. `make type` now runs linux, darwin and win32, so
+whoever runs the gate locally sees what CI will see. The probe logic itself was
+correct and is unchanged.
+
+**tools/practice.py could be walked past.** Its only protection compared
+`os.getenv("ALPACA_ENV")` to `"scored"`. systemd's EnvironmentFile parser keeps
+inline `#` comments in the value, so `ALPACA_ENV=scored  # note` is not equal
+to `"scored"` - the guard passes while `Broker` resolves the same variable
+through `env.require_choice`, gets `"scored"`, and connects to the scored
+account. That is precisely the incident `glassbox/env.py` documents. It now
+resolves the variable the way the Broker does.
+
+**The symbol-wide close had no enforcement.** `PositionManager` carried a
+comment saying that path "must never run on the scored account" and nothing
+checked it - while `tools/practice.py` builds a manager with no ledger. A
+scored broker without a ledger now refuses and journals `EXIT_REFUSED_NO_LEDGER`
+rather than trusting every caller. The development path is unchanged.
+
+Also: `python tools/practice.py` could not run at all - Python puts the
+script's directory on `sys.path`, not the working directory, so importing
+`glassbox` failed. Surfaced by testing the documented command by running it.
+
+Suite: **618 tests**, crash drill 14/14, `make verify` exit 0, submission
+verification VERIFIED with 0 contradictions.
+
 
 ## Historical teammate handoff at the audited base
 
