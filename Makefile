@@ -10,8 +10,14 @@ format-check:
 lint:
 	$(PYTHON) -m ruff check .
 
+# Every platform, not just this one. The type gate once passed on Windows and
+# failed everywhere else, because a Windows-only branch is only type-checked
+# where its API exists. Checking all three means whoever runs this locally
+# sees what CI will see, whatever machine they are on.
 type:
-	$(PYTHON) -m mypy glassbox dashboard tools main.py
+	$(PYTHON) -m mypy --platform linux glassbox dashboard tools main.py
+	$(PYTHON) -m mypy --platform darwin glassbox dashboard tools main.py
+	$(PYTHON) -m mypy --platform win32 glassbox dashboard tools main.py
 
 test:
 	$(PYTHON) -m pytest -q

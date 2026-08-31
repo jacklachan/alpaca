@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Callable, TypeVar
@@ -98,7 +99,11 @@ def _pid_is_alive(pid: int) -> bool:
     """
     if pid <= 0:
         return True
-    if os.name == "nt":
+    # sys.platform, not os.name: mypy narrows on sys.platform and skips this
+    # branch entirely off Windows, where ctypes has no WinDLL to check against.
+    # With os.name the branch was analysed on every platform, so the type gate
+    # passed only on the one machine where the Windows API exists.
+    if sys.platform == "win32":
         import ctypes
         from ctypes import wintypes
 
