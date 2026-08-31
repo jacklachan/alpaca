@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import glassbox.state as state_module
 from glassbox.position_ledger import LedgerEntry, PositionLedger
 from glassbox.state import ProcessLock, StateCorrupt, StateLocked
 
@@ -565,18 +566,18 @@ def test_two_scheduler_processes_cannot_own_same_state_directory(tmp_path):
     ProcessLock(path).acquire().release()
 
 
-def test_a_lock_left_by_a_dead_process_is_reclaimed(tmp_path):
+def test_a_lock_left_by_a_dead_process_is_reclaimed_without_an_unbounded_pid_probe(
+    tmp_path, monkeypatch
+):
     path = tmp_path / "scheduler.lock"
     dead_pid = 999_999
-    while True:
-        try:
-            os.kill(dead_pid, 0)
-        except ProcessLookupError:
-            break
-        except OSError:
-            pass
-        dead_pid -= 1
     path.write_text(json.dumps({"pid": dead_pid}))
+    monkeypatch.setattr(state_module, "_pid_is_alive", lambda pid: False, raising=False)
+
+    def unsafe_probe(pid, signal):
+        raise AssertionError("ProcessLock must use the bounded platform probe")
+
+    monkeypatch.setattr(os, "kill", unsafe_probe)
 
     lock = ProcessLock(path).acquire()
     assert json.loads(path.read_text())["pid"] == os.getpid()
@@ -587,4 +588,18 @@ def test_an_unreadable_lock_is_treated_as_held(tmp_path):
     path = tmp_path / "scheduler.lock"
     path.write_text("garbage")
     with pytest.raises(StateLocked):
+        ProcessLock(path).acquire()
+
+
+def test_permission_denied_while_acquiring_lock_fails_closed(tmp_path, monkeypatch):
+    path = tmp_path / "scheduler.lock"
+    real_open = state_module.os.open
+
+    def denied(target, flags, mode=0o777):
+        if str(target) == str(path):
+            raise PermissionError("denied")
+        return real_open(target, flags, mode)
+
+    monkeypatch.setattr(state_module.os, "open", denied)
+    with pytest.raises(StateLocked, match="cannot acquire"):
         ProcessLock(path).acquire()

@@ -36,6 +36,7 @@ from glassbox.release import (
 )
 from glassbox.release import build as build_release  # noqa: E402
 from glassbox.scheduler import Agent, discord  # noqa: E402
+from glassbox.state import ProcessLock, StateLocked  # noqa: E402
 from glassbox.strategies.core import CoreStrategy  # noqa: E402
 from glassbox.strategies.crypto import CryptoStrategy  # noqa: E402
 from glassbox.strategies.event_vol import EventVolStrategy  # noqa: E402
@@ -176,53 +177,16 @@ def build(thesis_enabled: bool = True):
     return agent, journal, broker
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(prog="glassbox")
-    ap.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="wire up, verify the account, print the schedule, exit",
-    )
-    ap.add_argument("--once", action="store_true", help="one tick, then exit")
-    ap.add_argument(
-        "--no-thesis",
-        action="store_true",
-        help="disable AI selection; scored cycles safely abstain",
-    )
-    ap.add_argument("-v", "--verbose", action="store_true")
-    args = ap.parse_args()
+def _runtime_lock_path() -> Path:
+    """Derive singleton ownership from the authoritative journal directory."""
+    journal_path = Path(C.JOURNAL_PATH)
+    if not journal_path.is_absolute():
+        journal_path = Path(__file__).resolve().parent / journal_path
+    return journal_path.parent / "scheduler.lock"
 
-    setup_logging(args.verbose)
-    log = logging.getLogger("glassbox")
 
-    # Verify the audit trail FIRST, before anything that needs credentials.
-    #
-    # This used to run after build(), which constructs the Broker -- so on a
-    # machine without a .env the process exited 1 ("credentials not set") and
-    # never reached the chain check at all. The integrity of the journal is a
-    # property of local state and needs no broker, so gating it behind
-    # credentials was backwards: it made the guard untestable on a clean
-    # checkout and silently unreachable in CI. Cheapest and most fundamental
-    # check goes first.
-    journal = Journal(C.JOURNAL_PATH)
-    ok, why = journal.verify()
-    log.info("journal: %s", why)
-    if not ok:
-        log.critical("JOURNAL CHAIN BROKEN: %s", why)
-        discord(f":rotating_light: glassbox journal chain broken: {why}")
-        return 3
-
-    # Release identity, before credentials are used for anything. Scored mode
-    # cannot disable this gate; development remains available without claiming
-    # scored authority.
-    try:
-        manifest = approved_release_manifest()
-    except (ReleaseError, env.EnvError) as exc:
-        log.critical("RELEASE GATE REFUSED START: %s", exc)
-        return 6
-    if manifest is not None:
-        log.info("release gate: commit %s, options-only, paper", manifest.commit[:12])
-
+def _run_runtime(args: argparse.Namespace, log: logging.Logger) -> int:
+    """Build and run while the caller retains any scored ownership lock."""
     try:
         agent, journal, broker = build(thesis_enabled=not args.no_thesis)
     except NotPaperTrading as exc:
@@ -236,10 +200,6 @@ def main() -> int:
         try:
             info = broker.assert_ready()
         except Exception as exc:
-            # A raw traceback at 03:00 tells the on-call person nothing useful.
-            # Separate "the network is unhappy" (systemd will retry) from "this
-            # account is wrong" (a human must intervene), because the responses
-            # are completely different.
             transient = any(
                 t in str(exc).lower()
                 for t in ("proxy", "timeout", "connection", "temporarily", "unreachable", "resolve")
@@ -275,6 +235,68 @@ def main() -> int:
 
     agent.run()
     return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(prog="glassbox")
+    ap.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="wire up, verify the account, print the schedule, exit",
+    )
+    ap.add_argument("--once", action="store_true", help="one tick, then exit")
+    ap.add_argument(
+        "--no-thesis",
+        action="store_true",
+        help="disable AI selection; scored cycles safely abstain",
+    )
+    ap.add_argument("-v", "--verbose", action="store_true")
+    args = ap.parse_args()
+
+    setup_logging(args.verbose)
+    log = logging.getLogger("glassbox")
+
+    try:
+        environment = env.require_choice("ALPACA_ENV", {"dev", "scored"}, default="dev")
+    except env.EnvError as exc:
+        log.critical("RELEASE GATE REFUSED START: %s", exc)
+        return 6
+
+    runtime_lock = None
+    try:
+        # Scored ownership begins before Journal construction because recovery
+        # may repair and append to the authoritative state. It remains held
+        # through build, account assertion, every tick, and normal shutdown.
+        if environment == "scored":
+            runtime_lock = ProcessLock(_runtime_lock_path()).acquire()
+
+        # Verify the audit trail before anything that needs credentials. The
+        # lock above is filesystem-only and therefore preserves that ordering.
+        journal = Journal(C.JOURNAL_PATH)
+        ok, why = journal.verify()
+        log.info("journal: %s", why)
+        if not ok:
+            log.critical("JOURNAL CHAIN BROKEN: %s", why)
+            discord(f":rotating_light: glassbox journal chain broken: {why}")
+            return 3
+
+        # Release identity, before credentials are used for anything. Scored
+        # mode cannot disable this gate; development has no scored authority.
+        try:
+            manifest = approved_release_manifest()
+        except (ReleaseError, env.EnvError) as exc:
+            log.critical("RELEASE GATE REFUSED START: %s", exc)
+            return 6
+        if manifest is not None:
+            log.info("release gate: commit %s, options-only, paper", manifest.commit[:12])
+
+        return _run_runtime(args, log)
+    except StateLocked as exc:
+        log.critical("SCORED RUNTIME OWNERSHIP REFUSED: %s", exc)
+        return 7
+    finally:
+        if runtime_lock is not None:
+            runtime_lock.release()
 
 
 if __name__ == "__main__":

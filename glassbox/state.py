@@ -89,6 +89,42 @@ class StateLocked(StateError):
     """Another live process already owns this state directory."""
 
 
+def _pid_is_alive(pid: int) -> bool:
+    """Return false only when the operating system proves the PID is absent.
+
+    CPython's ``os.kill(pid, 0)`` can terminate the interpreter for some
+    invalid PIDs on Windows. OpenProcess is a bounded existence probe there;
+    every result other than ERROR_INVALID_PARAMETER fails closed as alive.
+    """
+    if pid <= 0:
+        return True
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        process_query_limited_information = 0x1000
+        error_invalid_parameter = 87
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+        if handle:
+            kernel32.CloseHandle(handle)
+            return True
+        return ctypes.get_last_error() != error_invalid_parameter
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return True
+    return True
+
+
 class ProcessLock:
     """Exclusive ownership of one state directory.
 
@@ -115,19 +151,13 @@ class ProcessLock:
             return True
         if pid == os.getpid():
             return True
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            # Exists, owned by another user.
-            return True
-        except OSError:
-            return True
-        return True
+        return _pid_is_alive(pid)
 
     def acquire(self) -> ProcessLock:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise StateLocked(f"{self.path}: cannot create lock directory: {exc}") from exc
         try:
             self._descriptor = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         except FileExistsError:
@@ -140,13 +170,30 @@ class ProcessLock:
                 self.path.unlink()
             except FileNotFoundError:
                 pass
+            except OSError as exc:
+                raise StateLocked(f"{self.path}: cannot reclaim stale lock: {exc}") from exc
             try:
                 self._descriptor = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
             except FileExistsError:
                 raise StateLocked(f"{self.path}: lost the race to reclaim a stale lock") from None
-        payload = json.dumps({"pid": os.getpid()}).encode("utf-8")
-        os.write(self._descriptor, payload)
-        os.fsync(self._descriptor)
+            except OSError as exc:
+                raise StateLocked(f"{self.path}: cannot acquire reclaimed lock: {exc}") from exc
+        except OSError as exc:
+            raise StateLocked(f"{self.path}: cannot acquire runtime lock: {exc}") from exc
+        try:
+            payload = json.dumps({"pid": os.getpid()}).encode("utf-8")
+            os.write(self._descriptor, payload)
+            os.fsync(self._descriptor)
+        except OSError as exc:
+            try:
+                os.close(self._descriptor)
+            finally:
+                self._descriptor = None
+                try:
+                    self.path.unlink()
+                except OSError:
+                    pass
+            raise StateLocked(f"{self.path}: cannot persist runtime lock: {exc}") from exc
         return self
 
     def release(self) -> None:

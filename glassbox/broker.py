@@ -17,6 +17,7 @@ import logging
 import random
 import threading
 import time
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, Callable, TypeVar
@@ -143,7 +144,6 @@ class BrokerUnknownState(BrokerError):
 
 MAX_BACKOFF_SECONDS = 8.0
 
-_NOT_FOUND_MARKERS = ("not found", "does not exist")
 _UNAVAILABLE_MARKERS = (
     "timeout",
     "timed out",
@@ -158,7 +158,7 @@ _UNAVAILABLE_MARKERS = (
 
 
 def _is_api_error(exc: Exception) -> bool:
-    """True for an Alpaca APIError, i.e. the venue answered with an error."""
+    """True only for alpaca-py's venue-response exception type."""
     return any(base.__name__ == "APIError" for base in type(exc).__mro__)
 
 
@@ -199,12 +199,8 @@ def classify_broker_error(exc: Exception) -> BrokerError:
     code = _status_code_of(exc)
     detail = str(exc)
 
-    if code == 404:
+    if code == 404 and _is_api_error(exc):
         return OrderNotFound(detail, status_code=404)
-    # An APIError carrying a not-found message is still the venue answering,
-    # even when no HTTP response object was attached to it.
-    if code is None and _is_api_error(exc) and any(m in text for m in _NOT_FOUND_MARKERS):
-        return OrderNotFound(detail)
     if code in (401, 403):
         return BrokerAuthError(detail, status_code=code)
     if code in (400, 422):
@@ -220,6 +216,48 @@ def classify_broker_error(exc: Exception) -> BrokerError:
 
 def _is_retryable(exc: Exception) -> bool:
     return classify_broker_error(exc).retryable
+
+
+def _exact_executable(value: Decimal | int, field: str) -> str:
+    """Serialize an executable number without a binary-float round trip."""
+    if isinstance(value, bool) or not isinstance(value, (Decimal, int)):
+        raise TypeError(f"{field} must be Decimal or int")
+    number = Decimal(value)
+    if not number.is_finite() or number <= 0:
+        raise ValueError(f"{field} must be finite and positive")
+    return format(number, "f")
+
+
+@dataclass(frozen=True)
+class _ExactOrderRequest:
+    """Order request adapter for the pinned TradingClient boundary.
+
+    alpaca-py's public request models type quantity and price as ``float``.
+    TradingClient.submit_order consumes only ``to_request_fields()``, and the
+    Trading API accepts decimal JSON strings. Keeping those fields as strings
+    preserves the exact reviewed tick and fractional quantity on the wire.
+    """
+
+    symbol: str
+    qty: str
+    side: str
+    order_type: str
+    time_in_force: str
+    client_order_id: str
+    limit_price: str | None = None
+
+    def to_request_fields(self) -> dict[str, str]:
+        fields = {
+            "symbol": self.symbol,
+            "qty": self.qty,
+            "side": self.side,
+            "type": self.order_type,
+            "time_in_force": self.time_in_force,
+            "client_order_id": self.client_order_id,
+        }
+        if self.limit_price is not None:
+            fields["limit_price"] = self.limit_price
+        return fields
 
 
 class Broker:
@@ -639,30 +677,22 @@ class Broker:
         timeout leaves the outcome genuinely unknown and the correct response is
         to reconcile and look, not to guess.
         """
-        from alpaca.trading.enums import OrderSide, TimeInForce
-        from alpaca.trading.requests import LimitOrderRequest, MarketOrderRequest
-
-        s = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
-        tif = TimeInForce.GTC if instrument == "crypto" else TimeInForce.DAY
-
-        req: Any
-        if limit_price is not None:
-            req = LimitOrderRequest(
-                symbol=symbol,
-                qty=float(qty),
-                side=s,
-                time_in_force=tif,
-                limit_price=float(limit_price),
-                client_order_id=client_order_id,
-            )
-        else:
-            req = MarketOrderRequest(
-                symbol=symbol,
-                qty=float(qty),
-                side=s,
-                time_in_force=tif,
-                client_order_id=client_order_id,
-            )
+        normalized_side = side.lower()
+        if normalized_side not in {"buy", "sell"}:
+            raise ValueError("side must be buy or sell")
+        exact_qty = _exact_executable(qty, "qty")
+        exact_limit = (
+            _exact_executable(limit_price, "limit_price") if limit_price is not None else None
+        )
+        req = _ExactOrderRequest(
+            symbol=symbol,
+            qty=exact_qty,
+            side=normalized_side,
+            order_type="limit" if exact_limit is not None else "market",
+            time_in_force="gtc" if instrument == "crypto" else "day",
+            client_order_id=client_order_id,
+            limit_price=exact_limit,
+        )
 
         if not self.bucket.take():
             raise RuntimeError("rate limit budget exhausted on submit")

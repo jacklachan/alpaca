@@ -5,8 +5,8 @@
 **Audited base:** `c45b23fdf6cb51be1092ea2b0c76d1e7f0128c69`
 **Preserved branches:** `utk` at `5414498`, teammate `origin/review` at
 `c45b23f`, and `main` at `363808c`
-**Completed checkpoint:** C3 - unified mutation and exact unwind
-**Next checkpoint:** C4 - runtime ownership and broker boundaries
+**Completed checkpoint:** C4 - runtime ownership and broker boundaries
+**Next checkpoint:** C5 - semantic verification and official CLI proof
 
 The independent readiness audit scores this base at 47/100 and says it is not
 safe for scored activation yet. Its blocking findings and the complete staged
@@ -40,9 +40,9 @@ tests. It passed 554 tests outside `tests/test_position_ledger.py` and 29 of 30
 tests in that file; the one deselected test is the existing unbounded Windows
 dead-PID probe. Ruff format/lint, mypy across 46 source files, 33 kernel tests,
 crash drill 14/14, environment parity for 12 variables, compileall, dependency
-integrity, claim/secret checks, and `git diff --check` passed. C4 owns the bounded
-cross-platform dead-PID regression; remote Python 3.12 Linux CI remains the
-authoritative all-tests gate.
+integrity, claim/secret checks, and `git diff --check` passed. C4 subsequently
+replaced the unbounded Windows dead-PID probe; remote Python 3.12 Linux CI
+remains the authoritative release gate.
 
 C3 adds one `OrderMutationService` for scored entries, replacements, incomplete-
 entry unwinds, and mechanical exits. It persists exit/unwind identity before
@@ -65,6 +65,26 @@ and `git diff --check` passed. The repeated Windows access-violation diagnostic
 remains an interpreter/host issue. C3 is committed at `a643a73` and the
 authoritative all-tests Linux Python 3.12 GitHub Actions run `33386055209`
 passed, so C4 may begin.
+
+C4 acquires `ProcessLock` from the authoritative journal directory before any
+scored journal recovery or broker construction, holds it across account
+assertion, `--once`, and the complete scheduler lifetime, and releases it on
+normal or exceptional shutdown. A second, corrupt, or permission-denied owner
+fails closed before order-capable construction. Dead PID detection now uses a
+bounded Windows `OpenProcess` check instead of the CPython `os.kill(pid, 0)`
+path that produced access violations. Order lookup treats absence as proven
+only when alpaca-py supplies a real HTTP 404 `APIError`; status-less messages,
+transport failures, and lookalike exceptions remain unknown. Executable
+quantity and price cross the installed `TradingClient.submit_order()` boundary
+as exact decimal strings, never binary floats.
+
+C4 local verification used managed CPython 3.12.11. All 597 tests passed with
+no deselection and the focused startup/broker/lock/lifecycle/execution/manager/
+ledger/scheduler set passed 186 tests. Ruff format/lint, mypy across 47 source
+files, 33 kernel tests, crash drill 14/14, environment parity for 12 variables,
+compileall, dependency integrity, submission claim/secret checks, and
+`git diff --check` passed. The checkpoint push must still pass the authoritative
+all-tests Linux Python 3.12 CI before C5 begins.
 
 A development paper credential is now present only in the Git-ignored `.env`.
 Read-only proof on 2026-08-31 confirmed the expected account suffix `...JZAQ`,

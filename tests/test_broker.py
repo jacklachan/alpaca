@@ -179,6 +179,25 @@ def test_get_order_by_client_id_returns_absent_only_for_verified_not_found():
     assert _lookup_broker(not_found).get_order_by_coid("client-1") is None
 
 
+def test_statusless_not_found_message_is_unknown_not_verified_absence():
+    def ambiguous(coid):
+        raise _api_error('{"message":"order not found"}')
+
+    with pytest.raises(broker_module.BrokerUnknownState):
+        _lookup_broker(ambiguous).get_order_by_coid("client-1")
+
+
+def test_non_alpaca_exception_with_404_attribute_is_not_verified_absence():
+    class ImpostorError(RuntimeError):
+        status_code = 404
+
+    def ambiguous(coid):
+        raise ImpostorError("not found")
+
+    with pytest.raises(broker_module.BrokerUnknownState):
+        _lookup_broker(ambiguous).get_order_by_coid("client-1")
+
+
 @pytest.mark.parametrize(
     ("exc_factory", "expected"),
     [
@@ -269,6 +288,55 @@ def test_cancel_and_confirm_surfaces_unknown_lookup_rather_than_assuming_absent(
 
     with pytest.raises(broker_module.OrderStateUncertain, match="client-1"):
         broker.cancel_and_confirm("broker-1", "client-1", timeout=0.01, poll_seconds=0)
+
+
+def test_submit_preserves_exact_decimal_quantity_and_tick_price_at_sdk_boundary():
+    from alpaca.trading.client import TradingClient
+
+    captured = []
+    broker = Broker.__new__(Broker)
+    broker.journal = None
+    broker.bucket = SimpleNamespace(take=lambda: True)
+    broker._log = lambda actor, event, payload: None
+
+    class Accepted(dict):
+        id = "order-1"
+        submitted_at = None
+        status = "accepted"
+
+    client = TradingClient.__new__(TradingClient)
+    client._use_raw_data = True
+
+    def post(path, data):
+        captured.append((path, data))
+        return Accepted()
+
+    client.post = post
+    broker.trading = client
+    broker.submit(
+        symbol="BTC/USD",
+        qty=Decimal("0.123456789012345678"),
+        side="buy",
+        client_order_id="gbx-exact",
+        limit_price=Decimal("12345.6700"),
+        instrument="crypto",
+    )
+
+    assert captured == [
+        (
+            "/orders",
+            {
+                "symbol": "BTC/USD",
+                "qty": "0.123456789012345678",
+                "side": "buy",
+                "type": "limit",
+                "time_in_force": "gtc",
+                "client_order_id": "gbx-exact",
+                "limit_price": "12345.6700",
+            },
+        )
+    ]
+    assert not any(isinstance(value, float) for value in captured[0][1].values())
 
 
 # -- performance reporting -----------------------------------------------------
