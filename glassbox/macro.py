@@ -114,7 +114,10 @@ OPTION_ORDER_CUTOFF_ET = (15, 30)
 # Market holidays inside and just after the window. Labor Day matters because
 # it sits between the 4 Sep measurement and the 8 Sep expiry, which is what
 # makes that expiry cheap per calendar day.
-HOLIDAYS_2026 = frozenset({date(2026, 9, 7)})  # Labor Day
+# The offline fallback table, shared with glassbox/market_calendar.py so there
+# is one list rather than two that drift. Production counts sessions from
+# Alpaca's own calendar; this is what answers when there is no network.
+from .market_calendar import FALLBACK_HOLIDAYS as HOLIDAYS_2026  # noqa: E402
 
 
 def next_event(
@@ -150,10 +153,6 @@ def post_measurement_events(measurement: datetime | None = None) -> list[MacroEv
     kept so the journal can say explicitly why they were skipped."""
     cutoff = measurement or MEASUREMENT_ET
     return sorted([e for e in CALENDAR if e.when > cutoff], key=lambda e: e.when)
-
-
-def events_between(start: datetime, end: datetime) -> list[MacroEvent]:
-    return sorted([e for e in CALENDAR if start < e.when <= end], key=lambda e: e.when)
 
 
 def trading_days_between(start: date, end: date) -> int:
@@ -195,9 +194,3 @@ def sessions_remaining_at_measurement(expiry: date, measurement: datetime | None
         return 0
     n = 1 if (m.weekday() < 5 and m not in HOLIDAYS_2026) else 0
     return n + trading_days_between(m, expiry)
-
-
-def is_measurement_imminent(now: datetime, hours: float = 24) -> bool:
-    """True inside the final day. Used to refuse opening new risk that cannot
-    resolve before the account is photographed."""
-    return 0 <= (MEASUREMENT_ET - now).total_seconds() / 3600 <= hours

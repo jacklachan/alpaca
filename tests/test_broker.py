@@ -367,3 +367,34 @@ def test_portfolio_history_is_read_only_and_summarised():
     # Peak 101500 -> trough 99500 is a larger decline than start-to-finish.
     assert summary.max_drawdown_pct < summary.total_return_pct
     assert summary.ratios_are_indicative is True
+
+
+# -- sessions come from the venue calendar ------------------------------------
+
+
+def test_reconcile_counts_sessions_from_the_venue_calendar():
+    """Every expiry decision rests on this count. A weekday heuristic is
+    quietly wrong on any holiday outside a hardcoded table, so the horizon
+    must come from Alpaca's own calendar when one is reachable."""
+    from datetime import date as _date
+
+    from glassbox.market_calendar import MarketCalendar
+
+    broker = Broker.__new__(Broker)
+    broker._calendar = MarketCalendar(
+        fetch=lambda s, e: [SimpleNamespace(date=d) for d in (_date(2026, 9, 1), _date(2026, 9, 2))]
+    )
+
+    # Only two sessions exist in that fake calendar, whatever the weekdays say.
+    assert broker.calendar.sessions_between(_date(2026, 8, 31), _date(2026, 9, 30)) == 2
+    assert broker.calendar.source == "alpaca"
+
+
+def test_the_broker_builds_its_calendar_once():
+    broker = Broker.__new__(Broker)
+    broker._calendar = None
+    broker.trading = SimpleNamespace(get_calendar=lambda request: [])
+    broker._call = lambda fn, what: fn()
+
+    first = broker.calendar
+    assert broker.calendar is first, "the calendar was rebuilt per access"

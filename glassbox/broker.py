@@ -26,7 +26,6 @@ from . import config as C
 from . import env
 from .ids import EVENT_PREFIX as EVENT_COID_PREFIX
 from .kernel import PortfolioState, Position
-from .macro import trading_days_between
 from .schema import OptionContract
 
 log = logging.getLogger("glassbox.broker")
@@ -214,10 +213,6 @@ def classify_broker_error(exc: Exception) -> BrokerError:
     return BrokerUnknownState(detail, status_code=code)
 
 
-def _is_retryable(exc: Exception) -> bool:
-    return classify_broker_error(exc).retryable
-
-
 def _exact_executable(value: Decimal | int, field: str) -> str:
     """Serialize an executable number without a binary-float round trip."""
     if isinstance(value, bool) or not isinstance(value, (Decimal, int)):
@@ -301,6 +296,7 @@ class Broker:
         # require_choice, not getenv: an unrecognised ALPACA_ENV must crash, not
         # quietly take the dev branch and skip the scored-account guards below.
         self.env = env.require_choice("ALPACA_ENV", {"dev", "scored"}, default="dev")
+        self._calendar: Any = None
 
     # -- plumbing --------------------------------------------------------------
 
@@ -341,6 +337,20 @@ class Broker:
         if last is None:  # pragma: no cover - the loop always runs at least once
             raise RuntimeError(f"no attempt made calling {what}")
         raise last  # pragma: no cover
+
+    @property
+    def calendar(self):
+        """Trading sessions, from the venue, built once per process.
+
+        getattr, not attribute access: the crash drill and much of the test
+        suite build a Broker through __new__ to avoid needing credentials, so
+        anything here that assumes __init__ ran breaks those paths.
+        """
+        if getattr(self, "_calendar", None) is None:
+            from .market_calendar import from_broker
+
+            self._calendar = from_broker(self)
+        return self._calendar
 
     def _log(self, actor: str, event: str, payload: dict) -> None:
         if self.journal is not None:
@@ -583,8 +593,12 @@ class Broker:
         # map here silently refuses EVERY option trade -- which is exactly what
         # happened until the practice harness surfaced it.
         today = datetime.now(C.ET).date()
+        # Sessions from Alpaca's calendar, not from weekday arithmetic. Every
+        # expiry decision rests on this count, and a weekday heuristic is
+        # quietly wrong on any holiday outside the hardcoded table.
+        sessions = self.calendar.sessions_between
         horizon = {
-            date.fromordinal(today.toordinal() + d): trading_days_between(
+            date.fromordinal(today.toordinal() + d): sessions(
                 today, date.fromordinal(today.toordinal() + d)
             )
             for d in range(1, 46)

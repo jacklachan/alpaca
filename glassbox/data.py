@@ -21,7 +21,6 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Callable
 
-from . import config as C
 from .candidates import ActiveOptionContract
 from .option_data import OptionDataGateway
 from .strategies.event_vol import ChainLeg, ExpiryQuote
@@ -143,36 +142,3 @@ class MarketData:
         self, underlying: str, expiry: date, spot: Decimal, band: float = 0.05
     ) -> dict[date, list[ChainLeg]]:
         return self.options.chain_legs(underlying, expiry, spot, band)
-
-    def feature_table(self, symbols: list[str], state) -> dict:
-        """The small table of meaningful numbers handed to the model.
-
-        Every value here is something the model may cite as evidence, so every
-        value must be one we actually computed.
-        """
-        out: dict[str, dict] = {}
-        for sym in symbols:
-            try:
-                closes = self.daily_closes(sym, 25)
-                if len(closes) < 5:
-                    continue
-                rv10 = realised_vol(closes[-11:])
-                rv5 = realised_vol(closes[-6:])
-                spot = state.snapshot_price.get(sym)
-                row = {
-                    "spot": float(spot) if spot else closes[-1],
-                    "realised_vol_10d": round(rv10, 4),
-                    "realised_vol_5d": round(rv5, 4),
-                    "ma5_state": "above" if closes[-1] > sum(closes[-5:]) / 5 else "below",
-                    "ret_5d": round((closes[-1] / closes[-6] - 1), 4) if len(closes) > 5 else 0.0,
-                }
-                if sym in C.OPTION_UNDERLYING_ALLOWLIST and spot:
-                    quotes = self.expiry_quotes(sym, spot)
-                    if quotes:
-                        front = min(quotes, key=lambda q: q.expiry)
-                        row["implied_vol_front"] = float(front.atm_iv)
-                        row["iv_to_rv_ratio"] = round(iv_to_rv(float(front.atm_iv), rv10), 3)
-                out[sym] = row
-            except Exception as exc:
-                log.warning("features failed for %s: %s", sym, exc)
-        return out
