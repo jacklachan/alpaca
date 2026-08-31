@@ -96,6 +96,12 @@ candidate, or attempts to add trade fields, the scored cycle abstains.
   fails before writing if any credential value appears in it.
 - Only one scheduler may own a state directory; a lock is reclaimed only when
   its recorded process is verifiably gone.
+- Trading sessions come from Alpaca's own calendar, not from weekday
+  arithmetic against a hardcoded holiday table. Every expiry decision rests on
+  that count, and which calendar answered is recorded.
+- A reconciliation gap heals itself once the venue and ledger agree exactly;
+  durable state corruption never does and always needs a human. One transient
+  failure to read open orders must not stop an unattended agent for a week.
 - Performance is measured on total account equity from Alpaca's own portfolio
   history, not reconstructed from our fill log. Risk-adjusted ratios are
   reported with the sample size behind them and stay marked indicative below
@@ -174,6 +180,8 @@ glassbox/
   kernel.py       deterministic 13-invariant risk review
   execute.py      intent journal, reconciliation, fill/cancel/reprice state machine
   order_lifecycle.py  pure reducer over observed order states
+  market_calendar.py  trading sessions from Alpaca, with recorded provenance
+  replay.py           rebuild recorded decisions from the journal alone
   greeks.py           deterministic option-surface gates (delta/gamma/theta/vega/IV)
   mcp_client.py       read-only MCP client that cannot place an order
   verification.py     checks a third party can run against our claims
@@ -206,7 +214,9 @@ re-derived and inspects what cannot: the journal hash chain, that every AI
 selection names a candidate that was actually offered, that no recorded model
 response carried an executable field, release-manifest integrity, position
 ledger checksums, dependency pinning, and whether the CLI/MCP proof bundles
-exist. A `SKIP` means the evidence does not exist yet - it is never a waived
+exist. It also **replays** every recorded candidate set: the content address
+the agent published is recomputed from the parts it recorded, so determinism
+is something you run rather than something we assert. A `SKIP` means the evidence does not exist yet - it is never a waived
 check. The same command runs in CI on every commit.
 
 ## Operations
