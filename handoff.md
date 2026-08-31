@@ -5,8 +5,8 @@
 **Audited base:** `c45b23fdf6cb51be1092ea2b0c76d1e7f0128c69`
 **Preserved branches:** `utk` at `5414498`, teammate `origin/review` at
 `c45b23f`, and `main` at `363808c`
-**Completed checkpoint:** C2 - idempotent fill and ledger replay
-**Next checkpoint:** C3 - unified mutation and exact unwind
+**Completed checkpoint:** C3 - unified mutation and exact unwind
+**Next checkpoint:** C4 - runtime ownership and broker boundaries
 
 The independent readiness audit scores this base at 47/100 and says it is not
 safe for scored activation yet. Its blocking findings and the complete staged
@@ -44,9 +44,43 @@ integrity, claim/secret checks, and `git diff --check` passed. C4 owns the bound
 cross-platform dead-PID regression; remote Python 3.12 Linux CI remains the
 authoritative all-tests gate.
 
-No credentials are present. No order, deployment, activation, merge,
-default-branch change, or submission is authorized. Ordinary checkpoint pushes
-are authorized only to `origin/utk-review` after their complete gates pass.
+C3 adds one `OrderMutationService` for scored entries, replacements, incomplete-
+entry unwinds, and mechanical exits. It persists exit/unwind identity before
+submission, submits once, adopts only the original client-order ID after an
+ambiguous response, confirms terminal cancellation, applies cumulative fill
+deltas to the ledger immediately, and polls exact venue positions before
+reporting flat. Replacement orders retain their own requested quantity under
+the immutable plan cap. Incomplete option legs now unwind through deterministic
+exact-quantity orders; the scored option path no longer uses symbol-wide close.
+The scheduler passes its durable ledger into execution so a crash or cleanup
+cannot occur before confirmed entry ownership is recorded.
+
+C3 local verification used managed CPython 3.12.11 and collected 589 tests.
+The full runnable Windows suite passed 588 tests with only the pre-existing
+unbounded dead-PID probe deselected; the focused broker/lifecycle/execution/
+manager/ledger/scheduler set passed 195 tests. Ruff format/lint, mypy across 47
+source files, 33 kernel tests, crash drill 14/14, environment parity for 12
+variables, compileall, dependency integrity, submission claim/secret checks,
+and `git diff --check` passed. The repeated Windows access-violation diagnostic
+remains an interpreter/host issue; the checkpoint push must still pass the
+authoritative all-tests Linux Python 3.12 CI before C4 begins.
+
+A development paper credential is now present only in the Git-ignored `.env`.
+Read-only proof on 2026-08-31 confirmed the expected account suffix `...JZAQ`,
+active paper status, exactly $100,000 equity/cash, Level 3 options permission,
+zero lifetime orders, zero positions, SPY/QQQ snapshots, and a 13,160-contract
+SPY chain. The pinned CLI read account/clock/contracts/orders/positions, but the
+proof bundle remains incomplete because version output is not JSON and no CLI
+profile config exists. Official MCP Server 3.4.7 matched the account and read
+account/orders/contracts while the client refused 17 mutating tools; its proof
+is incomplete because two expected read tool names changed. No secret or raw
+account evidence is tracked.
+
+The second, distinct scored paper-account ID is still absent, so normal broker
+`assert_ready()` and formal X1 remain deliberately blocked. No order,
+deployment, activation, merge, default-branch change, or submission is
+authorized. Ordinary checkpoint pushes are authorized only to
+`origin/utk-review` after their complete gates pass.
 
 ---
 

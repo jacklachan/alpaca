@@ -427,9 +427,15 @@ class Agent:
     def execute(self, plan, verdict) -> None:
         from .execute import ExecutionEngine
 
-        engine = ExecutionEngine(self.broker, self.journal)
+        engine = ExecutionEngine(
+            self.broker,
+            self.journal,
+            ledger=self.ledger,
+            ledger_path=self.ledger_path,
+        )
         result = engine.execute(plan, verdict)
-        self._record_fills(plan, result)
+        if not result.ledger_recorded:
+            self._record_fills(plan, result)
         if result.ok:
             # Record the CATALYST, not the ticker. Recording plan.symbol meant
             # the strategy's `event.name in done` guard never matched, so one

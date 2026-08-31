@@ -306,6 +306,8 @@ class ExitBroker:
         # Alpaca reports filled_qty cumulatively per order, so the terminal
         # read is the total for that order -- never less than an earlier read.
         self.terminal_filled = terminal_filled if terminal_filled is not None else fill
+        self.orders: dict[str, object] = {}
+        self.venue_qty: dict[str, Decimal] = {}
 
     def close_position(self, symbol):  # pragma: no cover - must never run here
         self.closed.append(symbol)
@@ -315,7 +317,7 @@ class ExitBroker:
             {"symbol": symbol, "qty": Decimal(str(qty)), "side": side, "coid": client_order_id}
         )
         filled = Decimal(str(qty)) if self.fill == "full" else Decimal(self.fill)
-        return SimpleNamespace(
+        order = SimpleNamespace(
             id=f"broker-{len(self.submitted)}",
             client_order_id=client_order_id,
             symbol=symbol,
@@ -323,16 +325,42 @@ class ExitBroker:
             filled_qty=filled,
             filled_avg_price="4.00",
         )
+        self.orders[client_order_id] = order
+        signed = filled if side == "buy" else -filled
+        self.venue_qty[symbol] = self.venue_qty.get(symbol, Decimal(0)) + signed
+        return order
 
     def cancel_and_confirm(self, order_id, client_order_id, **kw):
         self.confirmed.append(client_order_id)
-        return SimpleNamespace(
+        order = self.orders[client_order_id]
+        final_filled = Decimal(self.terminal_filled)
+        prior = Decimal(str(order.filled_qty))
+        self.venue_qty[order.symbol] = self.venue_qty.get(order.symbol, Decimal(0)) - (
+            final_filled - prior
+        )
+        final = SimpleNamespace(
             id=order_id,
             client_order_id=client_order_id,
+            symbol=order.symbol,
             status="canceled",
-            filled_qty=Decimal(self.terminal_filled),
+            filled_qty=final_filled,
             filled_avg_price="4.00",
         )
+        self.orders[client_order_id] = final
+        return final
+
+    def get_order_by_coid(self, client_order_id):
+        return self.orders.get(client_order_id)
+
+    def positions(self):
+        return [
+            SimpleNamespace(symbol=symbol, qty=qty) for symbol, qty in self.venue_qty.items() if qty
+        ]
+
+    def open_orders(self):
+        return [
+            order for order in self.orders.values() if order.status not in {"filled", "canceled"}
+        ]
 
 
 def _ledger_manager(tmp_path, journal, broker, *, owned: str | None = "10"):
@@ -348,6 +376,8 @@ def _ledger_manager(tmp_path, journal, broker, *, owned: str | None = "10"):
             order_qty=Decimal(owned),
             side="buy",
         )
+        if hasattr(broker, "venue_qty"):
+            broker.venue_qty[occ()] = Decimal(owned)
     ks = KillSwitch(tmp_path / "kill.json", journal=journal)
     manager = PositionManager(
         broker,
@@ -399,6 +429,33 @@ def test_exit_intent_is_durable_before_submit(tmp_path, journal):
     assert seen["exit_coids"] == (broker.submitted[0]["coid"],)
 
 
+def test_ambiguous_accepted_exit_is_adopted_by_original_id(tmp_path, journal):
+    """A lost submit response must never mint or submit a second exit."""
+
+    class AcceptedThenTimeout(ExitBroker):
+        def __init__(self):
+            super().__init__()
+            self.timed_out = False
+
+        def submit(self, **kwargs):
+            order = super().submit(**kwargs)
+            if not self.timed_out:
+                self.timed_out = True
+                raise TimeoutError("response lost after venue acceptance")
+            return order
+
+    broker = AcceptedThenTimeout()
+    manager, book = _ledger_manager(tmp_path, journal, broker)
+
+    manager._close(ExitOrder(symbol=occ(), qty=Decimal(10), reason="target"))
+
+    assert len(broker.submitted) == 1
+    assert book.entries[occ()].signed_qty == Decimal(0)
+    events = [entry["event"] for entry in journal.read()]
+    assert "ORDER_SUBMIT_RECONCILED" in events
+    assert "EXIT_FAILED" not in events
+
+
 def test_exit_refuses_exposure_the_strategy_does_not_own(tmp_path, journal):
     broker = ExitBroker()
     manager, _ = _ledger_manager(tmp_path, journal, broker, owned=None)
@@ -438,6 +495,32 @@ def test_late_exit_fill_after_cancel_reconciles_to_exact_flat(tmp_path, journal)
 
     assert book.entries[occ()].signed_qty == Decimal(0)
     assert book.is_flat(occ(), venue_qty=Decimal(0), exit_orders_terminal=True) is True
+
+
+def test_terminal_exit_waits_for_delayed_venue_position_flatness(tmp_path, journal):
+    """A fill can precede the position endpoint; one stale read is not a fault."""
+
+    class DelayedPositionBroker(ExitBroker):
+        def __init__(self):
+            super().__init__()
+            self.position_reads = 0
+
+        def positions(self):
+            self.position_reads += 1
+            if self.position_reads == 1:
+                return [SimpleNamespace(symbol=occ(), qty=Decimal(10))]
+            return super().positions()
+
+    broker = DelayedPositionBroker()
+    manager, book = _ledger_manager(tmp_path, journal, broker)
+    manager.mutations.poll_seconds = 0
+    manager.mutations.reconcile_seconds = 0.05
+
+    manager._close(ExitOrder(symbol=occ(), qty=Decimal(10), reason="target"))
+
+    assert broker.position_reads >= 2
+    assert book.entries[occ()].signed_qty == Decimal(0)
+    assert occ() not in manager._exit_uncertain
 
 
 def test_second_exit_attempt_uses_a_distinct_deterministic_id(tmp_path, journal):

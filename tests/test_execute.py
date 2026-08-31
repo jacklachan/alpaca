@@ -15,6 +15,7 @@ import pytest
 from glassbox.broker import BrokerUnavailable, OrderStateUncertain, TokenBucket
 from glassbox.execute import ExecutionEngine
 from glassbox.journal import Journal
+from glassbox.position_ledger import PositionLedger
 from glassbox.schema import OptionLeg, TradePlan, Verdict
 
 EXP = date(2026, 9, 8)
@@ -40,11 +41,13 @@ class FakeBroker:
         self,
         fill: dict[str, float] | None = None,
         price=Decimal("5.00"),
+        exit_fill: dict[str, float] | None = None,
         cancel_fill: dict[str, list[float]] | None = None,
         uncertain_cancel: set[str] | None = None,
         accepted_then_timeout: set[str] | None = None,
     ):
         self.fill = fill or {}
+        self.exit_fill = exit_fill or {}
         self.price = price
         self.cancel_fill = cancel_fill or {}
         self.uncertain_cancel = uncertain_cancel or set()
@@ -59,7 +62,7 @@ class FakeBroker:
     def submit(self, *, symbol, qty, side, client_order_id, limit_price=None, instrument="equity"):
         self._n += 1
         o = FakeOrder(f"broker-{self._n}", client_order_id, qty, symbol)
-        frac = self.fill.get(symbol, 1.0)
+        frac = self.exit_fill.get(symbol, 1.0) if side == "sell" else self.fill.get(symbol, 1.0)
         o.filled_qty = Decimal(str(qty)) * Decimal(str(frac))
         if o.filled_qty:
             o.filled_avg_price = limit_price or self.price
@@ -237,8 +240,76 @@ def test_incomplete_strangle_is_unwound_to_flat(journal):
     r = engine(b, journal).execute(p, APPROVED(p))
     assert not r.ok
     assert r.unwound
-    assert occ("C", 778) in b.closed, "the filled call must be closed"
+    unwind = [order for order in b.submitted if order["side"] == "sell"]
+    assert b.closed == [], "a symbol-wide close ran during unwind"
+    assert [(order["symbol"], Decimal(str(order["qty"]))) for order in unwind] == [
+        (occ("C", 778), Decimal(10))
+    ]
     assert "unwound" in r.reason
+
+
+def test_incomplete_strangle_uses_exact_orders_and_persists_flat_ownership(tmp_path, journal):
+    """The scored unwind must sell only confirmed strategy fills.
+
+    A symbol-wide close would also liquidate any pre-existing quantity in the
+    same contract and leaves no deterministic order identity to reconcile.
+    """
+
+    class ExactBroker(FakeBroker):
+        def __init__(self):
+            super().__init__(fill={occ("P", 760): 0.0})
+            self.venue_qty: dict[str, Decimal] = {}
+
+        def submit(self, **kwargs):
+            order = super().submit(**kwargs)
+            fill = Decimal(str(order.filled_qty))
+            signed = fill if kwargs["side"] == "buy" else -fill
+            self.venue_qty[kwargs["symbol"]] = (
+                self.venue_qty.get(kwargs["symbol"], Decimal(0)) + signed
+            )
+            return order
+
+        def positions(self):
+            from types import SimpleNamespace
+
+            return [
+                SimpleNamespace(symbol=symbol, qty=qty)
+                for symbol, qty in self.venue_qty.items()
+                if qty
+            ]
+
+        def open_orders(self):
+            return [
+                order
+                for order in self.orders.values()
+                if order.status not in {"filled", "canceled"}
+            ]
+
+    ledger_path = tmp_path / "ledger.json"
+    book = PositionLedger(account_id="PA-1", environment="scored")
+    broker = ExactBroker()
+    plan = strangle()
+
+    result = ExecutionEngine(
+        broker,
+        journal,
+        ledger=book,
+        ledger_path=ledger_path,
+        poll_seconds=0,
+        fill_wait_seconds=0.01,
+        max_reprice=2,
+    ).execute(plan, APPROVED(plan))
+
+    unwind_orders = [order for order in broker.submitted if order["side"] == "sell"]
+    assert broker.closed == [], "a symbol-wide close ran during incomplete-leg unwind"
+    assert len(unwind_orders) == 1
+    assert unwind_orders[0]["symbol"] == occ("C", 778)
+    assert Decimal(str(unwind_orders[0]["qty"])) == Decimal(10)
+    assert result.unwound is True
+    assert book.entries[occ("C", 778)].signed_qty == Decimal(0)
+
+    restored = PositionLedger.load(ledger_path, account_id="PA-1", environment="scored")
+    assert restored.entries[occ("C", 778)].signed_qty == Decimal(0)
 
 
 def test_partial_fill_is_also_unwound(journal):
@@ -334,8 +405,13 @@ def test_nothing_filled_needs_no_unwind(journal):
 
 
 def test_failed_unwind_says_so_loudly(journal):
-    b = FakeBroker(fill={occ("P", 760): 0.0})
-    b.close_position = lambda s: (_ for _ in ()).throw(RuntimeError("broker down"))
+    class FailedExactExit(FakeBroker):
+        def submit(self, **kwargs):
+            if kwargs["side"] == "sell":
+                raise RuntimeError("broker down")
+            return super().submit(**kwargs)
+
+    b = FailedExactExit(fill={occ("P", 760): 0.0})
     p = strangle()
     r = engine(b, journal).execute(p, APPROVED(p))
     assert not r.unwound

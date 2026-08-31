@@ -228,6 +228,7 @@ class PositionLedger:
         client_order_id: str,
         filled_qty: Decimal,
         order_qty: Decimal,
+        plan_qty: Decimal | None = None,
         side: str,
         asset_id: str = "",
     ) -> Decimal:
@@ -246,14 +247,25 @@ class PositionLedger:
             filled_qty=filled_qty,
             order_qty=order_qty,
         )
+        requested_cap = _quantity(
+            plan_qty if plan_qty is not None else order_qty,
+            field_name="plan_qty",
+        )
+        if requested_cap <= 0:
+            raise StateCorrupt(f"plan {plan_id} has non-positive requested quantity")
+        if cursor.requested_qty > requested_cap:
+            raise StateCorrupt(
+                f"order {client_order_id} requests {cursor.requested_qty}, "
+                f"above plan quantity {requested_cap}"
+            )
         if delta == 0:
             return Decimal(0)
 
         if current is not None:
-            if current.entry_requested_qty != cursor.requested_qty:
+            if current.entry_requested_qty != requested_cap:
                 raise StateCorrupt(
                     f"plan {plan_id} requested quantity changed from "
-                    f"{current.entry_requested_qty} to {cursor.requested_qty}"
+                    f"{current.entry_requested_qty} to {requested_cap}"
                 )
             if current.cumulative_entry_fill + delta > current.entry_requested_qty:
                 raise StateCorrupt(
@@ -265,7 +277,7 @@ class PositionLedger:
                 plan_id=plan_id,
                 symbol=symbol,
                 asset_id=asset_id,
-                entry_requested_qty=cursor.requested_qty,
+                entry_requested_qty=requested_cap,
             )
         coids = current.entry_coids
         if client_order_id and client_order_id not in coids:
@@ -587,9 +599,9 @@ class PositionLedger:
                     f"{path}: contract {symbol} aggregate entry fill exceeds requested quantity"
                 )
             for cursor in cursors:
-                if cursor.purpose == "entry" and cursor.requested_qty != entry.entry_requested_qty:
+                if cursor.purpose == "entry" and cursor.requested_qty > entry.entry_requested_qty:
                     raise StateCorrupt(
-                        f"{path}: contract {symbol} entry requested quantity is inconsistent"
+                        f"{path}: contract {symbol} entry order exceeds the plan quantity"
                     )
             if entry.cumulative_exit_fill != exit_total:
                 raise StateCorrupt(f"{path}: contract {symbol} exit fill total is inconsistent")

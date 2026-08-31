@@ -340,6 +340,31 @@ def test_a_foreign_open_order_blocks_the_scored_tick(tmp_path, monkeypatch):
     assert agent._state_faulted is True
 
 
+def test_scored_execution_passes_the_durable_ledger_into_the_mutation_service(
+    tmp_path, monkeypatch
+):
+    """Entry fills must be persisted before an incomplete-leg unwind starts."""
+    from types import SimpleNamespace
+
+    import glassbox.execute as execute_module
+
+    agent, book = _ledger_agent(tmp_path, monkeypatch)
+    captured: dict[str, object] = {}
+
+    class Engine:
+        def __init__(self, broker, journal, **kwargs):
+            captured.update(kwargs)
+
+        def execute(self, plan, verdict):
+            return SimpleNamespace(ok=False, ledger_recorded=True, legs=[])
+
+    monkeypatch.setattr(execute_module, "ExecutionEngine", Engine)
+    agent.execute(SimpleNamespace(time_exit=None, stop=None, target=None), object())
+
+    assert captured["ledger"] is book
+    assert captured["ledger_path"] == agent.ledger_path
+
+
 def test_an_unreadable_open_order_list_fails_closed(tmp_path, monkeypatch):
     agent, _ = _ledger_agent(tmp_path, monkeypatch, positions=[_pos(CALL, "3")], owned={CALL: 3})
 

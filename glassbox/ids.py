@@ -36,6 +36,7 @@ def client_order_id(plan_id: str, leg_index: int = 0, *, event: bool = False) ->
 
 
 EXIT_PREFIX = "gbx-x-"
+UNWIND_PREFIX = "gbx-u-"
 
 
 def exit_client_order_id(plan_id: str, symbol: str, attempt: int = 0) -> str:
@@ -47,3 +48,13 @@ def exit_client_order_id(plan_id: str, symbol: str, attempt: int = 0) -> str:
     """
     digest = hashlib.sha256(f"exit:{plan_id}:{symbol}:{attempt}".encode()).hexdigest()
     return f"{EXIT_PREFIX}{digest[:26]}"
+
+
+def unwind_client_order_id(plan_id: str, symbol: str, attempt: int = 0) -> str:
+    """Deterministic identity for flattening an incomplete entry.
+
+    Unwind IDs live in a distinct family so a later mechanical exit can never
+    collide with an incomplete-entry cleanup from the same plan and contract.
+    """
+    digest = hashlib.sha256(f"unwind:{plan_id}:{symbol}:{attempt}".encode()).hexdigest()
+    return f"{UNWIND_PREFIX}{digest[:26]}"

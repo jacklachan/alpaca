@@ -24,8 +24,9 @@ CLI proof.
 | C0 | Complete | `f23b24b`; remote Python 3.12 CI passed |
 | C1 | Complete | `dd9e73e`; remote Python 3.12 CI passed |
 | C2 | Complete | Schema-v2 cumulative-fill replay; 584 tests collected |
-| C3 | Next | Unified mutation and exact incomplete-entry unwind |
-| C4-C6 | Pending | Runtime boundary, semantic verification, and data truth |
+| C3 | Complete | One intent-first lifecycle; exact owned-quantity unwind/exit |
+| C4 | Next | Runtime ownership and exact broker boundary |
+| C5-C6 | Pending | Semantic verification and data truth |
 | C7-C10 | Pending | Point-in-time data, replay, candidates, promotion |
 | C11-C12 | Pending | Shadow evaluation and offline release candidate |
 | X1-X4 | Externally gated | Credentials, order authority, VPS, scored activation |

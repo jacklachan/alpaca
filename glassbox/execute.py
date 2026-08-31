@@ -33,8 +33,10 @@ from decimal import Decimal
 
 from . import config as C
 from .broker import BrokerError
-from .ids import client_order_id
-from .order_lifecycle import OrderObservation
+from .ids import client_order_id, unwind_client_order_id
+from .mutations import MutationReceipt, MutationRequest, OrderMutationService
+from .order_lifecycle import OrderObservation, OrderState
+from .position_ledger import PositionLedger
 from .schema import TradePlan, Verdict
 
 log = logging.getLogger("glassbox.execute")
@@ -83,6 +85,7 @@ class LegResult:
     broker_order_id: str = ""
     status: str = "unsubmitted"
     order_state_uncertain: bool = False
+    current_order_qty: Decimal = Decimal(0)
 
     @property
     def filled_qty(self) -> Decimal:
@@ -122,6 +125,7 @@ class ExecutionResult:
     reason: str
     legs: list[LegResult] = field(default_factory=list)
     unwound: bool = False
+    ledger_recorded: bool = False
 
     # 100 is the OPTION contract multiplier. Applying it to equity and crypto
     # legs overstated those by 100x in the journal.
@@ -142,6 +146,9 @@ class ExecutionEngine:
         fill_wait_seconds: float = 45.0,
         max_reprice: int = 2,
         unknown_lookup_tolerance: int = 3,
+        ledger: PositionLedger | None = None,
+        ledger_path=None,
+        max_unwind: int = 2,
     ):
         self.broker = broker
         self.journal = journal
@@ -149,6 +156,16 @@ class ExecutionEngine:
         self.fill_wait_seconds = fill_wait_seconds
         self.max_reprice = max_reprice
         self.unknown_lookup_tolerance = unknown_lookup_tolerance
+        self.ledger = ledger
+        self.max_unwind = max_unwind
+        self.mutations = OrderMutationService(
+            broker,
+            journal,
+            ledger=ledger,
+            ledger_path=ledger_path,
+            poll_seconds=poll_seconds,
+            reconcile_seconds=fill_wait_seconds,
+        )
 
     # -- entry point -----------------------------------------------------------
 
@@ -172,6 +189,7 @@ class ExecutionEngine:
             result = self._execute_legged(plan)
         else:
             result = self._execute_single(plan)
+        result.ledger_recorded = self.ledger is not None
 
         self.journal.append(
             "execute",
@@ -206,64 +224,25 @@ class ExecutionEngine:
         client_order_id: str,
         limit_price: Decimal | None,
         instrument: str,
+        purpose: str = "entry",
+        plan_qty: Decimal | None = None,
     ):
-        """Journal intent, submit once, and reconcile an ambiguous response."""
-        intent = {
-            "plan_id": plan.plan_id,
-            "client_order_id": client_order_id,
-            "symbol": symbol,
-            "qty": str(qty),
-            "side": side,
-            "limit_price": str(limit_price) if limit_price is not None else None,
-            "instrument": instrument,
-        }
-        self.journal.append("execute", "ORDER_SUBMIT_INTENT", intent)
-        try:
-            return self.broker.submit(
-                symbol=symbol,
-                qty=qty,
-                side=side,
-                client_order_id=client_order_id,
-                limit_price=limit_price,
-                instrument=instrument,
-            )
-        except Exception as submit_error:
-            deadline = time.monotonic() + min(self.fill_wait_seconds, 5.0)
-            lookup_error: Exception | None = None
-            while True:
-                try:
-                    existing = self.broker.get_order_by_coid(client_order_id)
-                except Exception as exc:
-                    lookup_error = exc
-                    existing = None
-                if existing is not None:
-                    self.journal.append(
-                        "execute",
-                        "ORDER_SUBMIT_RECONCILED",
-                        {
-                            **intent,
-                            "broker_order_id": str(existing.id),
-                            "status": str(getattr(existing, "status", "")),
-                            "submit_error": str(submit_error),
-                        },
-                    )
-                    return existing
-                if time.monotonic() >= deadline:
-                    self.journal.append(
-                        "execute",
-                        "ORDER_SUBMIT_AMBIGUOUS",
-                        {
-                            **intent,
-                            "submit_error": str(submit_error),
-                            "lookup_error": (
-                                str(lookup_error) if lookup_error is not None else None
-                            ),
-                        },
-                    )
-                    raise RuntimeError(
-                        f"submit outcome ambiguous for {client_order_id}: {submit_error}"
-                    ) from submit_error
-                time.sleep(self.poll_seconds)
+        """Delegate every mutation to the single intent-first lifecycle."""
+        request = MutationRequest(
+            plan_id=plan.plan_id,
+            symbol=symbol,
+            qty=Decimal(qty),
+            side=side,
+            client_order_id=client_order_id,
+            limit_price=limit_price,
+            instrument=instrument,
+            purpose=purpose,
+            plan_qty=plan_qty,
+        )
+        return self.mutations.submit_once(
+            request,
+            lookup_seconds=min(self.fill_wait_seconds, 5.0),
+        ).order
 
     # -- options ---------------------------------------------------------------
 
@@ -273,7 +252,11 @@ class ExecutionEngine:
         for i, leg in enumerate(plan.option_legs):
             coid = client_order_id(plan.plan_id, i, event=plan.is_event_trade)
             r = LegResult(
-                leg_index=i, symbol=leg.symbol, requested_qty=Decimal(leg.qty), client_order_id=coid
+                leg_index=i,
+                symbol=leg.symbol,
+                requested_qty=Decimal(leg.qty),
+                client_order_id=coid,
+                current_order_qty=Decimal(leg.qty),
             )
             try:
                 order = self._submit_with_reconciliation(
@@ -284,6 +267,7 @@ class ExecutionEngine:
                     client_order_id=coid,
                     limit_price=leg.limit_price,
                     instrument="option",
+                    plan_qty=Decimal(leg.qty),
                 )
                 r.broker_order_id = str(order.id)
                 r.status = "submitted"
@@ -296,7 +280,7 @@ class ExecutionEngine:
                 )
             legs.append(r)
 
-        self._await_fills(legs)
+        self._await_fills(plan, legs)
 
         if all(l.complete for l in legs):
             return ExecutionResult(plan.plan_id, True, "all legs filled", legs)
@@ -317,7 +301,7 @@ class ExecutionEngine:
             )
             for r in incomplete:
                 self._reprice(plan, r, attempt)
-            self._await_fills([l for l in legs if not l.complete])
+            self._await_fills(plan, [l for l in legs if not l.complete])
 
         if all(l.complete for l in legs):
             return ExecutionResult(plan.plan_id, True, "all legs filled after repricing", legs)
@@ -356,17 +340,7 @@ class ExecutionEngine:
             },
         )
 
-        unwound = True
-        for r in filled:
-            try:
-                self.broker.close_position(r.symbol)
-            except Exception as exc:
-                unwound = False
-                self.journal.append(
-                    "execute",
-                    "UNWIND_FAILED",
-                    {"plan_id": plan.plan_id, "symbol": r.symbol, "error": str(exc)},
-                )
+        unwound = self._unwind_exact(plan, filled)
 
         return ExecutionResult(
             plan.plan_id,
@@ -419,6 +393,8 @@ class ExecutionEngine:
         # New client_order_id: this is a genuinely new order, and reusing the
         # id would be rejected as a duplicate. Offset keeps it deterministic.
         coid = client_order_id(plan.plan_id, 100 * attempt + r.leg_index, event=plan.is_event_trade)
+        r.client_order_id = coid
+        r.current_order_qty = remaining
         try:
             order = self._submit_with_reconciliation(
                 plan,
@@ -428,9 +404,9 @@ class ExecutionEngine:
                 client_order_id=coid,
                 limit_price=new_limit,
                 instrument="option",
+                plan_qty=r.requested_qty,
             )
             r.broker_order_id = str(order.id)
-            r.client_order_id = coid
             r.status = "repriced"
         except Exception as exc:
             r.status = f"reprice_failed: {exc}"
@@ -442,12 +418,18 @@ class ExecutionEngine:
         if not r.broker_order_id or r.status in TERMINAL_OK | TERMINAL_DEAD:
             return True
         try:
-            final = self.broker.cancel_and_confirm(
-                r.broker_order_id,
-                r.client_order_id,
-                timeout=self.fill_wait_seconds,
-                poll_seconds=self.poll_seconds,
+            request = self._entry_request(plan, r)
+            state = OrderState(
+                client_order_id=r.client_order_id,
+                requested_qty=r.current_order_qty,
+                broker_order_id=r.broker_order_id,
+                status=r.status,
+                filled_qty=r.current_qty,
+                avg_price=r.current_avg,
             )
+            final = self.mutations.cancel_and_confirm(
+                MutationReceipt(request=request, order=None, state=state)
+            ).order
         except Exception as exc:
             r.order_state_uncertain = True
             r.status = "cancel_uncertain"
@@ -481,6 +463,83 @@ class ExecutionEngine:
             r.current_avg = observation.avg_price
         r.status = observation.status or r.status
 
+    def _entry_request(self, plan: TradePlan, r: LegResult) -> MutationRequest:
+        if plan.instrument == "option":
+            leg = plan.option_legs[r.leg_index]
+            side = leg.side
+            limit_price = leg.limit_price
+        else:
+            side = plan.side
+            limit_price = None
+        return MutationRequest(
+            plan_id=plan.plan_id,
+            symbol=r.symbol,
+            qty=r.current_order_qty,
+            side=side,
+            client_order_id=r.client_order_id,
+            instrument=plan.instrument,
+            purpose="entry",
+            limit_price=limit_price,
+            plan_qty=r.requested_qty,
+        )
+
+    def _unwind_exact(self, plan: TradePlan, filled: list[LegResult]) -> bool:
+        """Flatten only confirmed strategy quantity; never close by symbol."""
+        if self.ledger is not None:
+            all_flat = True
+            for r in filled:
+                try:
+                    outcome = self.mutations.exact_exit(
+                        plan_id=plan.plan_id,
+                        symbol=r.symbol,
+                        purpose="unwind",
+                        reason="incomplete multi-leg entry",
+                        max_attempts=self.max_unwind,
+                    )
+                except Exception as exc:
+                    all_flat = False
+                    self.journal.append(
+                        "execute",
+                        "UNWIND_FAILED",
+                        {"plan_id": plan.plan_id, "symbol": r.symbol, "error": str(exc)},
+                    )
+                else:
+                    all_flat = all_flat and outcome.flat
+            return all_flat
+
+        # Development-only fallback: still use deterministic exact-size orders.
+        all_flat = True
+        for r in filled:
+            remaining = r.filled_qty
+            for attempt in range(self.max_unwind):
+                if remaining <= 0:
+                    break
+                request = MutationRequest(
+                    plan_id=plan.plan_id,
+                    symbol=r.symbol,
+                    qty=remaining,
+                    side="sell",
+                    client_order_id=unwind_client_order_id(plan.plan_id, r.symbol, attempt),
+                    instrument="option",
+                    purpose="unwind",
+                    reason="incomplete multi-leg entry",
+                )
+                try:
+                    receipt = self.mutations.submit_once(
+                        request, lookup_seconds=min(self.fill_wait_seconds, 5.0)
+                    )
+                    receipt = self.mutations.cancel_and_confirm(receipt)
+                except Exception as exc:
+                    self.journal.append(
+                        "execute",
+                        "UNWIND_FAILED",
+                        {"plan_id": plan.plan_id, "symbol": r.symbol, "error": str(exc)},
+                    )
+                    break
+                remaining -= receipt.state.filled_qty
+            all_flat = all_flat and remaining == 0
+        return all_flat
+
     # -- equity and crypto -----------------------------------------------------
 
     def _execute_single(self, plan: TradePlan) -> ExecutionResult:
@@ -507,6 +566,7 @@ class ExecutionEngine:
         limit = (px * (1 + pad)).quantize(Decimal("0.01"))
 
         r = LegResult(leg_index=0, symbol=plan.symbol, requested_qty=qty, client_order_id=coid)
+        r.current_order_qty = qty
         try:
             order = self._submit_with_reconciliation(
                 plan,
@@ -523,7 +583,7 @@ class ExecutionEngine:
             r.status = f"submit_failed: {exc}"
             return ExecutionResult(plan.plan_id, False, f"submit failed: {exc}", [r], multiplier=1)
 
-        self._await_fills([r])
+        self._await_fills(plan, [r])
         if not r.complete:
             if not self._cancel_leg(plan, r):
                 return ExecutionResult(
@@ -544,7 +604,7 @@ class ExecutionEngine:
 
     # -- fill polling ----------------------------------------------------------
 
-    def _await_fills(self, legs: list[LegResult]) -> None:
+    def _await_fills(self, plan: TradePlan, legs: list[LegResult]) -> None:
         if not legs:
             return
         deadline = time.monotonic() + self.fill_wait_seconds
@@ -584,6 +644,8 @@ class ExecutionEngine:
                     continue
                 # The broker reports the fill on THIS order only. Anything
                 # filled by a superseded order lives in settled_qty.
+                if plan.instrument == "option":
+                    self.mutations.record_order(self._entry_request(plan, r), o)
                 self._refresh_leg(r, o)
                 if r.status in TERMINAL_DEAD:
                     continue

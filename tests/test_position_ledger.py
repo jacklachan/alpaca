@@ -234,6 +234,39 @@ def test_aggregate_entry_fills_across_replacements_cannot_exceed_the_plan_quanti
     assert "gbx-replacement" not in book.fill_cursors
 
 
+def test_replacement_order_keeps_its_own_quantity_under_the_original_plan_cap():
+    """A successor works only the remainder, while the plan cap stays ten.
+
+    Treating every replacement as another ten-contract request either rejects
+    a legitimate fill cursor or loses the order identity needed for replay.
+    """
+    book = ledger()
+    book.record_entry_fill(
+        plan_id="gbp-1",
+        symbol=CALL,
+        client_order_id="gbx-original",
+        filled_qty=Decimal(6),
+        order_qty=Decimal(10),
+        plan_qty=Decimal(10),
+        side="buy",
+    )
+
+    delta = book.record_entry_fill(
+        plan_id="gbp-1",
+        symbol=CALL,
+        client_order_id="gbx-replacement",
+        filled_qty=Decimal(4),
+        order_qty=Decimal(4),
+        plan_qty=Decimal(10),
+        side="buy",
+    )
+
+    assert delta == Decimal(4)
+    assert book.entries[CALL].signed_qty == Decimal(10)
+    assert book.entries[CALL].entry_requested_qty == Decimal(10)
+    assert book.fill_cursors["gbx-replacement"].requested_qty == Decimal(4)
+
+
 # -- reconciliation -----------------------------------------------------------
 
 

@@ -24,7 +24,7 @@ from .broker import OrderStateUncertain
 from .ids import exit_client_order_id
 from .kernel import PortfolioState, Position
 from .macro import MEASUREMENT_ET
-from .order_lifecycle import OrderObservation, apply, initial_state
+from .mutations import OrderMutationService
 from .position_ledger import PositionLedger
 from .schema import OptionContract
 from .state import StateCorrupt, atomic_write_json, read_json
@@ -124,6 +124,12 @@ class PositionManager:
         # symbol-wide path, which must never run on the scored account.
         self.ledger = ledger
         self._ledger_path = Path(ledger_path) if ledger_path else None
+        self.mutations = OrderMutationService(
+            broker,
+            journal,
+            ledger=ledger,
+            ledger_path=ledger_path,
+        )
         # AUDIT NOTE: this was an in-memory dict and nothing rebuilt it. After
         # any restart every registered stop, target and time exit was silently
         # gone, leaving positions open with no exit logic at all -- only the
@@ -441,10 +447,6 @@ class PositionManager:
 
         coid = exit_client_order_id(entry.plan_id, e.symbol, self._exit_attempts.get(e.symbol, 0))
 
-        # Durable before the mutation: a crash here must find the same id.
-        self.ledger.register_exit_intent(e.symbol, coid)
-        if self._ledger_path is not None:
-            self.ledger.save(self._ledger_path)
         self.journal.append(
             "manage",
             "EXIT_INTENT",
@@ -457,35 +459,17 @@ class PositionManager:
                 "reason": e.reason,
             },
         )
-
-        order = self.broker.submit(
+        outcome = self.mutations.exact_exit(
+            plan_id=entry.plan_id,
             symbol=e.symbol,
-            qty=qty,
-            side="sell",
-            client_order_id=coid,
-            instrument="option",
+            purpose="exit",
+            reason=e.reason,
+            first_attempt=self._exit_attempts.get(e.symbol, 0),
+            max_attempts=1,
         )
-
-        state = apply(
-            initial_state(coid, qty, broker_order_id=str(getattr(order, "id", ""))),
-            OrderObservation.from_order(order, sequence=0),
-        )
-        if not state.terminal:
-            final = self.broker.cancel_and_confirm(state.broker_order_id, coid)
-            state = apply(state, OrderObservation.from_order(final, sequence=1))
-
-        if state.filled_qty > 0:
-            self.ledger.record_exit_fill(
-                symbol=e.symbol,
-                client_order_id=coid,
-                filled_qty=state.filled_qty,
-                order_qty=qty,
-                side="sell",
-            )
+        state = outcome.states[-1]
         self._exit_attempts[e.symbol] = self._exit_attempts.get(e.symbol, 0) + 1
         self._save_exit_state()
-        if self._ledger_path is not None:
-            self.ledger.save(self._ledger_path)
 
         remaining = self.ledger.entries[e.symbol].exit_qty
         self.journal.append(
@@ -504,6 +488,10 @@ class PositionManager:
             # A partial exit is not a failure, but it is not flat either. Let
             # the next tick size a fresh exit from what is left.
             self._exits_sent.discard(e.symbol)
+        elif not outcome.flat:
+            raise OrderStateUncertain(
+                f"exit {coid} reached terminal state but exact venue flatness was not proven"
+            )
 
 
 def measurement_countdown(now: datetime) -> str:
