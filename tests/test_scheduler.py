@@ -301,7 +301,8 @@ def test_scored_tick_refuses_new_entries_when_venue_disagrees(tmp_path, monkeypa
     agent.equity_tick()
 
     assert not offered, "new risk was allowed on an unreconciled book"
-    assert agent._state_faulted is True
+    assert agent._reconcile_faulted is True
+    assert agent._state_faulted is False, "a reconciliation gap is not state corruption"
     events = [e for _, e, _ in agent.journal.events]
     assert "POSITION_RECONCILE_FAULT" in events
 
@@ -337,7 +338,7 @@ def test_a_foreign_open_order_blocks_the_scored_tick(tmp_path, monkeypatch):
     agent.equity_tick()
 
     assert not offered
-    assert agent._state_faulted is True
+    assert agent._reconcile_faulted is True
 
 
 def test_scored_execution_passes_the_durable_ledger_into_the_mutation_service(
@@ -378,7 +379,7 @@ def test_an_unreadable_open_order_list_fails_closed(tmp_path, monkeypatch):
     agent.equity_tick()
 
     assert not offered, "we could not see open orders and traded anyway"
-    assert agent._state_faulted is True
+    assert agent._reconcile_faulted is True
 
 
 def test_confirmed_fills_are_recorded_and_persisted(tmp_path, monkeypatch):
@@ -606,3 +607,67 @@ def test_a_real_provenance_carrying_candidate_set_is_content_addressed(tmp_path,
     agent.equity_tick()
     again = [p for _, e, p in agent.journal.events if e == "CANDIDATE_SET_BUILT"][0]
     assert again["manifest_hash"] == built["manifest_hash"]
+
+
+# -- a reconciliation gap is recoverable; state corruption is not --------------
+
+
+def test_the_agent_resumes_once_the_venue_and_ledger_agree_again(tmp_path, monkeypatch):
+    """One transient failure to read open orders used to stop the agent for the
+    rest of the process. On a multi-day unattended run that is a blip on Monday
+    and nothing trading again all week."""
+    agent, _ = _ledger_agent(tmp_path, monkeypatch, positions=[_pos(CALL, "3")], owned={CALL: 3})
+    offered: list = []
+    agent._scored_selection_tick = lambda state: offered.append(state)
+
+    calls = {"n": 0}
+
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("venue unreachable")
+        return []
+
+    agent.broker.open_orders = flaky
+
+    agent.equity_tick()
+    assert not offered, "entries were allowed while the book could not be seen"
+    assert agent._reconcile_faulted is True
+
+    agent.equity_tick()
+    assert offered, "the agent never resumed after the venue recovered"
+    assert agent._reconcile_faulted is False
+
+    events = [e for _, e, _ in agent.journal.events]
+    assert "RECONCILE_FAULT_CLEARED" in events
+
+
+def test_recovery_requires_exact_agreement_not_merely_a_readable_venue(tmp_path, monkeypatch):
+    """A readable venue that still disagrees must stay blocked. 'Resume only
+    when exact' is the rule; being able to look is not the proof."""
+    agent, _ = _ledger_agent(tmp_path, monkeypatch, positions=[_pos(CALL, "1")], owned={CALL: 3})
+    offered: list = []
+    agent._scored_selection_tick = lambda state: offered.append(state)
+
+    agent.equity_tick()
+    agent.equity_tick()
+
+    assert not offered
+    assert agent._reconcile_faulted is True
+    assert "RECONCILE_FAULT_CLEARED" not in [e for _, e, _ in agent.journal.events]
+
+
+def test_durable_state_corruption_never_clears_itself(tmp_path, monkeypatch):
+    """A corrupt state file needs a human. Recovery is only ever offered for
+    'we could not prove what we own', never for 'our state is damaged'."""
+    agent, _ = _ledger_agent(tmp_path, monkeypatch, positions=[_pos(CALL, "3")], owned={CALL: 3})
+    offered: list = []
+    agent._scored_selection_tick = lambda state: offered.append(state)
+
+    agent._state_faulted = True
+
+    agent.equity_tick()
+    agent.equity_tick()
+
+    assert not offered, "state corruption was silently cleared"
+    assert agent._state_faulted is True

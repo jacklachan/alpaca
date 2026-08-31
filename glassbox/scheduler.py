@@ -89,7 +89,17 @@ class Agent:
         self.environment = getattr(broker, "env", "dev")
         if self.environment not in {"dev", "scored"}:
             raise ValueError(f"unknown broker environment {self.environment!r}")
+        # Two latches, because they mean different things. _state_faulted is
+        # durable-state corruption: a human must look, and it never clears
+        # itself. _reconcile_faulted is "we could not prove what we own right
+        # now", which a later exact reconciliation genuinely resolves. Keeping
+        # them as one latch meant a single transient failure to read open
+        # orders stopped the agent for the rest of the process -- on a
+        # multi-day unattended run, one blip on Monday and nothing trades
+        # again. The plan's rule is "resume only when exact"; this implements
+        # the resume half.
         self._state_faulted = False
+        self._reconcile_faulted = False
         # Built lazily; typed loosely because tests inject a stand-in.
         self._shadow: Any = None
         self.scheduler = BackgroundScheduler(timezone="UTC", job_defaults=JOB_DEFAULTS)
@@ -508,15 +518,35 @@ class Agent:
         try:
             open_orders = self.broker.open_orders()
         except Exception as exc:
-            self._journal_fault("LEDGER_RECONCILE_UNAVAILABLE", {"error": str(exc)})
+            # Could not observe. Nothing is known to be wrong with the book, so
+            # this blocks entries but stays recoverable.
+            self._reconcile_fault("LEDGER_RECONCILE_UNAVAILABLE", {"error": str(exc)})
             return False
 
         result = self.ledger.reconcile(venue_positions=venue, open_orders=open_orders)
         if self.ledger_path is not None:
             self.ledger.save(self.ledger_path)
         if not result.ok:
-            self._journal_fault("POSITION_RECONCILE_FAULT", {"reasons": list(result.reasons())})
+            self._reconcile_fault("POSITION_RECONCILE_FAULT", {"reasons": list(result.reasons())})
             return False
+
+        # Exact agreement with the venue is the proof the plan asks for before
+        # resuming. A discrepancy that has since resolved -- a fill that landed
+        # late, an order that reached a terminal state -- should not keep the
+        # agent shut down once the book demonstrably matches again.
+        if self._reconcile_faulted:
+            self._reconcile_faulted = False
+            self.journal.append(
+                "scheduler",
+                "RECONCILE_FAULT_CLEARED",
+                {
+                    "symbols": list(result.checked_symbols),
+                    "at": result.reconciled_at,
+                    "note": "venue and ledger agree exactly; entries re-enabled",
+                },
+            )
+            log.info("reconciliation fault cleared: venue and ledger agree exactly")
+
         self.journal.append(
             "scheduler",
             "POSITION_RECONCILED",
@@ -525,8 +555,19 @@ class Agent:
         return True
 
     def _journal_fault(self, event: str, payload: dict) -> None:
-        """Latch the agent out of new entries and say why."""
+        """Latch the agent out of new entries permanently, and say why."""
         self._state_faulted = True
+        self.journal.append("scheduler", event, payload)
+        log.error("%s: %s", event, payload)
+
+    def _reconcile_fault(self, event: str, payload: dict) -> None:
+        """Block new entries until a later reconciliation proves exact.
+
+        Recoverable on purpose. This latch means "we cannot currently prove
+        what we own", not "durable state is corrupt" -- and it is checked on
+        every tick, so recovery costs one minute rather than a restart.
+        """
+        self._reconcile_faulted = True
         self.journal.append("scheduler", event, payload)
         log.error("%s: %s", event, payload)
 
