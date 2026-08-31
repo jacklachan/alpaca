@@ -60,6 +60,14 @@ Around it sit the gates that matter once real orders exist:
   refused, as is convexity bought at implied volatility rich enough that the
   post-event collapse outweighs a correct directional call, or theta decay
   that outruns the event. Missing Greeks abstain rather than pass.
+- **Venue-sourced trading sessions.** Expiry decisions rest on how many
+  sessions remain; that count now comes from Alpaca's calendar rather than
+  weekday arithmetic, which is silently wrong on any holiday outside a
+  hardcoded list.
+- **Recoverable versus permanent faults.** A reconciliation gap clears once
+  the venue and ledger agree exactly; durable state corruption never clears
+  itself. One transient read failure must not stop an unattended agent for a
+  week, and a damaged state file must never quietly resume.
 - **Latching kill switch** on drawdown, re-armed only by a human.
 - **Crash recovery.** State is written atomically and checksummed; corruption
   refuses to heal to empty. One scheduler may own a state directory.
@@ -100,6 +108,12 @@ the central design claim into something falsifiable: if it ever fails on real
 evidence, the model authored a trade. Every offered candidate also carries an
 independent kernel verdict, including the ones the model declined, so the
 alternatives are on the record too.
+
+It also **replays**. Each recorded candidate set is rebuilt from the ids and
+content hashes the agent journalled, and the address that produces is compared
+with the one it published at the time. If those disagree, the journal was
+edited or the hashing changed -- neither of which is visible by reading the
+code. Determinism stops being an adjective.
 
 ## Performance measurement
 
