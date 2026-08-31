@@ -94,7 +94,7 @@ def test_a_post_measurement_catalyst_is_never_selected():
 
 def test_labor_day_makes_the_8_sep_expiry_span_a_holiday_weekend():
     """Five calendar days, three sessions. That gap is the discount."""
-    assert sessions_remaining_at_measurement(date(2026, 9, 8)) == 3
+    assert sessions_remaining_at_measurement(date(2026, 9, 8)) == 2
     assert (date(2026, 9, 8) - MEASUREMENT_ET.date()).days == 5
 
 
@@ -124,8 +124,8 @@ def test_flat_term_structure_takes_the_shortest_surviving_expiry():
     4 Sep expiry: two sessions left, so three times the convexity per dollar of
     the 11 Sep contract a team without this analysis would default to."""
     choice = select_expiry(FLAT, CATALYST, MEASUREMENT_ET)
-    assert choice.expiry == date(2026, 9, 4)
-    assert choice.gamma_per_dollar == Decimal("3")  # 6 sessions / 2 sessions
+    assert choice.expiry == date(2026, 9, 8)
+    assert choice.gamma_per_dollar == Decimal("2.5")  # 5 sessions / 2 sessions
 
 
 def test_event_premium_pushes_us_out_to_the_longer_expiry():
@@ -207,7 +207,7 @@ def _propose(option_surface=None, journal=None):
         spot=SPOT,
         iv_vs_rv=Decimal("1.05"),
         expiry_candidates=FLAT,
-        chain=chain_for(date(2026, 9, 4)),
+        chain=chain_for(date(2026, 9, 8)),
         measurement=MEASUREMENT_ET,
         remaining_budget=Decimal("18000"),
     )
@@ -220,7 +220,7 @@ def test_proposes_a_strangle_into_the_catalyst():
         spot=SPOT,
         iv_vs_rv=Decimal("1.05"),
         expiry_candidates=FLAT,
-        chain=chain_for(date(2026, 9, 4)),
+        chain=chain_for(date(2026, 9, 8)),
         measurement=MEASUREMENT_ET,
         remaining_budget=Decimal("18000"),
     )
@@ -243,7 +243,7 @@ def test_same_event_opportunity_has_the_same_plan_id_after_restart():
         spot=SPOT,
         iv_vs_rv=Decimal("1.05"),
         expiry_candidates=FLAT,
-        chain=chain_for(date(2026, 9, 4)),
+        chain=chain_for(date(2026, 9, 8)),
         measurement=MEASUREMENT_ET,
         remaining_budget=Decimal("18000"),
     )
@@ -260,7 +260,7 @@ def test_candidate_requires_verified_chain_quote_provenance():
         spot=SPOT,
         iv_vs_rv=Decimal("1.05"),
         expiry_candidates=FLAT,
-        chain=chain_for(date(2026, 9, 4), verified=False),
+        chain=chain_for(date(2026, 9, 8), verified=False),
         measurement=MEASUREMENT_ET,
         remaining_budget=Decimal("18000"),
     )
@@ -274,7 +274,7 @@ def test_candidate_carries_quote_provenance_and_versioned_decimal_limits():
         spot=SPOT,
         iv_vs_rv=Decimal("1.05"),
         expiry_candidates=FLAT,
-        chain=chain_for(date(2026, 9, 4)),
+        chain=chain_for(date(2026, 9, 8)),
         measurement=MEASUREMENT_ET,
         remaining_budget=Decimal("18000"),
     )[0]
@@ -296,7 +296,7 @@ def test_priced_candidate_is_immutable():
         spot=SPOT,
         iv_vs_rv=Decimal("1.05"),
         expiry_candidates=FLAT,
-        chain=chain_for(date(2026, 9, 4)),
+        chain=chain_for(date(2026, 9, 8)),
         measurement=MEASUREMENT_ET,
         remaining_budget=Decimal("18000"),
     )[0]
@@ -312,7 +312,7 @@ def test_stands_down_when_convexity_is_expensive():
         spot=SPOT,
         iv_vs_rv=Decimal("1.80"),
         expiry_candidates=FLAT,
-        chain=chain_for(date(2026, 9, 4)),
+        chain=chain_for(date(2026, 9, 8)),
         measurement=MEASUREMENT_ET,
         remaining_budget=Decimal("18000"),
     )
@@ -326,7 +326,7 @@ def test_stands_down_when_already_positioned_for_the_event():
         spot=SPOT,
         iv_vs_rv=Decimal("1.05"),
         expiry_candidates=FLAT,
-        chain=chain_for(date(2026, 9, 4)),
+        chain=chain_for(date(2026, 9, 8)),
         measurement=MEASUREMENT_ET,
         remaining_budget=Decimal("18000"),
         already_positioned_for={CATALYST.name},
@@ -341,7 +341,7 @@ def test_sizes_within_the_budget():
         spot=SPOT,
         iv_vs_rv=Decimal("1.05"),
         expiry_candidates=FLAT,
-        chain=chain_for(date(2026, 9, 4)),
+        chain=chain_for(date(2026, 9, 8)),
         measurement=MEASUREMENT_ET,
         remaining_budget=Decimal("4000"),
     )
@@ -355,7 +355,7 @@ def test_thesis_and_evidence_are_grounded():
         spot=SPOT,
         iv_vs_rv=Decimal("1.05"),
         expiry_candidates=FLAT,
-        chain=chain_for(date(2026, 9, 4)),
+        chain=chain_for(date(2026, 9, 8)),
         measurement=MEASUREMENT_ET,
         remaining_budget=Decimal("18000"),
     )[0]
@@ -384,7 +384,7 @@ def test_the_event_plan_is_approved_by_the_kernel():
         spot=SPOT,
         iv_vs_rv=Decimal("1.05"),
         expiry_candidates=FLAT,
-        chain=chain_for(date(2026, 9, 4)),
+        chain=chain_for(date(2026, 9, 8)),
         measurement=MEASUREMENT_ET,
         remaining_budget=Decimal("18000"),
     )[0]
@@ -396,7 +396,7 @@ def test_the_event_plan_is_approved_by_the_kernel():
         core_sleeve_cost_basis=Decimal("60000"),
         convex_premium_today=Decimal("7000"),  # daily cap already spent
         snapshot_price={"SPY": SPOT},
-        trading_days_to={date(2026, 9, 4): 2},
+        trading_days_to={date(2026, 9, 4): 4, date(2026, 9, 8): 6, date(2026, 9, 11): 9},
         market_open=True,
         median_order_notional=Decimal("6000"),
         now_et=WED,
@@ -472,3 +472,31 @@ def test_a_surface_lookup_that_raises_does_not_block_trading():
     plans = _propose(option_surface=broken)
     assert plans, "a surface outage stopped the agent trading"
     assert any("option_surface=unavailable (RuntimeError)" in e for e in plans[0].evidence)
+
+
+# --- regression: an EOD measurement spends the measurement day ----------------
+
+def test_the_measurement_day_is_not_remaining_life_at_an_eod_snapshot():
+    """The account is valued at Thursday's close, so Thursday's session is
+    already spent. Counting it inclusively -- correct for the old Friday 09:30
+    measurement -- overstated every contract by one and let a one-session
+    contract pass OPTION_MIN_DTE_AT_MEASUREMENT, which requires two."""
+    assert sessions_remaining_at_measurement(date(2026, 9, 3)) == 0
+    assert sessions_remaining_at_measurement(date(2026, 9, 4)) == 1
+    assert sessions_remaining_at_measurement(date(2026, 9, 8)) == 2
+
+
+def test_the_same_day_counts_again_when_measured_at_the_open():
+    """The rule is time-aware, not a blanket decrement."""
+    at_open = datetime(2026, 9, 3, 9, 30, tzinfo=C.ET)
+    assert sessions_remaining_at_measurement(date(2026, 9, 4), at_open) == 2
+
+
+def test_a_one_session_expiry_is_never_selected():
+    """4 Sep has a single session left at an EOD Thu 3 Sep measurement. It marks
+    off a near-expiry stub and must be refused however cheap it looks."""
+    tempting = [q(date(2026, 9, 4), "0.060"), q(date(2026, 9, 8), "0.133"),
+                q(date(2026, 9, 11), "0.131")]
+    choice = select_expiry(tempting, NFP, MEASUREMENT_ET)
+    assert choice is not None
+    assert choice.expiry != date(2026, 9, 4)

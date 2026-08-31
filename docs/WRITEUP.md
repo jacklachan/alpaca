@@ -127,7 +127,7 @@ premise of the project.
 
 ## What is proven, and what is not
 
-Verified: 665 automated tests, a 14/14 crash-recovery drill, format, lint,
+Verified: 668 automated tests, a 14/14 crash-recovery drill, format, lint,
 types, hash-locked dependencies, and a green CI on every commit.
 
 Not claimed: no live paper order has been placed from this repository, no CLI

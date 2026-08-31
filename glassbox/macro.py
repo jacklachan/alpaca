@@ -12,7 +12,7 @@ day, used only for sizing sanity -- not as a forecast.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
 
 ET = ZoneInfo("America/New_York")
@@ -119,6 +119,10 @@ OPTION_ORDER_CUTOFF_ET = (15, 30)
 # Alpaca's own calendar; this is what answers when there is no network.
 from .market_calendar import FALLBACK_HOLIDAYS as HOLIDAYS_2026  # noqa: E402
 
+#: Regular-session close. A measurement at or after this time falls on a day
+#: whose session is already spent, so that day is not remaining life.
+REGULAR_CLOSE_ET = time(16, 0, tzinfo=ET)
+
 
 def next_event(
     now: datetime,
@@ -174,23 +178,33 @@ def trading_days_between(start: date, end: date) -> int:
 def sessions_remaining_at_measurement(expiry: date, measurement: datetime | None = None) -> int:
     """How many trading sessions the contract still has when we are measured.
 
-    Inclusive of the measurement day itself, because the option still has that
-    session to live when the account is valued. This is the number that decides
-    whether a contract marks off a real two-sided quote or a 0DTE stub.
+    The measurement day counts ONLY if the account is valued before that
+    session ends. This is the number that decides whether a contract marks off
+    a real two-sided quote or a near-expiry stub.
+
+    The distinction was invisible while measurement was Fri 09:30, where the
+    whole session lay ahead and inclusive counting was right. At an EOD
+    measurement the session is already spent, so counting it overstates every
+    contract's remaining life by one -- and it does so in the direction that
+    defeats OPTION_MIN_DTE_AT_MEASUREMENT, letting a contract with one session
+    left pass a guard written to require two.
 
     For the EOD Thu 3 Sep measurement, with Labor Day on Mon 7 Sep:
 
-        3 Sep  -> 1   expires the same afternoon. Alpaca states exercises and
+        3 Sep  -> 0   expires the same afternoon; the session is over. Alpaca states exercises and
                       assignments for this expiry ARE reflected in the EOD
                       value, so it is no longer a settlement risk -- but we
                       still close at 14:30 ET rather than rely on that.
-        4 Sep  -> 2   Thu + Fri
-        8 Sep  -> 3   Thu + Fri + Tue. Cheap per calendar day precisely BECAUSE
+        4 Sep  -> 1   Fri only
+        8 Sep  -> 2   Fri + Tue. Cheap per calendar day precisely BECAUSE
                       the holiday weekend sits inside it and carries no vol.
-        11 Sep -> 6   Thu + Fri + Tue + Wed + Thu + Fri
+        11 Sep -> 5   Fri + Tue + Wed + Thu + Fri
     """
-    m = (measurement or MEASUREMENT_ET).date()
+    when = measurement or MEASUREMENT_ET
+    m = when.date()
     if expiry < m:
         return 0
-    n = 1 if (m.weekday() < 5 and m not in HOLIDAYS_2026) else 0
+    session_still_open = when.timetz() < REGULAR_CLOSE_ET
+    tradeable_today = m.weekday() < 5 and m not in HOLIDAYS_2026
+    n = 1 if (tradeable_today and session_still_open) else 0
     return n + trading_days_between(m, expiry)
