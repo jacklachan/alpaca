@@ -398,3 +398,49 @@ def test_the_broker_builds_its_calendar_once():
 
     first = broker.calendar
     assert broker.calendar is first, "the calendar was rebuilt per access"
+
+
+def test_missing_crypto_client_is_skipped_not_reported_as_a_failure():
+    """An absent data client is a configuration fact, not an error. Letting it
+    raise printed 'crypto snapshot failed' inside a drill that passed, which is
+    the kind of misleading output an operator learns to ignore."""
+    import logging
+
+    broker = Broker.__new__(Broker)  # no __init__, so no crypto_data
+    broker.bucket = broker_module.TokenBucket(rate_per_min=10_000)
+    broker.journal = None
+    broker.data = SimpleNamespace(get_stock_snapshot=lambda request: {})
+
+    records: list[logging.LogRecord] = []
+
+    class Capture(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    handler = Capture()
+    broker_module.log.addHandler(handler)
+    try:
+        prices = broker.snapshot_prices(["BTC/USD"])
+    finally:
+        broker_module.log.removeHandler(handler)
+
+    assert prices == {}
+    warnings = [r for r in records if r.levelno >= logging.WARNING]
+    assert not warnings, (
+        f"absent crypto client logged a warning: {[r.getMessage() for r in warnings]}"
+    )
+
+
+def test_a_configured_crypto_client_is_still_used():
+    """The skip must not disable the sleeve where it is genuinely configured."""
+    broker = Broker.__new__(Broker)
+    broker.bucket = broker_module.TokenBucket(rate_per_min=10_000)
+    broker.journal = None
+    broker.data = SimpleNamespace(get_stock_snapshot=lambda request: {})
+    broker.crypto_data = SimpleNamespace(
+        get_crypto_snapshot=lambda request: {
+            "BTC/USD": SimpleNamespace(latest_trade=SimpleNamespace(price="61000.5"))
+        }
+    )
+
+    assert broker.snapshot_prices(["BTC/USD"]) == {"BTC/USD": Decimal("61000.5")}

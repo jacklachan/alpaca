@@ -449,6 +449,15 @@ class Broker:
         # the equity market is shut" claim -- was dead code. Alpaca serves
         # crypto from a different data client, so it needs its own request.
         cryptos = [s for s in symbols if "/" in s]
+        # getattr, not attribute access: harnesses build a Broker through
+        # __new__ to avoid needing credentials, and an absent client is a
+        # configuration fact, not an error. Letting it raise into the handler
+        # below printed "crypto snapshot failed" inside a drill that passed,
+        # which is exactly the kind of misleading output an operator learns to
+        # ignore.
+        if cryptos and getattr(self, "crypto_data", None) is None:
+            log.debug("no crypto data client configured; skipping %s", cryptos)
+            cryptos = []
         if cryptos:
             try:
                 from alpaca.data.requests import CryptoSnapshotRequest
