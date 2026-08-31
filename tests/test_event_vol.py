@@ -476,6 +476,7 @@ def test_a_surface_lookup_that_raises_does_not_block_trading():
 
 # --- regression: an EOD measurement spends the measurement day ----------------
 
+
 def test_the_measurement_day_is_not_remaining_life_at_an_eod_snapshot():
     """The account is valued at Thursday's close, so Thursday's session is
     already spent. Counting it inclusively -- correct for the old Friday 09:30
@@ -495,8 +496,11 @@ def test_the_same_day_counts_again_when_measured_at_the_open():
 def test_a_one_session_expiry_is_never_selected():
     """4 Sep has a single session left at an EOD Thu 3 Sep measurement. It marks
     off a near-expiry stub and must be refused however cheap it looks."""
-    tempting = [q(date(2026, 9, 4), "0.060"), q(date(2026, 9, 8), "0.133"),
-                q(date(2026, 9, 11), "0.131")]
+    tempting = [
+        q(date(2026, 9, 4), "0.060"),
+        q(date(2026, 9, 8), "0.133"),
+        q(date(2026, 9, 11), "0.131"),
+    ]
     choice = select_expiry(tempting, NFP, MEASUREMENT_ET)
     assert choice is not None
     assert choice.expiry != date(2026, 9, 4)

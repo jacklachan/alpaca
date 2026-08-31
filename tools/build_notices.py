@@ -113,10 +113,40 @@ def build() -> str:
     return render(rows)
 
 
+def missing_unconditional_packages() -> list[str]:
+    """Pinned packages that are absent but should not be.
+
+    A package with an environment marker -- `exceptiongroup` on 3.11+, the
+    win32-only ones -- is legitimately absent here. An unconditional pin that
+    is missing means the notices would record "UNKNOWN (not installed)" for a
+    dependency we actually ship, which is how a legal document ends up
+    describing the machine that generated it rather than the software.
+    """
+    absent: list[str] = []
+    for name, _version, marker in pinned_packages():
+        if marker:
+            continue
+        try:
+            metadata.metadata(name)
+        except metadata.PackageNotFoundError:
+            absent.append(name)
+    return absent
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="fail if the file is stale")
     args = parser.parse_args(argv)
+
+    absent = missing_unconditional_packages()
+    if absent:
+        print(
+            "refusing to touch the notices: these pinned packages are not "
+            f"installed, so their licenses would be recorded as UNKNOWN: {', '.join(absent)}\n"
+            "install the full lock first: pip install -r requirements-dev.lock",
+            file=sys.stderr,
+        )
+        return 2
 
     content = build()
     if args.check:

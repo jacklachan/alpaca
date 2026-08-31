@@ -60,3 +60,48 @@ def test_notices_record_that_reference_projects_were_not_copied():
 def test_legal_files_are_ascii(path: str):
     """Encoding corruption in a legal file is a real problem, not a cosmetic one."""
     (ROOT / path).read_text(encoding="utf-8").encode("ascii")
+
+
+def test_the_notices_never_record_unknown_for_a_shipped_dependency():
+    """A legal document must describe the software, not the machine that
+    generated it. 'UNKNOWN (not installed in this environment)' means whoever
+    regenerated the file was missing part of the lock."""
+    notices = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+    # A conditional pin -- exceptiongroup on 3.11+ -- is genuinely absent and
+    # correctly recorded as such. Only an unconditional one is a defect: it
+    # means the generating environment, not the shipped software, is being
+    # described. Conditional rows carry their marker in italics.
+    offenders = [
+        line
+        for line in notices.splitlines()
+        if "not installed in this environment" in line and "_" not in line.split("|")[2]
+    ]
+    assert not offenders, (
+        "these packages were recorded as UNKNOWN because the generating "
+        f"environment lacked them: {offenders}"
+    )
+
+
+def test_the_generator_refuses_rather_than_degrading(monkeypatch):
+    """The guard that stops it happening again: an unconditionally pinned
+    package that is absent makes the generator refuse, not substitute a
+    placeholder."""
+    real = build_notices.metadata.metadata
+
+    def absent(name):
+        if name == "anthropic":
+            raise build_notices.metadata.PackageNotFoundError(name)
+        return real(name)
+
+    monkeypatch.setattr(build_notices.metadata, "metadata", absent)
+
+    assert "anthropic" in build_notices.missing_unconditional_packages()
+    assert build_notices.main(["--check"]) == 2
+
+
+def test_environment_conditional_pins_may_legitimately_be_absent():
+    """exceptiongroup is pinned for python_version < 3.11 and is correctly
+    missing here. The guard must not fire on that."""
+    conditional = [n for n, _v, marker in build_notices.pinned_packages() if marker]
+    assert conditional, "no conditional pins found; has the lock format changed?"
+    assert not set(conditional) & set(build_notices.missing_unconditional_packages())
