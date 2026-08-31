@@ -671,3 +671,64 @@ def test_a_corrupt_exit_state_file_fails_closed(tmp_path, journal):
             targets_path=tmp_path / "targets.json",
             exit_state_path=tmp_path / "exit_state.json",
         )
+
+
+# -- the scored account may never take the symbol-wide path --------------------
+
+
+class _ScoredBroker(ExitBroker):
+    env = "scored"
+
+
+class _DevBroker(ExitBroker):
+    env = "dev"
+
+
+def test_a_scored_manager_without_a_ledger_refuses_symbol_wide_close(tmp_path, journal):
+    """A comment said this must never happen; nothing enforced it. Symbol-wide
+    close liquidates whatever the account holds in a contract, so reaching it
+    on the scored account would undo the ledger's whole purpose."""
+    broker = _ScoredBroker()
+    manager = PositionManager(
+        broker,
+        journal,
+        KillSwitch(tmp_path / "kill.json", journal=journal),
+        targets_path=tmp_path / "targets.json",
+        exit_state_path=tmp_path / "exit_state.json",
+    )
+
+    manager._close(ExitOrder(symbol=occ(), qty=Decimal(10), reason="target"))
+
+    assert broker.closed == [], "the scored account took a symbol-wide close"
+    assert broker.submitted == []
+    events = [e["event"] for e in journal.read()]
+    assert "EXIT_REFUSED_NO_LEDGER" in events
+    assert "EXIT_FAILED" not in events, "a deliberate refusal was filed as a failure"
+
+
+def test_the_development_account_still_uses_the_symbol_wide_path(tmp_path, journal):
+    """The fallback is legitimate off the scored account; the guard must not
+    disable the development path it was written for."""
+    broker = _DevBroker()
+    manager = PositionManager(
+        broker,
+        journal,
+        KillSwitch(tmp_path / "kill.json", journal=journal),
+        targets_path=tmp_path / "targets.json",
+        exit_state_path=tmp_path / "exit_state.json",
+    )
+
+    manager._close(ExitOrder(symbol=occ(), qty=Decimal(10), reason="target"))
+
+    assert broker.closed == [occ()]
+
+
+def test_a_scored_manager_with_a_ledger_uses_the_exact_path(tmp_path, journal):
+    broker = _ScoredBroker()
+    manager, book = _ledger_manager(tmp_path, journal, broker)
+
+    manager._close(ExitOrder(symbol=occ(), qty=Decimal(10), reason="target"))
+
+    assert broker.closed == []
+    assert len(broker.submitted) == 1
+    assert book.entries[occ()].signed_qty == Decimal(0)

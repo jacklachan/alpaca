@@ -20,16 +20,22 @@ Safety:
 from __future__ import annotations
 
 import logging
-import os
 import sys
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
 
+# Python adds the script's own directory to sys.path, not the working
+# directory, so `python tools/practice.py` could not import glassbox at all.
+# Every other tool that imports the package already does this.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 load_dotenv()
 
-from glassbox import config as C  # noqa: E402
+from glassbox import config as C
+from glassbox import env as env_module  # noqa: E402
 from glassbox.broker import Broker  # noqa: E402
 from glassbox.data import MarketData  # noqa: E402
 from glassbox.journal import Journal  # noqa: E402
@@ -163,8 +169,14 @@ def hostile_plans() -> list[tuple[str, TradePlan]]:
 def main() -> int:
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s %(message)s")
 
-    env = os.getenv("ALPACA_ENV", "dev")
-    if env == "scored":
+    # env.require_choice, not os.getenv: systemd's EnvironmentFile parser keeps
+    # inline '#' comments in the value, so "scored  # note" is not equal to
+    # "scored" -- this guard would pass while Broker resolved the same variable
+    # to the scored account and connected to it. That is the failure mode
+    # glassbox/env.py exists to document, and it defeats the one check standing
+    # between this tool and the account whose history must stay clean.
+    environment = env_module.require_choice("ALPACA_ENV", {"dev", "scored"}, default="dev")
+    if environment == "scored":
         print(
             "REFUSING: ALPACA_ENV=scored.\n"
             "The scored account must have a clean, untouched trade history "

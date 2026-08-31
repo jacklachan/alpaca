@@ -389,6 +389,23 @@ class PositionManager:
         try:
             if self.ledger is not None:
                 self._close_exact(e)
+            elif getattr(self.broker, "env", "dev") == "scored":
+                # A comment said this must never happen on the scored account;
+                # nothing enforced it. Symbol-wide close liquidates whatever the
+                # account holds in a contract, so reaching it here would undo
+                # the ledger's entire purpose on the one account where it
+                # matters. Refuse rather than trust every caller to pass a
+                # ledger -- tools/practice.py already builds a manager without
+                # one.
+                self.journal.append(
+                    "manage",
+                    "EXIT_REFUSED_NO_LEDGER",
+                    {"symbol": e.symbol, "reason": e.reason},
+                )
+                raise UnownedExposure(
+                    f"refusing symbol-wide close of {e.symbol} on the scored "
+                    "account: no position ledger was supplied"
+                )
             else:
                 self.broker.close_position(e.symbol)
         except UnownedExposure as exc:
