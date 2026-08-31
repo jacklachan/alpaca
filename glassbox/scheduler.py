@@ -75,6 +75,7 @@ class Agent:
         thesis=None,
         ledger=None,
         ledger_path=None,
+        trade_stream=None,
     ):
         self.broker = broker
         self.journal = journal
@@ -82,6 +83,12 @@ class Agent:
         self.manager = manager
         self.strategies = strategies
         self.thesis = thesis
+        # Held, not gated on. See glassbox/trade_stream.py for why: REST
+        # reconciliation already proves the book exactly, so a stream gap adds
+        # no safety the authoritative check does not already provide. The
+        # consumer exists for latency, which needs a live socket to be worth
+        # anything.
+        self.trade_stream = trade_stream
         # Per-contract ownership. Present on the scored account only; the
         # development sleeves do not own option contracts.
         self.ledger = ledger
@@ -546,6 +553,11 @@ class Agent:
                 },
             )
             log.info("reconciliation fault cleared: venue and ledger agree exactly")
+
+        # REST just proved the book exactly, which is precisely what the
+        # stream's gap was waiting on.
+        if self.trade_stream is not None:
+            self.trade_stream.rest_reconciled()
 
         self.journal.append(
             "scheduler",

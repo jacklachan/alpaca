@@ -19,6 +19,15 @@ So the rules here are deliberately unequal:
 
 The consumer is off unless explicitly enabled. Nothing in the safe polling
 path depends on it, and removing the wiring cannot change order or state APIs.
+
+**Why it is not wired into the entry gate.** Blocking new entries on a stream
+gap was tried and removed: REST reconciliation already proves the book exactly
+before any entry, so a gap adds no safety the authoritative check does not
+already provide. Ordering the two the other way round deadlocks outright, since
+REST is what heals the gap. The honest value here is latency -- folding a fill
+in seconds rather than at the next poll -- and latency needs a live socket to
+be worth anything. Until one is running against a real account, this stays a
+tested component rather than a gate that cannot fire.
 """
 
 from __future__ import annotations
