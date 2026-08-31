@@ -19,7 +19,12 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# Explicitly this repository's .env, never a search up the tree. python-dotenv
+# walks parent directories by default, so with no .env here it silently loaded
+# one from outside the project entirely -- meaning the agent could run against
+# whichever account a stray file two levels up happened to name, while looking
+# exactly like it was using project config.
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 from glassbox import config as C  # noqa: E402
 from glassbox import env  # noqa: E402

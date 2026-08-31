@@ -32,7 +32,9 @@ from dotenv import load_dotenv
 # Every other tool that imports the package already does this.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-load_dotenv()
+# This repository's .env only; see main.py for why the default search
+# up the directory tree is unsafe here.
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 from glassbox import config as C
 from glassbox import env as env_module  # noqa: E402

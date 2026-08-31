@@ -135,3 +135,52 @@ class TestPreflight:
         """The shipped template must never reintroduce the pattern."""
         ok, problems = env.parity_report(".env.example")
         assert ok, problems
+
+
+# -- .env must come from this repository, never from up the tree ---------------
+
+
+def _dotenv_calls():
+    """Every real load_dotenv() call, via AST so prose about it is not matched."""
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    found = []
+    for path in [root / "main.py", *sorted((root / "tools").glob("*.py"))]:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+            if name == "load_dotenv":
+                found.append((path.name, node.args))
+    return found
+
+
+def test_no_entry_point_searches_parent_directories_for_a_dotenv():
+    """python-dotenv walks parent directories by default. With no .env in the
+    repo it silently loaded one from outside the project, so the agent could
+    run against whichever account a stray file two levels up named -- while
+    looking exactly like it was using project config."""
+    bare = [name for name, args in _dotenv_calls() if not args]
+    assert not bare, f"these call load_dotenv() with no path, so they search upward: {bare}"
+
+
+def test_every_dotenv_load_is_anchored_to_this_file_tree():
+    """Anchored means derived from __file__, whether directly or through a
+    ROOT constant -- not an absolute path or a bare relative name."""
+    import ast
+
+    unanchored = []
+    for name, args in _dotenv_calls():
+        source = ast.dump(args[0])
+        if "__file__" not in source and "ROOT" not in source:
+            unanchored.append(name)
+    assert not unanchored, f"these load a .env not anchored to the repo: {unanchored}"
+
+
+def test_the_calls_are_actually_found():
+    """Guard against the guard: an AST walk that matches nothing would pass
+    both tests above while proving nothing."""
+    assert len(_dotenv_calls()) >= 4

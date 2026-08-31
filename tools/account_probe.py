@@ -14,7 +14,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# This repository's .env only; see main.py for why the default search
+# up the directory tree is unsafe here.
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 from alpaca.trading.client import TradingClient  # noqa: E402
 from alpaca.trading.enums import QueryOrderStatus  # noqa: E402
