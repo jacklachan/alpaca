@@ -7,7 +7,8 @@ Written 1 Sep 2026, ~02:30 ET. Read this first when you're back.
 ```
 account   PA3XT8QFJZAQ   (scored, judged)   equity $100,000   options level 3
 mode      scored, options-only, release gate green
-commit    9152a2448e08908c3cf5e62561380a9f54a7b687
+commit    1f714a33e0834e3729e4a9c1c1eec384442761bd
+model     Featherless / Qwen/Qwen2.5-72B-Instruct  (bounded selector)
 log       state/agent.log
 lock      state/scheduler.lock
 ```
@@ -17,6 +18,32 @@ proof, dev venue proof. `--dry-run` passed, then the schedule started.
 
 **First trading tick is 09:30 ET (19:00 IST).** Nothing happens before that —
 the equity market is shut. Crypto ticks run continuously.
+
+## Restarting it
+
+The release gate pins an exact commit, so **any new commit invalidates the
+manifest** and startup refuses with "current checkout drift". Rebuild first:
+
+```bash
+python tools/build_release_manifest.py     # prints the SHA to use
+export GLASSBOX_RELEASE_GATE=1
+export GLASSBOX_APPROVED_COMMIT_SHA=<the SHA it printed>
+python main.py
+```
+
+Delete `state/scheduler.lock` first if a previous process died holding it.
+
+## The model
+
+Running through Featherless, not Anthropic. `Qwen/Qwen2.5-72B-Instruct`, which
+is ungated -- `meta-llama/*` returns 403 until a HuggingFace account is linked
+to the org. Config lives in `.env` as `LLM_PROVIDER` / `LLM_API_KEY` /
+`LLM_MODEL` / `LLM_BASE_URL`.
+
+The model's whole authority is choosing one pre-priced candidate ID or
+abstaining. It cannot author a trade, so a small model is adequate and a dead
+model is survivable -- the deterministic sleeves keep running and the journal
+records `CANDIDATE_SELECTION_UNAVAILABLE`.
 
 ## Check on it
 
