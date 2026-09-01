@@ -7,7 +7,7 @@ Written 1 Sep 2026, ~02:30 ET. Read this first when you're back.
 ```
 account   PA3XT8QFJZAQ   (scored, judged)   equity $100,000   options level 3
 mode      scored, options-only, release gate green
-commit    1f714a33e0834e3729e4a9c1c1eec384442761bd
+commit    3678e14561bb84b01e9fb8aaa57638f68f24a718
 model     Featherless / Qwen/Qwen2.5-72B-Instruct  (bounded selector)
 log       state/agent.log
 lock      state/scheduler.lock
@@ -125,6 +125,29 @@ Six real bugs, all found by running the thing rather than reading it:
 - **Social posts.** A judged criterion still at zero.
 - **Submission package**: video, deck, cover image, one-page write-up, and the
   account ID above.
+
+## Read this before judging it by the equity curve
+
+**Two gates decide whether it trades, and one is marginal.**
+
+`chain_legs` rejects any option quote older than 30 seconds
+(`MAX_OPTION_QUOTE_AGE_SECONDS`). While the market is shut, every quote is
+hours stale and the strategy correctly produces nothing -- probing at 03:30 ET
+showed all 4,000 contracts rejected at ages around 41,580s. That is expected.
+**What is unverified is whether the indicative feed refreshes inside 30s
+during the session.** If it does not, the agent will stand down all day with a
+journal full of `OPTION_QUOTE_REJECTED`. Check that after the open; if it is
+the cause, `MAX_OPTION_QUOTE_AGE_SECONDS` is the dial.
+
+The cheapness gate is **razor thin**. On 1 Sep the chosen 8 Sep expiry priced
+at 10.27% implied against 7.64% realised -- a ratio of **1.344 against a cap of
+1.35**. It passes by four thousandths. A small fall in realised vol pushes it
+over and the agent stops trading entirely.
+
+I have not widened `MAX_IV_TO_RV_RATIO`. It is a strategy parameter that trades
+"never trades" against "overpays for vol", and that is your call, not mine.
+But know that it is balanced on a knife edge, and that "no trades all week"
+is the failure it produces.
 
 ## Honest note on P&L
 
