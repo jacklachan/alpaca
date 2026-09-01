@@ -45,7 +45,14 @@ def test_no_runtime_dependency_carries_an_unreviewed_license():
         license_name = build_notices.license_of(name)
         if license_name.startswith("UNKNOWN"):
             continue  # environment-conditional pin, recorded as such in the notices
-        if license_name not in build_notices.ALLOWED_LICENSES:
+        # Split compound SPDX expressions so every part is reviewed. Otherwise
+        # a package could pair an unreviewed license with a known one and pass.
+        parts = [
+            part.strip(" ()")
+            for part in license_name.replace(" OR ", " AND ").split(" AND ")
+            if part.strip(" ()")
+        ]
+        if any(part not in build_notices.ALLOWED_LICENSES for part in parts):
             unexpected.append((name, license_name))
     assert not unexpected, f"unreviewed licenses: {unexpected}"
 

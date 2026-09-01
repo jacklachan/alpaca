@@ -21,17 +21,23 @@ LOCK = ROOT / "requirements.lock"
 
 #: Licenses we are willing to ship. Anything else must be a deliberate,
 #: recorded decision rather than a silent addition.
+#: Compound SPDX expressions are split on AND/OR, and every part must appear
+#: here, so a package cannot pass review by pairing an unreviewed license with
+#: reviewed ones.
 ALLOWED_LICENSES = {
+    "0BSD",
     "Apache-2.0",
     "Apache Software License",
     "Apache Software License v2",
     "BSD-3-Clause",
     "BSD License",
+    "CC0-1.0",
     "MIT",
     "MIT License",
     "MIT OR Apache-2.0",
     "MPL-2.0",
     "PSF-2.0",
+    "Zlib",
     "Dual License",
 }
 
@@ -60,7 +66,18 @@ def license_of(name: str) -> str:
     except metadata.PackageNotFoundError:
         return "UNKNOWN (not installed in this environment)"
     declared = meta.get("License-Expression") or meta.get("License") or ""
-    if declared and len(declared) <= 40:
+    # A declared SPDX expression is authoritative however long it is. The old
+    # 40-character cutoff dropped numpy's 48-character compound expression
+    # through to the classifier fallback, and numpy publishes no license
+    # classifiers, so it resolved to UNKNOWN. That made this generated file
+    # depend on which wheel the local interpreter installed -- so it was stale
+    # in CI on every push from a machine unlike the runner, which is exactly
+    # what broke the pipeline.
+    #
+    # The cutoff existed to reject packages that paste their entire license
+    # text into the License field. Detect that directly: real text is
+    # multi-line and far longer than any expression.
+    if declared and "\n" not in declared and len(declared) <= 120:
         return declared.strip()
     classifiers = [
         c.split(" :: ")[-1]
