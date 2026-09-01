@@ -23,10 +23,12 @@ LOCK = ROOT / "requirements.lock"
 #: recorded decision rather than a silent addition.
 ALLOWED_LICENSES = {
     "Apache-2.0",
+    "Apache Software License",
     "Apache Software License v2",
     "BSD-3-Clause",
     "BSD License",
     "MIT",
+    "MIT License",
     "MIT OR Apache-2.0",
     "MPL-2.0",
     "PSF-2.0",

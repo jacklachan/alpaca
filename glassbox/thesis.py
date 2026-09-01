@@ -74,8 +74,7 @@ class ThesisLayer:
             )
             if not key:
                 raise RuntimeError(
-                    "no model API key set (LLM_API_KEY, FEATHERLESS_API_KEY "
-                    "or ANTHROPIC_API_KEY)"
+                    "no model API key set (LLM_API_KEY, FEATHERLESS_API_KEY or ANTHROPIC_API_KEY)"
                 )
             # Explicit timeout. A hung call would otherwise stall the tick loop.
             # A gateway key sent to the wrong vendor's endpoint returns 401,
