@@ -185,6 +185,23 @@ def run_trade_check(
         return LiveTradeResult(False, f"entry state is uncertain: {exc}")
 
     entry_filled = _filled_qty(entry_final)
+
+    # Sell what the venue says we hold, not what the order says it filled.
+    # Alpaca reports crypto filled_qty rounded to six decimals while the
+    # position carries nine, so selling filled_qty asks for fractionally more
+    # than exists and the venue rejects it for insufficient balance -- leaving
+    # dust behind and reporting the exit state as uncertain. The broker is the
+    # source of truth everywhere else in this system; it is here too.
+    sellable = entry_filled
+    try:
+        for pos in broker.positions():
+            if str(pos.symbol).replace("/", "") == symbol.replace("/", ""):
+                available = Decimal(str(getattr(pos, "qty_available", None) or pos.qty))
+                sellable = min(entry_filled, available) if entry_filled > 0 else available
+                break
+    except Exception:
+        pass  # fall back to filled_qty; the reconciliation check still gates us
+
     if entry_filled <= 0:
         try:
             flat = not broker.positions() and not broker.open_orders()
@@ -198,7 +215,7 @@ def run_trade_check(
     try:
         exit_order = broker.submit(
             symbol=symbol,
-            qty=entry_filled,
+            qty=sellable,
             side="sell",
             client_order_id=exit_coid,
             limit_price=(price * Decimal("0.99")).quantize(Decimal("0.01")),
@@ -224,7 +241,14 @@ def run_trade_check(
             False, f"exact baseline reconciliation failed: {exc}", entry_filled, exit_filled
         )
 
-    if exit_filled != entry_filled or residual_positions:
+    # The property that matters is that we ended flat having sold exactly what
+    # we created -- not that two differently-rounded numbers match. Alpaca
+    # reports crypto filled_qty to six decimals while positions carry nine, so
+    # entry_filled can read fractionally higher than anything that ever
+    # existed. Comparing against `sellable`, the venue-reported holding, keeps
+    # the guarantee (nothing left behind, nothing sold that we did not create)
+    # without failing on a rounding artefact.
+    if exit_filled != sellable or residual_positions:
         return LiveTradeResult(
             False,
             "cleanup did not restore the exact baseline position quantity",
