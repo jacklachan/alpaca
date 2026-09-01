@@ -45,8 +45,18 @@ class Selection(BaseModel):
 
 
 class ThesisLayer:
-    def __init__(self, model: str = "claude-opus-5", timeout: int = C.LLM_TIMEOUT_SECONDS):
-        self.model = model
+    #: Providers speaking the OpenAI chat-completions shape. What matters is
+    #: the request and response shape, not who is serving the model.
+    OPENAI_COMPATIBLE = {"openai", "featherless"}
+
+    def __init__(self, model: str | None = None, timeout: int = C.LLM_TIMEOUT_SECONDS):
+        self.provider = (env.get("LLM_PROVIDER", "") or "anthropic").strip().lower()
+        default_model = (
+            "meta-llama/Meta-Llama-3.1-8B-Instruct"
+            if self.provider in self.OPENAI_COMPATIBLE
+            else "claude-opus-5"
+        )
+        self.model = model or env.get("LLM_MODEL", "") or default_model
         self.timeout = timeout
         self._client: Any | None = None
 
@@ -55,11 +65,39 @@ class ThesisLayer:
         if self._client is None:
             import anthropic
 
-            key = env.get("ANTHROPIC_API_KEY")
+            # LLM_API_KEY is the provider-neutral name. The vendor-specific
+            # names remain as fallbacks so an existing .env keeps working.
+            key = (
+                env.get("LLM_API_KEY", "")
+                or env.get("FEATHERLESS_API_KEY", "")
+                or env.get("ANTHROPIC_API_KEY", "")
+            )
             if not key:
-                raise RuntimeError("ANTHROPIC_API_KEY not set")
+                raise RuntimeError(
+                    "no model API key set (LLM_API_KEY, FEATHERLESS_API_KEY "
+                    "or ANTHROPIC_API_KEY)"
+                )
             # Explicit timeout. A hung call would otherwise stall the tick loop.
-            self._client = anthropic.Anthropic(api_key=key, timeout=self.timeout)
+            # A gateway key sent to the wrong vendor's endpoint returns 401,
+            # which this layer treats as "model unavailable" and abstains. That
+            # makes a misconfigured provider indistinguishable from a working
+            # one that never picks anything, so choose the client explicitly
+            # rather than inferring it from the key.
+            client_kwargs: dict[str, Any] = {"api_key": key, "timeout": self.timeout}
+            if self.provider in self.OPENAI_COMPATIBLE:
+                from openai import OpenAI
+
+                base = env.get("LLM_BASE_URL", "") or (
+                    "https://api.featherless.ai/v1" if self.provider == "featherless" else None
+                )
+                if base:
+                    client_kwargs["base_url"] = base
+                self._client = OpenAI(**client_kwargs)
+            else:
+                base = env.get("LLM_BASE_URL", "") or env.get("ANTHROPIC_BASE_URL", "")
+                if base:
+                    client_kwargs["base_url"] = base
+                self._client = anthropic.Anthropic(**client_kwargs)
         return self._client
 
     # -- bounded candidate selection -----------------------------------------
@@ -241,25 +279,44 @@ class ThesisLayer:
             "evidence": candidate.evidence,
         }
 
-    def _ask_selection(self, payload: dict) -> dict:
+    def _complete(self, system: str, user: str, *, max_tokens: int, temperature: float) -> str:
+        """One text completion, whichever provider is configured.
+
+        Both shapes are handled here so the callers stay provider-agnostic and
+        a provider swap cannot silently change what the model is asked.
+        """
+        if self.provider in self.OPENAI_COMPATIBLE:
+            resp = self.client.chat.completions.create(
+                model=self.model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+            )
+            return resp.choices[0].message.content or ""
         msg = self.client.messages.create(
             model=self.model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+        )
+        return "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+
+    def _ask_selection(self, payload: dict) -> dict:
+        text = self._complete(
+            SYSTEM,
+            "Choose one of these immutable, pre-priced option "
+            "candidates or abstain.\n\n"
+            f"{json.dumps(payload, indent=2)}\n\n"
+            'Return exactly {"candidate_id": "<existing id>", '
+            '"rationale": "<brief reason>"} or use null for '
+            "candidate_id to abstain. Return no other fields.",
             max_tokens=500,
             temperature=0.2,
-            system=SYSTEM,
-            messages=[
-                {
-                    "role": "user",
-                    "content": "Choose one of these immutable, pre-priced option "
-                    "candidates or abstain.\n\n"
-                    f"{json.dumps(payload, indent=2)}\n\n"
-                    'Return exactly {"candidate_id": "<existing id>", '
-                    '"rationale": "<brief reason>"} or use null for '
-                    "candidate_id to abstain. Return no other fields.",
-                }
-            ],
         )
-        text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
         return _extract_json_object(text)
 
     # -- daily review ----------------------------------------------------------
@@ -271,24 +328,17 @@ class ThesisLayer:
         """
         recent = list(journal.read())[-60:]
         events = [{"ts": e["ts"], "actor": e["actor"], "event": e["event"]} for e in recent]
-        msg = self.client.messages.create(
-            model=self.model,
-            max_tokens=700,
-            temperature=0.3,
-            system="You write a short, factual end-of-day note for a trading "
+        return self._complete(
+            "You write a short, factual end-of-day note for a trading "
             "agent's audit log. No speculation, no advice, no predictions. "
             "Describe what the system did and why, in plain English.",
-            messages=[
-                {
-                    "role": "user",
-                    "content": f"Equity: {state.equity}. Positions: "
-                    f"{[p.symbol for p in state.positions]}.\n"
-                    f"Recent journal events:\n{json.dumps(events, indent=1)}\n\n"
-                    "Write 4-6 sentences summarising the session.",
-                }
-            ],
-        )
-        return "".join(b.text for b in msg.content if getattr(b, "type", "") == "text").strip()
+            f"Equity: {state.equity}. Positions: "
+            f"{[p.symbol for p in state.positions]}.\n"
+            f"Recent journal events:\n{json.dumps(events, indent=1)}\n\n"
+            "Write 4-6 sentences summarising the session.",
+            max_tokens=700,
+            temperature=0.3,
+        ).strip()
 
 
 def _extract_json_object(text: str) -> dict:
