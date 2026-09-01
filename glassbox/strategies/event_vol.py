@@ -399,11 +399,23 @@ class EventVolStrategy:
             return []
 
         rv = self.data.realised_vol(self.underlying, days=10)
-        front = min(quotes, key=lambda q: q.expiry)
         if rv <= 0:
             return []
-        ratio = Decimal(str(round(float(front.atm_iv) / rv, 4)))
 
+        # Choose the expiry FIRST, then judge cheapness on that expiry.
+        #
+        # The ratio was taken from the front contract, which is not the one we
+        # buy and is systematically the most expensive on the board: it carries
+        # weekend and event premium over the fewest sessions, so its annualised
+        # IV runs far above the rest of the curve. On 1 Sep the front (2 Sep)
+        # printed 14.9% against 7.6% realised -- ratio 1.95, over the 1.35 cap,
+        # so the strategy stood down. The contract it would actually have
+        # bought, 8 Sep, printed 10.3% -- ratio 1.34, inside the cap.
+        #
+        # The gate is meant to ask "is the convexity I am about to buy cheap
+        # relative to what the underlying is realising". Measuring a contract
+        # we are not buying answered a different question, and answered it in
+        # the direction that never trades.
         choice = select_expiry(
             quotes,
             next_event(state.now_et, tier=C.EVENT_MIN_TIER, within_hours=C.EVENT_LOOKAHEAD_HOURS)
@@ -412,6 +424,11 @@ class EventVolStrategy:
         )
         if choice is None:
             return []
+
+        chosen = next((q for q in quotes if q.expiry == choice.expiry), None)
+        if chosen is None:
+            return []
+        ratio = Decimal(str(round(float(chosen.atm_iv) / rv, 4)))
 
         try:
             chain = self.data.chain_legs(self.underlying, choice.expiry, spot)

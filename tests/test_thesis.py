@@ -200,7 +200,10 @@ def test_model_failure_abstains_without_raising() -> None:
 
 
 def test_missing_credentials_abstains_without_network_call(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    # Every name the layer will accept, or this asserts nothing: with any one
+    # of them set the layer finds a key and attempts a real call.
+    for name in ("LLM_API_KEY", "FEATHERLESS_API_KEY", "ANTHROPIC_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
     journal = Journal()
 
     assert ThesisLayer().select([_option_candidate("candidate-a")], _state(), journal) is None
