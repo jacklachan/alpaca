@@ -143,13 +143,13 @@ and the criterion explicitly weighs quality alongside engagement.
 > opened. The model proposed and never executed. The code was frozen at the
 > open.
 >
-> What we don't claim: that four days proves an edge, or that our hash-chained
-> journal is tamper-proof. It detects edits to the recorded history. It does not
-> prove we never regenerated it — we control every input to the hash. Alpaca's
-> own order IDs and timestamps are what a third party actually reconciles
-> against.
+> What we don't claim: that four days proves an edge. And our hash-chained
+> journal is not tamper-proof — it detects edits to the recorded history, but it
+> does not prove we never regenerated the whole thing, because we control every
+> input to the hash. Alpaca's own order IDs and timestamps are what a third
+> party actually reconciles against.
 >
-> We call it reconcilable, not tamper-proof. [ADD FINAL EQUITY + ACCOUNT ID]
+> Reconcilable, not tamper-proof. [ADD FINAL EQUITY + ACCOUNT ID]
 >
 > @lablabai @AlpacaHQ
 
