@@ -369,6 +369,19 @@ class PositionManager:
         if px is None:
             return None
 
+        # Options first: their P&L lives in the premium, not in the underlying
+        # price the stop/target rules below compare against. Without this an
+        # option had no profit exit at all.
+        if p.instrument == "option" and p.premium_paid > 0:
+            gain = (p.market_value - p.premium_paid) / p.premium_paid
+            if gain >= C.OPTION_PROFIT_TARGET_PCT:
+                return ExitOrder(
+                    p.symbol,
+                    abs(p.qty),
+                    f"profit target hit: {p.symbol} up {gain:.1%} on premium "
+                    f"against {C.OPTION_PROFIT_TARGET_PCT:.0%}",
+                )
+
         stop, target = rules.get("stop"), rules.get("target")
         if p.instrument != "option":
             long = p.qty > 0

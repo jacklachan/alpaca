@@ -732,3 +732,80 @@ def test_a_scored_manager_with_a_ledger_uses_the_exact_path(tmp_path, journal):
     assert broker.closed == []
     assert len(broker.submitted) == 1
     assert book.entries[occ()].signed_qty == Decimal(0)
+
+
+# -- banking a convexity trade that worked ------------------------------------
+
+
+def _option_position(market_value: str, premium_paid: str, qty: str = "35"):
+    return Position(
+        symbol=occ(),
+        instrument="option",
+        qty=Decimal(qty),
+        market_value=Decimal(market_value),
+        underlying="QQQ",
+        premium_paid=Decimal(premium_paid),
+    )
+
+
+def test_an_option_up_past_the_target_is_banked(mgr):
+    """Long gamma round-trips. A strangle that doubled on Tuesday and was still
+    held into Thursday, decaying, was the largest P&L leak in the system --
+    options had no profit exit at all."""
+    mgr.register(occ(), time_exit=datetime(2026, 9, 3, 16, 0, tzinfo=C.ET))
+    position = _option_position(market_value="26000", premium_paid="17000")  # +52.9%
+
+    exit_order = mgr._evaluate(position, state(datetime(2026, 9, 2, 11, 0, tzinfo=C.ET)))
+
+    assert exit_order is not None
+    assert "profit target hit" in exit_order.reason
+    assert exit_order.qty == Decimal(35)
+
+
+def test_an_option_below_the_target_is_left_alone(mgr):
+    mgr.register(occ(), time_exit=datetime(2026, 9, 3, 16, 0, tzinfo=C.ET))
+    position = _option_position(market_value="20000", premium_paid="17000")  # +17.6%
+
+    assert mgr._evaluate(position, state(datetime(2026, 9, 2, 11, 0, tzinfo=C.ET))) is None
+
+
+def test_a_losing_option_is_never_stopped_out(mgr):
+    """Cutting a long-premium position because it is down forfeits exactly the
+    optionality the premium bought, and max loss is already bounded."""
+    mgr.register(occ(), time_exit=datetime(2026, 9, 3, 16, 0, tzinfo=C.ET))
+    position = _option_position(market_value="4000", premium_paid="17000")  # -76%
+
+    assert mgr._evaluate(position, state(datetime(2026, 9, 2, 11, 0, tzinfo=C.ET))) is None
+
+
+def test_the_time_exit_still_wins_over_the_profit_target(mgr):
+    """At measurement the position closes whether or not it is in profit."""
+    deadline = datetime(2026, 9, 3, 16, 0, tzinfo=C.ET)
+    mgr.register(occ(), time_exit=deadline)
+    position = _option_position(market_value="18000", premium_paid="17000")
+
+    exit_order = mgr._evaluate(position, state(deadline))
+    assert exit_order is not None
+    assert "time exit" in exit_order.reason
+
+
+def test_an_option_with_no_recorded_premium_is_not_judged_on_profit(mgr):
+    """Dividing by a cost basis we do not have would invent a return."""
+    mgr.register(occ(), time_exit=datetime(2026, 9, 3, 16, 0, tzinfo=C.ET))
+    position = _option_position(market_value="26000", premium_paid="0")
+
+    assert mgr._evaluate(position, state(datetime(2026, 9, 2, 11, 0, tzinfo=C.ET))) is None
+
+
+def test_equity_targets_are_unaffected(mgr):
+    """The option branch must not change the path it was added in front of."""
+    mgr.register("SPY", target=Decimal("700"))
+    position = Position(
+        symbol="SPY", instrument="equity", qty=Decimal(10), market_value=Decimal("7100")
+    )
+    snapshot = state(datetime(2026, 9, 2, 11, 0, tzinfo=C.ET))
+    snapshot.snapshot_price["SPY"] = Decimal("710")
+
+    exit_order = mgr._evaluate(position, snapshot)
+    assert exit_order is not None
+    assert "target hit" in exit_order.reason

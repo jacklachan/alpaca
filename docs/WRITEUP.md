@@ -91,8 +91,10 @@ the server actually exposes, and enforces three independent barriers: an exact
 allowlist, a mutating-verb scan that runs even for allowlisted names, and a
 discovery gate so no path reaches a call without inspection. Its tests run
 against a real MCP server subprocess that advertises those dangerous tools on
-purpose. It has not yet been run against the official Alpaca MCP server with
-live credentials.
+purpose, and it has since been run against the official Alpaca MCP Server
+3.4.7 with live credentials: three authenticated read-only calls against the
+scored account, four mutating tools refused by attempting them, and the
+account identity matched.
 
 An optional trade-update stream is implemented as a *hint*: REST snapshots
 always win, and a stream gap blocks new entries until REST reconciles.
@@ -127,11 +129,15 @@ premise of the project.
 
 ## What is proven, and what is not
 
-Verified: 723 automated tests, a 14/14 crash-recovery drill, format, lint,
+Verified: 729 automated tests, a 14/14 crash-recovery drill, format, lint,
 types, hash-locked dependencies, and a green CI on every commit.
 
-Not claimed: no live paper order has been placed from this repository, no CLI
-proof bundle has been captured against a real account, there is no MCP integration,
-and no deployment or soak has run. Those gates are listed as open
-in `handoff.md`, and a test suite fails the build if the public copy ever
-claims otherwise.
+Captured against the scored account `PA3XT8QFJZAQ`: CLI proof, MCP proof,
+account identity, the development venue proof, and a live options order -- a
+35-lot QQQ strangle, both legs filled. `tools/verify_submission.py` reports
+these; the account itself is the record a judge can check independently.
+
+Not claimed: the agent runs on a laptop under a watchdog, not on a deployed
+host, so no `deployment_soak` evidence exists and none is asserted. P&L is a
+mark on an open position, not a realised result. A test suite fails the build
+if the public copy ever claims more than this.

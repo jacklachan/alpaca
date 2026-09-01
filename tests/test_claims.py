@@ -239,23 +239,38 @@ def test_the_writeup_test_count_matches_the_real_suite():
 
 
 def test_the_writeup_keeps_its_unproven_gates_visible():
-    """A write-up that drops the 'not claimed' section is the single easiest
-    way this project becomes dishonest."""
-    text = WRITEUP.read_text(encoding="utf-8").lower()
-    assert "no live paper order" in text
-    assert "no mcp integration" in text
+    """A write-up that drops its "not claimed" section is the single easiest
+    way this project becomes dishonest. The specific list shrinks as evidence
+    is captured -- what must survive is that whatever remains unproven is still
+    stated. Today that is the deployment soak, and that P&L is an open mark."""
+    text = re.sub(r"\s+", " ", WRITEUP.read_text(encoding="utf-8").lower())
+    assert "not claimed" in text, "the write-up dropped its not-claimed section"
+    assert "deployment_soak" in text or "deployment soak" in text, (
+        "the agent runs on a laptop with no soak evidence; that gap must stay visible"
+    )
+    assert "not a realised result" in text or "not a realized result" in text, (
+        "P&L on an open position must not be presented as a realised result"
+    )
 
 
-def test_any_mcp_mention_keeps_the_official_server_caveat():
-    """The MCP client is real and tested against a real server subprocess, but
-    it has not been run against Alpaca's official server. That distinction is
-    the difference between an accurate claim and a disqualifying one."""
+def test_any_mcp_claim_says_what_was_actually_demonstrated():
+    """MCP proof has since been captured against the official server, so the
+    old "not yet run" caveat became false and this guard was enforcing a stale
+    understatement. The enduring property is different: a claim must name what
+    was demonstrated -- which server, and that the surface was read-only --
+    rather than assert an integration in the abstract."""
     for name in ("README.md", "docs/WRITEUP.md"):
         # Collapse whitespace: a claim guard must not be defeated by reflowing
         # a paragraph, which is the most likely way this text gets edited.
         text = re.sub(r"\s+", " ", _doc(name).lower())
         if "mcp" not in text:
             continue
-        assert "not yet been run against the official" in text, (
-            f"{name} mentions MCP without the official-server caveat"
+        assert "read-only" in text, f"{name} mentions MCP without saying the surface is read-only"
+        specific = any(
+            marker in text
+            for marker in ("3.4.7", "not yet been run against the official", "refused")
+        )
+        assert specific, (
+            f"{name} claims MCP without naming the server version or the refusals "
+            "that make the claim checkable"
         )

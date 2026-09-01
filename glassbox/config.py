@@ -111,6 +111,23 @@ OPTION_MAX_DTE = 10  # trading days at ENTRY
 # activity syncs the *following* day, i.e. after the snapshot.
 OPTION_FORCE_CLOSE_ET = (14, 30)
 
+# Bank a convexity trade that has already worked.
+#
+# A long strangle is a bet that a move happens. When one does, the position can
+# be up large and then give the whole gain back -- long gamma round-trips, that
+# is its nature. Until now nothing took profit on an option at all: stop and
+# target were evaluated only for equity and crypto, so an option's only exits
+# were the measurement deadline and the expiry-day force close. A position that
+# doubled on Tuesday was still held into Thursday, decaying, with the gain
+# unrealised.
+#
+# Theta is certain and the continuation of a move is not, so the account is
+# measured on what was banked rather than on what it briefly showed. This is
+# deliberately not paired with a stop: cutting a long-premium position because
+# it is down forfeits exactly the optionality the premium bought, and max loss
+# is already bounded by the premium itself.
+OPTION_PROFIT_TARGET_PCT = Decimal("0.50")
+
 # --- Risk limits --------------------------------------------------------------
 
 # AUDIT NOTE: the original invariant said "no single underlying > 25% of equity,
