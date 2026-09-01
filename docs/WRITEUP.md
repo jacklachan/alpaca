@@ -129,7 +129,7 @@ premise of the project.
 
 ## What is proven, and what is not
 
-Verified: 731 automated tests, a 14/14 crash-recovery drill, format, lint,
+Verified: 734 automated tests, a 14/14 crash-recovery drill, format, lint,
 types, hash-locked dependencies, and a green CI on every commit.
 
 Captured against the scored account `PA3XT8QFJZAQ`: CLI proof, MCP proof,

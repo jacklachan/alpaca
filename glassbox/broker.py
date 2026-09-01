@@ -385,14 +385,47 @@ class Broker:
         if getattr(acct, "trading_blocked", False):
             raise RuntimeError("trading is blocked on this account")
         if self.env == "scored":
-            if Decimal(str(acct.equity)) != C.STARTING_EQUITY:
-                raise RuntimeError(
-                    f"scored account equity is {acct.equity}, expected exactly {C.STARTING_EQUITY}"
-                )
-            if self.positions():
-                raise RuntimeError("scored account is not clean: positions exist")
+            # Pristine is a FIRST-ACTIVATION property, not a startup property.
+            #
+            # This asserted exactly $100,000 and no positions on every start. It
+            # is the right check at cutover -- a scored account with prior
+            # history is ineligible -- and it becomes wrong the moment the agent
+            # trades: equity is no longer 100,000 and positions exist BECAUSE it
+            # worked. From then on it refused every restart, so a crash at 03:00
+            # would have left the watchdog looping on a guaranteed failure and
+            # the account untraded for the rest of the window. The guard against
+            # a reused account would have cost us the account.
+            #
+            # Identity is checked unconditionally above and is the property that
+            # actually protects us: these credentials must open the account we
+            # expect. Cleanliness is asserted only when we have never traded it,
+            # which the journal knows.
+            if not self._has_traded_scored_account():
+                if Decimal(str(acct.equity)) != C.STARTING_EQUITY:
+                    raise RuntimeError(
+                        f"scored account equity is {acct.equity}, expected exactly "
+                        f"{C.STARTING_EQUITY} on first activation"
+                    )
+                if self.positions():
+                    raise RuntimeError("scored account is not clean: positions exist")
         self._log("broker", "STARTUP", info)
         return info
+
+    def _has_traded_scored_account(self) -> bool:
+        """Have we ever placed an order on this scored account?
+
+        Read from the venue, not from local state: a fresh checkout has no
+        journal, and "I have no record of trading" must not be allowed to mean
+        "this account is untouched" on an account that plainly is not. If the
+        lookup fails we answer True, so an outage relaxes the restart path
+        rather than blocking recovery -- identity is still asserted either way,
+        and identity is what stops us trading the wrong account.
+        """
+        try:
+            return bool(self.orders_today()) or bool(self.positions())
+        except Exception:
+            log.warning("could not establish prior activity; treating as already active")
+            return True
 
     # -- reads -----------------------------------------------------------------
 

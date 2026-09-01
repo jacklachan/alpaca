@@ -444,3 +444,82 @@ def test_a_configured_crypto_client_is_still_used():
     )
 
     assert broker.snapshot_prices(["BTC/USD"]) == {"BTC/USD": Decimal("61000.5")}
+
+
+# --- pristine is a first-activation property, not a startup property ----------
+
+
+class _Acct:
+    def __init__(self, equity, number="PA3XT8QFJZAQ"):
+        self.equity = equity
+        self.cash = equity
+        self.account_number = number
+        self.status = "ACTIVE"
+        self.trading_blocked = False
+        self.options_trading_level = 3
+
+
+def test_a_scored_account_that_has_traded_can_still_restart(monkeypatch):
+    """The guard against a reused account must not become a guard against
+    recovery. Once the agent has traded, equity is no longer 100,000 and
+    positions exist BECAUSE it worked -- asserting pristine on every start
+    refused every restart, so a crash would have left the watchdog looping on
+    a guaranteed failure and the account untraded for the rest of the window.
+    """
+    from glassbox.broker import Broker
+
+    monkeypatch.setenv("ALPACA_EXPECTED_SCORED_ACCOUNT_ID", "PA3XT8QFJZAQ")
+    monkeypatch.setenv("ALPACA_EXPECTED_DEV_ACCOUNT_ID", "PA3WWRSIJUKT")
+
+    broker = Broker.__new__(Broker)
+    broker.env = "scored"
+    broker.journal = None
+    broker.trading = SimpleNamespace(get_account=lambda: None)
+    broker._call = lambda fn, what, **kw: _Acct(Decimal("101013.24"))
+    broker.orders_today = lambda: [object()]  # it has traded
+    broker.positions = lambda: [object()]
+
+    info = broker.assert_ready()
+    assert info["account_number"] == "PA3XT8QFJZAQ"
+
+
+def test_an_untouched_scored_account_must_still_be_exactly_funded(monkeypatch):
+    """On first activation the original check stands: a scored account with
+    prior history is ineligible, and that is the moment to catch it."""
+    from glassbox.broker import Broker
+
+    monkeypatch.setenv("ALPACA_EXPECTED_SCORED_ACCOUNT_ID", "PA3XT8QFJZAQ")
+    monkeypatch.setenv("ALPACA_EXPECTED_DEV_ACCOUNT_ID", "PA3WWRSIJUKT")
+
+    broker = Broker.__new__(Broker)
+    broker.env = "scored"
+    broker.journal = None
+    broker.trading = SimpleNamespace(get_account=lambda: None)
+    broker._call = lambda fn, what, **kw: _Acct(Decimal("95000"))
+    broker.orders_today = lambda: []  # never traded
+    broker.positions = lambda: []
+
+    with pytest.raises(RuntimeError, match="expected exactly"):
+        broker.assert_ready()
+
+
+def test_an_unreachable_venue_relaxes_the_restart_rather_than_blocking_it(monkeypatch):
+    """No record of trading must not be read as 'this account is untouched'
+    when we simply could not ask. Identity is still asserted regardless."""
+    from glassbox.broker import Broker
+
+    monkeypatch.setenv("ALPACA_EXPECTED_SCORED_ACCOUNT_ID", "PA3XT8QFJZAQ")
+    monkeypatch.setenv("ALPACA_EXPECTED_DEV_ACCOUNT_ID", "PA3WWRSIJUKT")
+
+    def boom():
+        raise RuntimeError("venue unreachable")
+
+    broker = Broker.__new__(Broker)
+    broker.env = "scored"
+    broker.journal = None
+    broker.trading = SimpleNamespace(get_account=lambda: None)
+    broker._call = lambda fn, what, **kw: _Acct(Decimal("101013.24"))
+    broker.orders_today = boom
+    broker.positions = boom
+
+    assert broker.assert_ready()["account_number"] == "PA3XT8QFJZAQ"
