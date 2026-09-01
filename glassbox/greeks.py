@@ -41,7 +41,28 @@ CONTRACT_MULTIPLIER = Decimal(100)
 
 #: A long-convexity position burning more than this share of its premium per
 #: day needs the move to arrive almost immediately to pay for itself.
+#:
+#: Kept for the record, and still reported as evidence, but no longer the gate.
+#: A DAILY rate limit silently assumes a one-day horizon, and this strategy
+#: deliberately buys the shortest expiry that survives to measurement because
+#: that is where gamma per dollar is highest. Short-dated options always burn a
+#: large share of premium per day -- that is the structure, not a defect -- so
+#: the daily cap refused precisely what the expiry selector was chosen to find.
+#: Two gates pulling in opposite directions, and the position never traded.
 MAX_DAILY_THETA_BURN_PCT = Decimal("0.12")
+
+#: What the gate actually asks: how much of the premium is certain to decay
+#: before the account is valued.
+#:
+#: A third is the most we will pay in guaranteed decay to reach a catalyst.
+#: Past that the structure is mismatched to the horizon -- you are buying an
+#: option whose life is mostly spent before the thing you bought it for.
+#:
+#: This is a genuine relaxation for short holds and a tightening for long ones:
+#: at the old 12%/day a four-day hold implied a 48% allowance, which this
+#: refuses. It is not a licence to buy decay, and the breakeven-move gate below
+#: still has to pass independently.
+MAX_HOLD_THETA_BURN_PCT = Decimal("0.333")
 
 #: Implied volatility above this is expensive convexity: the post-event
 #: collapse can lose money on a correct directional call.
@@ -218,7 +239,9 @@ def assess_long_convexity(
     premium_paid: Decimal,
     spot: Decimal,
     contracts: Decimal,
+    hold_days: Decimal | None = None,
     max_daily_theta_burn: Decimal = MAX_DAILY_THETA_BURN_PCT,
+    max_hold_theta_burn: Decimal = MAX_HOLD_THETA_BURN_PCT,
     max_implied_vol: Decimal = MAX_ENTRY_IMPLIED_VOL,
     max_breakeven_move: Decimal = MAX_BREAKEVEN_MOVE_PCT,
 ) -> GreeksVerdict:
@@ -269,10 +292,17 @@ def assess_long_convexity(
 
     burn = daily_theta_burn_pct(position, premium_paid)
     evidence.append(f"daily theta burn {burn:.4f} of premium")
-    if burn > max_daily_theta_burn:
+
+    # Judge the decay we will actually pay, over the days we will actually
+    # hold, rather than a daily rate against a one-day horizon we do not have.
+    hold = hold_days if hold_days is not None and hold_days > 0 else Decimal(1)
+    hold_burn = burn * hold
+    evidence.append(f"decay to measurement {hold_burn:.4f} of premium over {hold:.2f}d")
+    if hold_burn > max_hold_theta_burn:
         return GreeksVerdict(
             False,
-            f"daily theta burn {burn:.4f} exceeds {max_daily_theta_burn}",
+            f"decay to measurement {hold_burn:.4f} of premium over {hold:.2f}d "
+            f"exceeds {max_hold_theta_burn}",
             position,
             tuple(evidence),
         )

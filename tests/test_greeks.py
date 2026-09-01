@@ -146,9 +146,11 @@ def test_decay_that_outruns_the_event_is_refused():
         CALL: surface(CALL, theta="-1.50"),
         PUT: surface(PUT, delta="-0.28", theta="-1.50"),
     }
-    verdict = assess(burning, premium="600")
+    verdict = assess(burning, premium="600", hold_days=Decimal("2"))
     assert not verdict.approved
-    assert "theta burn" in verdict.reason
+    # The refusal now names what was actually paid over the hold rather than a
+    # daily rate against a one-day horizon this strategy never has.
+    assert "decay to measurement" in verdict.reason
 
 
 def test_a_breakeven_further_than_the_event_can_deliver_is_refused():
@@ -158,9 +160,9 @@ def test_a_breakeven_further_than_the_event_can_deliver_is_refused():
 
 
 def test_thresholds_are_injectable_so_a_policy_change_is_explicit():
-    strict = assess(healthy(), max_daily_theta_burn=Decimal("0.0001"))
+    strict = assess(healthy(), max_hold_theta_burn=Decimal("0.0001"), hold_days=Decimal("1"))
     assert not strict.approved
-    assert "theta burn" in strict.reason
+    assert "decay to measurement" in strict.reason
 
 
 # -- missing data means abstain, never guess -----------------------------------
@@ -209,3 +211,48 @@ def test_breakeven_move_is_undefined_without_a_spot_or_a_size(spot: str, contrac
         )
         is None
     )
+
+
+# -- decay is judged over the hold, not against a horizon we do not have -------
+
+
+def test_decay_is_measured_over_the_holding_period():
+    """A daily rate limit silently assumes a one-day horizon.
+
+    This strategy buys the shortest expiry that survives to measurement,
+    because that is where gamma per dollar is highest -- and short-dated
+    options always burn a large share of premium per day. Judging that daily
+    rate against a one-day allowance refused precisely what the expiry
+    selector was built to find, so the two gates cancelled and nothing traded.
+    """
+    theta_heavy = {
+        CALL: surface(CALL, theta="-0.45"),
+        PUT: surface(PUT, delta="-0.28", theta="-0.45"),
+    }
+    # ~30% of premium over a two-day hold: inside the limit.
+    ok = assess(theta_heavy, premium="600", hold_days=Decimal("2"))
+    assert ok.approved, ok.reason
+    assert any("decay to measurement" in e for e in ok.evidence)
+
+    # The same position held four days pays twice as much for the same option.
+    too_long = assess(theta_heavy, premium="600", hold_days=Decimal("4"))
+    assert not too_long.approved
+    assert "decay to measurement" in too_long.reason
+
+
+def test_the_daily_rate_is_still_recorded_even_though_it_no_longer_gates():
+    """It stays in the evidence: the reader should see both numbers and be
+    able to tell which one the refusal turned on."""
+    verdict = assess(healthy(), hold_days=Decimal("2"))
+    assert any("daily theta burn" in e for e in verdict.evidence)
+    assert any("decay to measurement" in e for e in verdict.evidence)
+
+
+def test_a_missing_hold_falls_back_to_the_stricter_one_day_assumption():
+    """A caller with no clock must not silently get the loosest reading."""
+    theta_heavy = {
+        CALL: surface(CALL, theta="-2.40"),
+        PUT: surface(PUT, delta="-0.28", theta="-2.40"),
+    }
+    verdict = assess(theta_heavy, premium="600", hold_days=None)
+    assert not verdict.approved

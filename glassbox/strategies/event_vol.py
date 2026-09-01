@@ -268,7 +268,7 @@ class EventVolStrategy:
         # into a permanent outage, and the primary gates still apply. The
         # absence is recorded in the evidence either way.
         surface_evidence, surface_refusal = self._surface_assessment(
-            call, put, qty=qty, premium=premium, spot=spot
+            call, put, qty=qty, premium=premium, spot=spot, now=now
         )
         if surface_refusal is not None:
             self._journal_surface_refusal(event, surface_refusal)
@@ -314,7 +314,7 @@ class EventVolStrategy:
         ]
 
     def _surface_assessment(
-        self, call, put, *, qty: int, premium: Decimal, spot: Decimal
+        self, call, put, *, qty: int, premium: Decimal, spot: Decimal, now=None
     ) -> tuple[tuple[str, ...], object | None]:
         """Assess the option surface. Returns (evidence, refusal_or_None)."""
         gateway = getattr(self.data, "options", None)
@@ -336,12 +336,24 @@ class EventVolStrategy:
             SimpleNamespace(symbol=call.symbol, side="buy", qty=qty),
             SimpleNamespace(symbol=put.symbol, side="buy", qty=qty),
         )
+        # Decay is judged over the days we will actually hold, not against a
+        # one-day horizon we never have. Falls back to one day when the caller
+        # has no clock, which is the old, stricter behaviour.
+        from ..macro import MEASUREMENT_ET
+
+        hold_days = None
+        if now is not None:
+            elapsed = (MEASUREMENT_ET - now).total_seconds() / 86400
+            if elapsed > 0:
+                hold_days = Decimal(str(round(elapsed, 3)))
+
         verdict = assess_long_convexity(
             legs,
             surface,
             premium_paid=premium,
             spot=spot,
             contracts=Decimal(qty),
+            hold_days=hold_days,
         )
         if not verdict.approved:
             return (tuple(verdict.evidence), verdict)
