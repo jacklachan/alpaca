@@ -7,7 +7,7 @@ Written 1 Sep 2026, ~02:30 ET. Read this first when you're back.
 ```
 account   PA3XT8QFJZAQ   (scored, judged)   equity $100,000   options level 3
 mode      scored, options-only, release gate green
-commit    3678e14561bb84b01e9fb8aaa57638f68f24a718
+commit    7c9f6b22cfa8d07e817d2dcee8a22b8eb7cbc945   (restarted onto this)
 model     Featherless / Qwen/Qwen2.5-72B-Instruct  (bounded selector)
 log       state/agent.log
 lock      state/scheduler.lock
@@ -18,6 +18,18 @@ proof, dev venue proof. `--dry-run` passed, then the schedule started.
 
 **First trading tick is 09:30 ET (19:00 IST).** Nothing happens before that —
 the equity market is shut. Crypto ticks run continuously.
+
+## What the running commit contains
+
+`7c9f6b2` is the theta-gate fix -- the change that resolved two safety gates
+pulling against each other and let the strangle through. It includes the
+measurement-aware exit (`899da3e`), which checks the quote width near the
+snapshot and takes cash if the mark cannot be defended.
+
+It does **not** include anything committed after it, notably the per-leg
+profit target. The release gate pins an exact commit and refuses to start on
+one it was not approved against, so the results of this run belong to
+`7c9f6b2` and nothing later. HEAD has moved on; the run has not.
 
 ## Restarting it
 
