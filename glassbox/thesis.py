@@ -294,7 +294,18 @@ class ThesisLayer:
                     {"role": "user", "content": user},
                 ],
             )
-            return resp.choices[0].message.content or ""
+            # `choices` can come back None from an OpenAI-compatible gateway
+            # even on HTTP 200 -- the live log showed
+            # "candidate selection unavailable: 'NoneType' object is not
+            # subscriptable", which is resp.choices[0] against None. Indexing
+            # blind turns a recoverable empty answer into an exception that the
+            # caller records as the model being unavailable, so a gateway hiccup
+            # reads exactly like a model that declined to choose.
+            choices = getattr(resp, "choices", None)
+            if not choices:
+                log.warning("model returned no choices; treating as abstention")
+                return ""
+            return getattr(choices[0].message, "content", None) or ""
         msg = self.client.messages.create(
             model=self.model,
             max_tokens=max_tokens,
