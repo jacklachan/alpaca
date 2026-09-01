@@ -483,6 +483,45 @@ class Broker:
                 log.warning("crypto snapshot failed: %s", exc)
         return out
 
+    def option_quote_spreads(self, symbols: list[str]) -> dict[str, Decimal]:
+        """Relative bid/ask width per held option contract.
+
+        A symbol is absent when the venue offers no two-sided quote, and that
+        absence is meaningful: the measurement-approach check reads it as the
+        worst case, because an unquoted contract is exactly what must not be
+        left for the snapshot to value.
+
+        Failures here are swallowed. This informs an exit that only ever moves
+        an untrustworthy mark into cash, so losing it must never stop the tick
+        loop that also honours stops and the expiry close-out.
+        """
+        if not symbols:
+            return {}
+        try:
+            from alpaca.data.historical.option import OptionHistoricalDataClient
+            from alpaca.data.requests import OptionLatestQuoteRequest
+
+            client = OptionHistoricalDataClient(
+                env.get("ALPACA_API_KEY"), env.get("ALPACA_SECRET_KEY")
+            )
+            quotes = self._call(
+                lambda: client.get_option_latest_quote(
+                    OptionLatestQuoteRequest(symbol_or_symbols=list(symbols))
+                ),
+                "get_option_latest_quote",
+            )
+        except Exception as exc:  # pragma: no cover - network shape
+            log.warning("option quote spreads unavailable: %s", exc)
+            return {}
+
+        out: dict[str, Decimal] = {}
+        for symbol, quote in (quotes or {}).items():
+            bid = Decimal(str(getattr(quote, "bid_price", 0) or 0))
+            ask = Decimal(str(getattr(quote, "ask_price", 0) or 0))
+            if bid > 0 and ask > 0:
+                out[str(symbol)] = (ask - bid) / ((ask + bid) / 2)
+        return out
+
     # -- reconciliation --------------------------------------------------------
 
     def reconcile(self, kill_switch_tripped: bool = False) -> PortfolioState:
@@ -643,6 +682,9 @@ class Broker:
                     | set(C.OPTION_UNDERLYING_ALLOWLIST)
                     | set(C.CRYPTO_ALLOWLIST)
                 )
+            ),
+            option_quote_spread=self.option_quote_spreads(
+                [p.symbol for p in positions if p.instrument == "option" and p.qty > 0]
             ),
             kill_switch_tripped=kill_switch_tripped,
         )

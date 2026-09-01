@@ -277,8 +277,55 @@ class PositionManager:
 
     # -- rules -----------------------------------------------------------------
 
+    def _measurement_mark_exit(self, p: Position, state: PortfolioState) -> ExitOrder | None:
+        """Flatten an option whose mark cannot be trusted at the snapshot.
+
+        The last decision of the week is not "is this position good" but "can
+        this position be marked honestly". The account is valued at a known
+        instant, and this account prices options off the indicative feed -- a
+        derived estimate, not OPRA. A wide quote at that instant produces a
+        number nobody can defend, in either direction, and cash has no marking
+        ambiguity at all.
+
+        Deliberately narrow. It only ever turns an untrustworthy mark into
+        cash: options only, inside the window, and only when the quote is
+        genuinely unusable rather than merely worse than we would have entered
+        on. It never opens risk and never touches a position it can price.
+        """
+        if p.instrument != "option" or p.qty <= 0:
+            return None
+        minutes = (MEASUREMENT_ET - state.now_et).total_seconds() / 60
+        if not 0 < minutes <= C.MEASUREMENT_FLATTEN_MINUTES:
+            return None
+
+        spread = state.option_quote_spread.get(p.symbol)
+        if spread is None:
+            # No quote at all is the worst case, not an exemption: an unquoted
+            # contract is precisely what we cannot let the snapshot value.
+            return ExitOrder(
+                p.symbol,
+                abs(p.qty),
+                f"measurement in {minutes:.0f}m and {p.symbol} has no two-sided "
+                f"quote: taking cash over a mark we cannot defend",
+                urgency="immediate",
+            )
+        if spread > C.MEASUREMENT_MAX_MARK_SPREAD_PCT:
+            return ExitOrder(
+                p.symbol,
+                abs(p.qty),
+                f"measurement in {minutes:.0f}m and {p.symbol} quotes "
+                f"{spread:.1%} wide against a {C.MEASUREMENT_MAX_MARK_SPREAD_PCT:.0%} "
+                f"limit: the mark is not evidence, taking cash",
+                urgency="immediate",
+            )
+        return None
+
     def _evaluate(self, p: Position, state: PortfolioState) -> ExitOrder | None:
         now = state.now_et
+
+        mark_exit = self._measurement_mark_exit(p, state)
+        if mark_exit is not None:
+            return mark_exit
 
         if p.instrument == "option":
             expiry = self._expiry_of(p)

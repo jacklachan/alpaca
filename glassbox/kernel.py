@@ -53,6 +53,12 @@ class PortfolioState:
     trading_days_to: dict[date, int] = field(default_factory=dict)
 
     snapshot_price: dict[str, Decimal] = field(default_factory=dict)
+
+    #: Relative bid/ask width per held option contract, when the venue quotes
+    #: one. Absent means no two-sided quote was available, which the
+    #: measurement-approach check treats as the worst case rather than as
+    #: permission to hold.
+    option_quote_spread: dict[str, Decimal] = field(default_factory=dict)
     median_order_notional: Decimal = Decimal(5000)
 
     kill_switch_tripped: bool = False

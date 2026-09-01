@@ -267,3 +267,29 @@ MAX_ATM_SPREAD_PCT = Decimal("0.055")
 # band is what actually bounds how far we chase.
 #   attempt 1 -> 4%, attempt 2 -> 5%, attempt 3 -> refused
 REPRICE_STEP_PCT = Decimal("0.01")
+
+
+# --- Measurement approach ------------------------------------------------------
+# The agent knows exactly when the account is valued. An option held into that
+# moment is worth whatever the feed says at that instant, and this account
+# prices options off the INDICATIVE feed -- a derived estimate, not OPRA.
+#
+# So the last decision of the week is not "is this position good" but "can this
+# position be marked honestly". A wide or stale quote at the snapshot is a
+# number nobody can defend, in either direction. Cash has no marking ambiguity
+# at all, so when the mark cannot be trusted the certain number is worth more
+# than the hopeful one.
+#
+# This only ever converts an untrustworthy mark into cash. It never opens risk,
+# and it is deliberately narrow: inside the window, on options, only when the
+# quote fails the same width test used to choose the contract in the first
+# place.
+
+#: How long before measurement the mark-quality check begins.
+MEASUREMENT_FLATTEN_MINUTES = 45
+
+#: A mark this wide at the snapshot is not evidence of anything. Deliberately
+#: looser than MAX_ATM_SPREAD_PCT: refusing to *enter* on a 5.5% spread is
+#: prudence, but flattening a working position needs the quote to be genuinely
+#: unusable, not merely worse than we would have chosen.
+MEASUREMENT_MAX_MARK_SPREAD_PCT = Decimal("0.12")

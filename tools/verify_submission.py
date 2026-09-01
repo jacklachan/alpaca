@@ -23,7 +23,17 @@ from typing import Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from dotenv import load_dotenv
+
+# This repository's .env only. No credential is read here -- the ledger check
+# needs the EXPECTED ACCOUNT ID, which is public and goes on the submission
+# form. Without it the check compares the ledger's owner against an empty
+# string and reports a contradiction on a perfectly valid ledger, which is
+# worse than not running: a verifier that cries wolf teaches you to ignore it.
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
 from glassbox import config as C  # noqa: E402
+from glassbox import env  # noqa: E402
 from glassbox import verification as V  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -83,7 +93,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         journal_path=Path(C.JOURNAL_PATH),
         manifest_path=ROOT / "state" / "release.json",
         ledger_path=Path(C.LEDGER_STATE_FILE),
-        account_id="",
+        # The ledger records which account owns each contract, and the check
+        # compares that against who we expect. This was hardcoded empty, so the
+        # comparison could only ever fail once a ledger existed -- it read
+        # "belongs to account 'PA3XT8QFJZAQ', not ''" and reported a
+        # contradiction on a valid ledger. A verifier that cries wolf teaches
+        # you to ignore it, which is the opposite of what this tool is for.
+        account_id=env.get("ALPACA_EXPECTED_SCORED_ACCOUNT_ID", ""),
         environment="scored",
         tracked=tracked_files(ROOT),
         extra=extra,
