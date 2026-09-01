@@ -1,0 +1,110 @@
+# Status — agent is live
+
+Written 1 Sep 2026, ~02:30 ET. Read this first when you're back.
+
+## The agent is running
+
+```
+account   PA3XT8QFJZAQ   (scored, judged)   equity $100,000   options level 3
+mode      scored, options-only, release gate green
+commit    9152a2448e08908c3cf5e62561380a9f54a7b687
+log       state/agent.log
+lock      state/scheduler.lock
+```
+
+Release gate: **all four checks PASS** — journal chain, account identity, CLI
+proof, dev venue proof. `--dry-run` passed, then the schedule started.
+
+**First trading tick is 09:30 ET (19:00 IST).** Nothing happens before that —
+the equity market is shut. Crypto ticks run continuously.
+
+## Check on it
+
+```bash
+tail -20 state/agent.log
+python tools/verify_chain.py
+python tools/verify_submission.py
+```
+
+Dashboard, needs no credentials:
+
+```bash
+uvicorn dashboard.app:app --port 8080
+```
+
+To stop it: `Stop-Process -Id <pid from state/scheduler.lock> -Force`, then
+delete `state/scheduler.lock` before restarting. The lock is a singleton guard
+— it refuses a second scheduler against the same state, which is why a stale
+lock blocks a restart.
+
+## The one thing still on you: it dies if the laptop sleeps
+
+This is running on your machine. `deployment_soak` is not a required release
+check, so the gate passed without a VPS — but nothing has proven the process
+survives three days, and **Windows sleeping will kill it**.
+
+Two options, in order of preference:
+
+**1. A $5 VPS.** `deploy/setup.sh` provisions it and `deploy/glassbox.service`
+runs it under systemd with `Restart=always`. Roughly 30 minutes, and then the
+laptop is irrelevant. I can't do this part — it needs an account and payment.
+
+**2. Stop the laptop sleeping.** Settings → System → Power → Screen and sleep
+→ set both to *Never* while plugged in. Cheaper, weaker: a reboot, an update,
+or a closed lid still ends the run.
+
+If it does die, restarting is safe. State is durable and it reconciles against
+the venue on the next tick — it will not double a position.
+
+## What changed tonight
+
+Six real bugs, all found by running the thing rather than reading it:
+
+1. **`sessions_remaining_at_measurement` counted the measurement day.** Correct
+   at a 09:30 snapshot, wrong at an EOD one. Every contract over-reported its
+   life by one session, which let a one-session expiry pass the two-session
+   guard. The selector was choosing the 4 Sep stub over 8 Sep and calling it
+   "3.00x convexity". Twelve tests encoded the old count and were rewritten.
+2. **`capture_alpaca_proof.py` and `verify_mcp_surface.py` never loaded
+   `.env`.** The two tools the release gate depends on were the only two that
+   could not authenticate.
+3. **`config get` is not a command in Alpaca CLI v0.0.14.** The CLI proof
+   failed on every run.
+4. **The CLI was not installed** and there is no `go`/`brew`/`scoop` here. I
+   pulled the official Windows binary and verified its SHA-256.
+5. **`live_check` sold the order's `filled_qty`, not the position's.** Alpaca
+   reports crypto fills to six decimals while positions carry nine, so the exit
+   asked for more than existed, was rejected, and left dust — the exact
+   outcome the tool exists to prevent.
+6. **`.env` had inline comments and a `/v2` endpoint**, either of which fails
+   the scored gate. `preflight` catches the first; the second is silent.
+
+## Accounts — do not mix these up
+
+| Account | Role | State |
+| --- | --- | --- |
+| `PA3XT8QFJZAQ` | **SCORED — judged.** In `.env` | trading |
+| `PA3WWRSIJUKT` | dev. In `.env.dev` | used for the $25 venue proof |
+| `PA3PB02CJ4F6` | original, unused | idle |
+
+`PA3XT8QFJZAQ` is the number that goes on the submission form.
+
+## Still open
+
+- **VPS.** Above. The only thing between you and a genuinely unattended run.
+- **Discord webhook is empty**, so there is no remote heartbeat. Paste a
+  webhook URL into `DISCORD_WEBHOOK_URL` in `.env` and restart to get alerts.
+- **Rotate the keys** that appeared in chat once the week is over.
+- **Social posts.** A judged criterion still at zero.
+- **Submission package**: video, deck, cover image, one-page write-up, and the
+  account ID above.
+
+## Honest note on P&L
+
+Measurement is **EOD Thursday 3 September**, which is about three sessions
+away. The agent is options-only on the scored account and will stand down
+rather than force a trade when convexity is not cheap — an empty journal entry
+saying why is a correct outcome, not a failure.
+
+The payrolls print on Friday 4 Sep is **outside** the window. The code knows;
+do not let anyone re-add it.
