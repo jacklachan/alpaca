@@ -139,5 +139,13 @@ these; the account itself is the record a judge can check independently.
 
 Not claimed: the agent runs on a laptop under a watchdog, not on a deployed
 host, so no `deployment_soak` evidence exists and none is asserted. P&L is a
-mark on an open position, not a realised result. A test suite fails the build
+mark on an open position, not a realised result.
+
+The scored run is pinned to one exact commit, recorded in the release manifest
+and in `STATUS.md`. This repository's HEAD has moved ahead of it since -- the
+release gate refuses to start on a commit it was not approved against, which is
+why the pin exists. Later refinements in the tree were therefore **not active**
+during the measurement window, and the results belong to the pinned commit
+alone. Which code produced which number is a fact this system records rather
+than one a reader has to assume. A test suite fails the build
 if the public copy ever claims more than this.
