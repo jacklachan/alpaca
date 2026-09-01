@@ -46,10 +46,25 @@ from glassbox.mcp_client import (  # noqa: E402
 from glassbox.state import atomic_write_json  # noqa: E402
 
 #: Read-only calls attempted, in a sensible order for a reader.
+#:
+#: These are names the server actually advertises, verified against Alpaca MCP
+#: Server 3.4.7. An earlier list asked for get_market_clock, get_market_calendar
+#: and get_positions, none of which exist there -- positions is get_open_position
+#: now, and the clock and calendar tools are gone. Every one was recorded as
+#: "not advertised by this server", which marked the bundle incomplete and left
+#: the MCP evidence unusable even though the server was reachable and answering.
+#:
+#: The surface assertion still refuses to continue if a tool named here is
+#: missing, so this list drifting behind the server fails loudly rather than
+#: quietly proving less than it claims.
+#: The market-data tools (get_stock_latest_trade, get_option_snapshot) are
+#: advertised and allowlisted but omitted here: on 3.4.7 they never return,
+#: at 30s and at 120s alike, so they are not a timeout to tune but a hang.
+#: They prove nothing these three do not -- the evidence being captured is that
+#: the integration is real and restricted, and three authenticated calls
+#: against the actual account establish that as well as five would.
 PROOF_CALLS: tuple[tuple[str, dict], ...] = (
     ("get_account_info", {}),
-    ("get_market_clock", {}),
-    ("get_positions", {}),
     ("get_orders", {"status": "all"}),
     ("get_option_contracts", {"underlying_symbols": "SPY"}),
 )
