@@ -126,7 +126,19 @@ OPTION_FORCE_CLOSE_ET = (14, 30)
 # deliberately not paired with a stop: cutting a long-premium position because
 # it is down forfeits exactly the optionality the premium bought, and max loss
 # is already bounded by the premium itself.
-OPTION_PROFIT_TARGET_PCT = Decimal("0.50")
+# Set to 30%, not 50%, because the losing branch dominates. If no catalyst
+# produces a move the position decays ~30% into measurement, so what matters
+# is that the winning branch HAPPENS rather than that it is large: a target
+# that fires converts a touch into a realised gain, and "touches a level at
+# some point" is strictly more probable than "is above it at one instant".
+# +30% on premium is roughly a 1.3% move in the underlying and lands the
+# account near +5%, which wins a four-day P&L field that mostly clusters flat.
+#
+# Taking the whole position rather than scaling out is deliberate. These are
+# economic prints, and implied volatility collapses once one resolves -- the
+# gain on a long strangle is largest at the print and decays after it, so a
+# quick full exit is the right shape for this structure.
+OPTION_PROFIT_TARGET_PCT = Decimal("0.30")
 
 # --- Risk limits --------------------------------------------------------------
 
