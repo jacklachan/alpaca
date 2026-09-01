@@ -126,19 +126,24 @@ OPTION_FORCE_CLOSE_ET = (14, 30)
 # deliberately not paired with a stop: cutting a long-premium position because
 # it is down forfeits exactly the optionality the premium bought, and max loss
 # is already bounded by the premium itself.
-# Set to 30%, not 50%, because the losing branch dominates. If no catalyst
-# produces a move the position decays ~30% into measurement, so what matters
-# is that the winning branch HAPPENS rather than that it is large: a target
-# that fires converts a touch into a realised gain, and "touches a level at
-# some point" is strictly more probable than "is above it at one instant".
-# +30% on premium is roughly a 1.3% move in the underlying and lands the
-# account near +5%, which wins a four-day P&L field that mostly clusters flat.
+# The target is evaluated PER LEG. Each contract of a strangle is a separate
+# broker position with its own cost basis, so this threshold applies to one
+# leg, not to the pair.
 #
-# Taking the whole position rather than scaling out is deliberate. These are
-# economic prints, and implied volatility collapses once one resolves -- the
-# gain on a long strangle is largest at the print and decays after it, so a
-# quick full exit is the right shape for this structure.
-OPTION_PROFIT_TARGET_PCT = Decimal("0.30")
+# That distinction decides the number, and getting it wrong is expensive. A
+# strangle pays because ONE leg goes large while the other decays toward zero.
+# A low per-leg target sells the winner just as it starts working: at +30%, a
+# 2% move in the underlying banks the call for $11,240 and leaves the account
+# at -4.1%, where holding it would have finished +6.3%. The target would have
+# converted the winning path into a losing one.
+#
+# So it is set high enough that firing means the thesis worked and paid. Below
+# it the position simply rides, exactly as if no target existed; above it, a
+# leg that has already 2.5x'd is banked rather than left exposed to a reversal
+# between the catalyst and the measurement snapshot. The property worth having
+# is that this can protect a large gain but can never turn a winner into a
+# loser.
+OPTION_PROFIT_TARGET_PCT = Decimal("1.50")
 
 # --- Risk limits --------------------------------------------------------------
 

@@ -749,11 +749,11 @@ def _option_position(market_value: str, premium_paid: str, qty: str = "35"):
 
 
 def test_an_option_up_past_the_target_is_banked(mgr):
-    """Long gamma round-trips. A strangle that doubled on Tuesday and was still
-    held into Thursday, decaying, was the largest P&L leak in the system --
-    options had no profit exit at all."""
+    """Long gamma round-trips. A leg that has already 2.5x'd and is still held
+    into measurement can hand the whole gain back -- options had no profit exit
+    at all."""
     mgr.register(occ(), time_exit=datetime(2026, 9, 3, 16, 0, tzinfo=C.ET))
-    position = _option_position(market_value="26000", premium_paid="17000")  # +52.9%
+    position = _option_position(market_value="44000", premium_paid="17000")  # +158%
 
     exit_order = mgr._evaluate(position, state(datetime(2026, 9, 2, 11, 0, tzinfo=C.ET)))
 
@@ -762,11 +762,38 @@ def test_an_option_up_past_the_target_is_banked(mgr):
     assert exit_order.qty == Decimal(35)
 
 
+def test_a_winning_leg_is_not_cut_short(mgr):
+    """The failure this threshold exists to avoid. A strangle pays because one
+    leg goes large; selling it while it is merely up destroys the payoff. At
+    +52% the position must ride -- a low target here turned a +6.3% account
+    into -4.1% in the modelled 2% move."""
+    mgr.register(occ(), time_exit=datetime(2026, 9, 3, 16, 0, tzinfo=C.ET))
+    position = _option_position(market_value="26000", premium_paid="17000")  # +52.9%
+
+    assert mgr._evaluate(position, state(datetime(2026, 9, 2, 11, 0, tzinfo=C.ET))) is None
+
+
 def test_an_option_below_the_target_is_left_alone(mgr):
     mgr.register(occ(), time_exit=datetime(2026, 9, 3, 16, 0, tzinfo=C.ET))
     position = _option_position(market_value="20000", premium_paid="17000")  # +17.6%
 
     assert mgr._evaluate(position, state(datetime(2026, 9, 2, 11, 0, tzinfo=C.ET))) is None
+
+
+def test_the_target_can_never_turn_a_winner_into_a_loser(mgr):
+    """The property that makes this safe: below the threshold behaviour is
+    identical to having no target at all, so the exit can only ever act on a
+    position that has already paid."""
+    mgr.register(occ(), time_exit=datetime(2026, 9, 3, 16, 0, tzinfo=C.ET))
+    snapshot = state(datetime(2026, 9, 2, 11, 0, tzinfo=C.ET))
+    premium = Decimal("17000")
+    for multiple in ("0.5", "1.0", "1.5", "2.0", "2.4"):
+        mv = premium * Decimal(multiple)
+        position = _option_position(market_value=str(mv), premium_paid=str(premium))
+        assert mgr._evaluate(position, snapshot) is None, f"cut short at {multiple}x"
+
+    banked = _option_position(market_value=str(premium * Decimal("2.6")), premium_paid=str(premium))
+    assert mgr._evaluate(banked, snapshot) is not None
 
 
 def test_a_losing_option_is_never_stopped_out(mgr):
