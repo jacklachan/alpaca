@@ -33,6 +33,13 @@ from typing import Any, Callable, Mapping, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from dotenv import load_dotenv
+
+# This repository's .env only; see main.py for why the default search
+# up the directory tree is unsafe here.
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
+
 from glassbox.release import SECRET_ENV_KEYS  # noqa: E402
 from glassbox.state import atomic_write_json  # noqa: E402
 
@@ -40,10 +47,14 @@ SCHEMA_VERSION = 1
 
 #: The only CLI invocations this tool may ever build.
 READ_ONLY_COMMANDS: dict[str, tuple[str, ...]] = {
-    "version": ("--version",),
     "account": ("account", "get"),
     "clock": ("clock", "get"),
-    "config": ("config", "get"),
+    # `config get` does not exist in CLI v0.0.14, and the commands that would
+    # replace it (`version`, `doctor`, `profile list`) print human-readable
+    # text rather than JSON, so they cannot be parsed, hashed and cited the way
+    # this bundle requires. They also prove nothing the API calls below do not:
+    # five authenticated read-only endpoints are the evidence that the CLI was
+    # actually used against this account.
     "option_contracts": ("option", "contracts", "list"),
     "orders": ("order", "list", "--status", "all"),
     "positions": ("position", "list"),
