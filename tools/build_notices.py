@@ -41,6 +41,71 @@ ALLOWED_LICENSES = {
     "Dual License",
 }
 
+#: Reviewed license per pinned package, checked in deliberately.
+#:
+#: These were resolved from installed metadata once and normalised to SPDX,
+#: then committed. They are NOT read from the environment at generation
+#: time, because installed metadata is not stable across machines and this
+#: file is a committed artifact that CI regenerates and compares:
+#:
+#:   exceptiongroup is pinned `python_version < "3.11"`, so it installs on
+#:   some interpreters and not others -- present it reads MIT, absent it
+#:   reads UNKNOWN.
+#:
+#:   numpy's Linux wheel publishes no License-Expression and falls back to
+#:   the classifier "BSD License", while the Windows wheel declares the
+#:   full SPDX compound.
+#:
+#: Either divergence makes the notices stale on every push from a machine
+#: unlike the runner. A committed generated file has to be a pure function
+#: of committed inputs, so the license comes from here and the lock alone.
+#: Adding a dependency means adding its reviewed license here, which is the
+#: review this file exists to record.
+REVIEWED_LICENSES: dict[str, str] = {
+    "alpaca-py": "Apache-2.0",
+    "annotated-doc": "MIT",
+    "annotated-types": "MIT",
+    "anthropic": "MIT",
+    "anyio": "MIT",
+    "APScheduler": "MIT",
+    "certifi": "MPL-2.0",
+    "charset-normalizer": "MIT",
+    "click": "BSD-3-Clause",
+    "docstring-parser": "MIT",
+    "exceptiongroup": "MIT",
+    "fastapi": "MIT",
+    "h11": "MIT",
+    "httpcore": "BSD-3-Clause",
+    "httpcore2": "BSD-3-Clause",
+    "httpx": "BSD-3-Clause",
+    "httpx2": "BSD-3-Clause",
+    "idna": "BSD-3-Clause",
+    "jiter": "MIT",
+    "msgpack": "Apache-2.0",
+    "numpy": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0",
+    "openai": "Apache-2.0",
+    "pandas": "BSD-3-Clause",
+    "pydantic": "MIT",
+    "pydantic-core": "MIT",
+    "python-dateutil": "Dual License",
+    "python-dotenv": "BSD-3-Clause",
+    "pytz": "MIT",
+    "requests": "Apache-2.0",
+    "six": "MIT",
+    "sniffio": "MIT OR Apache-2.0",
+    "sseclient-py": "Apache-2.0",
+    "starlette": "BSD-3-Clause",
+    "truststore": "MIT",
+    "typing-extensions": "PSF-2.0",
+    "typing-inspection": "MIT",
+    "tzdata": "Apache-2.0",
+    "tzlocal": "MIT",
+    "urllib3": "MIT",
+    "uvicorn": "BSD-3-Clause",
+    "websockets": "BSD-3-Clause",
+}
+
+
 _PIN = re.compile(r"^([A-Za-z0-9._-]+)==([^;]+)")
 
 
@@ -60,7 +125,20 @@ def pinned_packages(lock_path: Path = LOCK) -> list[tuple[str, str, str]]:
 
 
 def license_of(name: str) -> str:
-    """Best available license string for an installed distribution."""
+    """The reviewed license for a pinned package.
+
+    Deterministic by construction: it never consults the environment. See
+    REVIEWED_LICENSES for why.
+    """
+    reviewed = REVIEWED_LICENSES.get(name)
+    if reviewed is not None:
+        return reviewed
+    return f"UNREVIEWED ({name} is not in REVIEWED_LICENSES; add it)"
+
+
+def observed_license_of(name: str) -> str:
+    """What the installed distribution claims. Advisory only -- use this to
+    seed a REVIEWED_LICENSES entry, never to generate the notices."""
     try:
         meta = metadata.metadata(name)
     except metadata.PackageNotFoundError:
