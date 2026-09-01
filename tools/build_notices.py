@@ -171,7 +171,22 @@ def main(argv: list[str] | None = None) -> int:
     if args.check:
         current = NOTICES.read_text(encoding="utf-8") if NOTICES.exists() else ""
         if current != content:
+            # Print what differs. "Stale" alone is unactionable when the file is
+            # committed from one machine and checked on another: the whole
+            # question is which package resolved differently and where.
+            import difflib
+
+            diff = difflib.unified_diff(
+                current.splitlines(),
+                content.splitlines(),
+                fromfile="THIRD_PARTY_NOTICES.md (committed)",
+                tofile="regenerated here",
+                lineterm="",
+                n=0,
+            )
             print("THIRD_PARTY_NOTICES.md is stale; run tools/build_notices.py", file=sys.stderr)
+            for line in diff:
+                print(line, file=sys.stderr)
             return 1
         print("notices are current")
         return 0

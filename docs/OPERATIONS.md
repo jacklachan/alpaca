@@ -66,8 +66,14 @@ flag when you deploy.
 
 Running locally means nothing has proven the process survives its host. On a
 laptop the real threats are sleep, network drops, and no supervisor to restart
-a dead process -- `caffeinate -is`, a restart loop, and watching the Discord
-heartbeat are the cheap mitigations.
+a dead process.
+
+The supervisor is `tools/watchdog.ps1` on Windows, which is where the scored
+run lives; on macOS or Linux a restart loop around `main.py` does the same job.
+Sleep is the one neither survives, so disable it on the host: Windows power
+settings, or `caffeinate -is` on macOS. Parts of this repository were written
+on a Mac and the mac-only spelling has appeared in instructions before -- check
+which host you are actually on before copying a command from a runbook.
 
 ## Exit codes
 

@@ -140,11 +140,24 @@ needs a human. `docs/OPERATIONS.md` maps every latch to its cause.
 
 Nothing has proven the process survives 66 hours on a laptop, and
 `deployment_soak` is only required of a deployed run. Mitigate what it would
-have caught:
+have caught.
 
-```bash
-caffeinate -is python main.py
+**The scored run is on Windows**, so use the watchdog. It restarts the agent
+if the process dies, clearing the stale lock and rebuilding the release
+manifest first -- both of which a bare restart gets wrong:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\watchdog.ps1
 ```
+
+Then stop the machine sleeping, which no watchdog can survive:
+Settings > System > Power > Screen and sleep > "When plugged in, put my device
+to sleep after" > Never. Screen off is fine; sleep and hibernate are not.
+
+On macOS the equivalent of that second step is `caffeinate -is python main.py`.
+It is written here because part of this repository was built on a Mac, and it
+does not exist on Windows -- running the scored agent that way is not an
+option on the machine this is actually deployed to.
 
 Watch the Discord heartbeat. If the process dies, restart it -- state is
 durable and it reconciles against the venue on the next tick.
