@@ -5,9 +5,8 @@ Written 1 Sep 2026, ~02:30 ET. Read this first when you're back.
 ## The agent is running
 
 ```
-account   PA3XT8QFJZAQ   (scored, judged)   equity $100,000   options level 3
+account   PA3XT8QFJZAQ   (scored, judged)   $100,000 at activation
 mode      scored, options-only, release gate green
-commit    7c9f6b22cfa8d07e817d2dcee8a22b8eb7cbc945   (restarted onto this)
 model     Featherless / Qwen/Qwen2.5-72B-Instruct  (bounded selector)
 log       state/agent.log
 lock      state/scheduler.lock
@@ -19,17 +18,26 @@ proof, dev venue proof. `--dry-run` passed, then the schedule started.
 **First trading tick is 09:30 ET (19:00 IST).** Nothing happens before that —
 the equity market is shut. Crypto ticks run continuously.
 
-## What the running commit contains
+## Which commit produced the results
 
-`7c9f6b2` is the theta-gate fix -- the change that resolved two safety gates
-pulling against each other and let the strangle through. It includes the
-measurement-aware exit (`899da3e`), which checks the quote width near the
-snapshot and takes cash if the mark cannot be defended.
+**Do not read this from prose.** The running commit is written into the log by
+the release gate at every start, and that line is the only trustworthy source:
 
-It does **not** include anything committed after it, notably the per-leg
-profit target. The release gate pins an exact commit and refuses to start on
-one it was not approved against, so the results of this run belong to
-`7c9f6b2` and nothing later. HEAD has moved on; the run has not.
+```bash
+grep -o "release gate: commit [0-9a-f]*" state/agent.log | tail -1
+```
+
+This section previously named the commit by hand and was wrong within hours,
+twice, because a restart moves it and the prose does not follow. It claimed
+`7c9f6b2` and that the per-leg profit target was not live, when the agent had
+already been restarted onto a commit that contains it. A field that goes stale
+on every restart should not be maintained by hand, and a reader checking our
+claims against the account deserves the command rather than our word.
+
+What matters and does not change: the release gate pins an exact commit and
+refuses to start on one it was not approved against, so whatever that log line
+says is what produced the numbers. HEAD may be ahead of it; features in the
+tree are not necessarily active in the run.
 
 ## Restarting it
 

@@ -142,7 +142,14 @@ host, so no `deployment_soak` evidence exists and none is asserted. P&L is a
 mark on an open position, not a realised result.
 
 The scored run is pinned to one exact commit, recorded in the release manifest
-and in `STATUS.md`. This repository's HEAD has moved ahead of it since -- the
+and written into `state/agent.log` by the release gate at every start:
+
+```bash
+grep -o "release gate: commit [0-9a-f]*" state/agent.log | tail -1
+```
+
+That line, not any prose in this repository, is the answer. This repository's
+HEAD has moved ahead of it since -- the
 release gate refuses to start on a commit it was not approved against, which is
 why the pin exists. Later refinements in the tree were therefore **not active**
 during the measurement window, and the results belong to the pinned commit
