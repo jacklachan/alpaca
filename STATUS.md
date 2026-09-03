@@ -142,7 +142,9 @@ Six real bugs, all found by running the thing rather than reading it:
 - **Discord webhook is empty**, so there is no remote heartbeat. Paste a
   webhook URL into `DISCORD_WEBHOOK_URL` in `.env` and restart to get alerts.
 - **Rotate the keys** that appeared in chat once the week is over.
-- **Social posts.** A judged criterion still at zero.
+- ~~**Social posts.**~~ Done -- all five are live on LinkedIn with
+  lablab.ai and Alpaca tagged. That is the full allowance, and the rule
+  reads "X **or** LinkedIn", so this criterion is satisfied.
 - **Submission package**: video, deck, cover image, one-page write-up, and the
   account ID above.
 

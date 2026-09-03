@@ -1,9 +1,21 @@
-# Social posts — ready to publish
+# Social posts — published
 
-Five posts, one per remaining day. Every number below is real and checkable
-against the repository or the account. **Do not post a claim you cannot show.**
+**Status: all five are live on LinkedIn**, with lablab.ai and Alpaca tagged.
+That is the full allocation the event allows, and the submission rule reads
+"up to 5 links to posts shared on X **or** LinkedIn" -- LinkedIn alone
+satisfies it.
 
-Tag **@lablabai** and **@AlpacaHQ** on every post. Repository:
+The drafts below are kept as the record of what was posted and why.
+
+Every number in them is real and checkable against the repository or the
+account. **Do not post a claim you cannot show.**
+
+Tagging differs by platform, and the handles below are the **X** ones. On
+LinkedIn a mention only registers if you type `@` and select the company page
+from the dropdown -- pasting the X handle as text tags nobody. The published
+posts use the LinkedIn company pages.
+
+Tag **@lablabai** and **@AlpacaHQ** on X. Repository:
 <https://github.com/jacklachan/alpaca>
 
 A note on tone, because it is the whole strategy here: every other team will
