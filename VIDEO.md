@@ -25,8 +25,8 @@ segments below.
 | `tools/verify_submission.py` | fails or skips most checks | reads journal, ledger, manifest, proofs -- all under `state/` |
 
 So: **Mohit records the terminal, Tanush edits and voices over.** One
-continuous take of the three commands in order is about two minutes of
-footage, most of it `verify_submission.py` thinking, which gets cut anyway.
+continuous take of the three commands in order runs about 15 seconds of
+actual command time, so a relaxed take with pauses is under two minutes.
 
 Do not work around this by committing `state/` or by displaying saved output
 as though it were running. A pre-captured text file shown as a live terminal
@@ -54,8 +54,9 @@ python tools/verify_submission.py
 - Close every other tab and window. **Never show the Alpaca dashboard home
   page** (the API key panel is on it), and never show `.env` in an editor.
 - `demo.py` and `verify_submission.py` need no credentials, so those two can
-  be recorded on any machine. `demo.py` runs in about five seconds,
-  `verify_submission.py` in about a minute — cut to its finished output.
+  be recorded on any machine. Measured on this laptop: `calibration.py` 3s,
+  `demo.py` 1s, `verify_submission.py` 7s. None of them stall, so a long
+  pause on screen means something is wrong, not that it is working.
 - Rehearse `calibration.py` once first. It hits Alpaca for the live mark; if it
   cannot authenticate it prints the forecast alone and says so. Correct
   output, weaker shot.
