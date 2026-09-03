@@ -14,7 +14,14 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 README = (ROOT / "README.md").read_text(encoding="utf-8")
-PUBLIC_DOCS = ("README.md", "SOCIAL.md", "PLAN.md", "DECISIONS.md", "docs/WRITEUP.md")
+PUBLIC_DOCS = (
+    "README.md",
+    "SOCIAL.md",
+    "PLAN.md",
+    "DECISIONS.md",
+    "docs/WRITEUP.md",
+    "docs/WRITEUP-FULL.md",
+)
 
 
 def _doc(name: str) -> str:
