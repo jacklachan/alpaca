@@ -11,6 +11,30 @@ script.
 
 ---
 
+## Read this first: two of the four shots only exist on Mohit's laptop
+
+`state/` is gitignored, and it holds the journal, the position ledger, the
+release manifest and the proof bundles. That is deliberate -- it is live
+account evidence -- but it means a fresh clone cannot produce two of the
+segments below.
+
+| Command | On a fresh clone | Why |
+| --- | --- | --- |
+| `tools/demo.py` | **works** | builds its own journal in a temp dir, no credentials, no `state/` |
+| `tools/calibration.py` | prints "no decay forecast recorded yet" | reads the live journal under `state/` |
+| `tools/verify_submission.py` | fails or skips most checks | reads journal, ledger, manifest, proofs -- all under `state/` |
+
+So: **Mohit records the terminal, Tanush edits and voices over.** One
+continuous take of the three commands in order is about two minutes of
+footage, most of it `verify_submission.py` thinking, which gets cut anyway.
+
+Do not work around this by committing `state/` or by displaying saved output
+as though it were running. A pre-captured text file shown as a live terminal
+is the one thing in this submission that would actually be dishonest, and the
+whole video is an argument about honesty.
+
+---
+
 ## Before you record
 
 ```bash
