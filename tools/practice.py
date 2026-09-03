@@ -201,7 +201,7 @@ def main() -> int:
     print(f"  options   level {info['options_level']}")
 
     # -- 2 ---------------------------------------------------------------------
-    head(2, "Reconcile — rebuilding state from the broker")
+    head(2, "Reconcile - rebuilding state from the broker")
     state = broker.reconcile(kill_switch_tripped=manager.kill.tripped)
     print(f"  market open              {state.market_open}")
     print(f"  positions                {len(state.positions)}")
@@ -256,7 +256,7 @@ def main() -> int:
                 approved.append(p)
 
     # -- 4 ---------------------------------------------------------------------
-    head(4, "Adversarial plans — the kernel refusing hostile input")
+    head(4, "Adversarial plans - the kernel refusing hostile input")
     print("  Each of these validates against the schema and reaches the kernel.\n")
     all_refused = True
     for label, plan in hostile_plans():
@@ -311,7 +311,7 @@ def main() -> int:
     print(f"  head      {journal.head[:24]}")
     print("  actors    " + ", ".join(f"{a}={n}" for a, n in sorted(actors.items())))
     print("  events    " + ", ".join(f"{k}={v}" for k, v in sorted(events.items())))
-    print(f"\n  chain     {'PASS' if ok else 'FAIL'} — {why}")
+    print(f"\n  chain     {'PASS' if ok else 'FAIL'} - {why}")
 
     print(f"\n{BAR}")
     print("Rehearsal complete. Inspect the journal:")

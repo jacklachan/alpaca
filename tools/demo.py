@@ -77,7 +77,7 @@ def demo_state(**kw: Any) -> PortfolioState:
 
 
 def main() -> int:
-    print(f"\n{B}Glassbox — the safety layer, with no credentials{X}")
+    print(f"\n{B}Glassbox - the safety layer, with no credentials{X}")
     print(f"{D}Real kernel, real journal, real position manager. Synthetic market only.{X}")
 
     kernel = RiskKernel()
