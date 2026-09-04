@@ -107,6 +107,10 @@ def read_journal(path: Path) -> tuple[list[dict], dict | None]:
             frozen = {
                 "seq": record["seq"],
                 "ts": record["ts"][:19],
+                # Keep the parsed instant. Re-parsing it later to measure
+                # staleness meant handling a None that cannot occur here,
+                # because this line is only reached once parsing succeeded.
+                "when": when,
                 "equity": Decimal(str(payload["equity"])),
                 "premium_out": (
                     Decimal(str(payload["convex_premium_outstanding"]))
@@ -172,7 +176,7 @@ def main() -> int:
     print(f"\n  {B}Account at the measurement instant{X}  {D}({stamp}){X}")
     # No lookahead: this is the last reading at or before the instant, so
     # say how stale it is rather than implying it was taken exactly then.
-    early = (MEASUREMENT_UTC - _ts({"ts": frozen["ts"]})).total_seconds()
+    early = (MEASUREMENT_UTC - frozen["when"]).total_seconds()
     print(
         f"  journal seq       {frozen['seq']}  at {frozen['ts']}Z"
         f"  ({early:.0f}s before the instant, no lookahead)"
