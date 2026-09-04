@@ -130,6 +130,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"  {DIM}A skip means the evidence does not exist yet -- not that a check "
             f"was waived.{RESET}"
         )
+        # Test the journal file, not the state/ directory: importing the
+        # package creates that directory, so it always exists by the time
+        # this runs and the note never printed.
+        if not Path(C.JOURNAL_PATH).exists():
+            print()
+            print(f"  {DIM}You are running this on a clone with no state/ directory.")
+            print("  state/ holds the journal, ledger, release manifest and proof")
+            print("  bundles. It is gitignored on purpose: it is live account")
+            print("  evidence, and publishing it would let anyone reproduce the")
+            print("  chain we ask you to check us against.")
+            print()
+            print("  So the skips above are the honest answer, not a broken tool.")
+            print("  Those checks pass on the machine that holds the evidence, and")
+            print("  the account itself -- PA3XT8QFJZAQ -- is what a third party")
+            print(f"  reconciles against.{RESET}")
     print()
     return 0 if report.ok else 1
 

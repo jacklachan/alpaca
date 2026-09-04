@@ -275,6 +275,17 @@ def test_the_writeup_test_count_matches_the_real_suite():
         capture_output=True,
         text=True,
     )
+    # A partial environment collects a partial suite. Reported as a failure it
+    # reads "the write-up claims the wrong number", which is a different and
+    # much more damaging statement than "you are missing apscheduler". Tanush
+    # hit exactly this on a fresh clone: 686 collected against 746 claimed,
+    # because four test modules could not import.
+    if collected.returncode != 0 or " error" in collected.stdout:
+        pytest.skip(
+            "the suite did not collect cleanly here, so its size proves nothing "
+            f"about the write-up: {collected.stdout.strip().splitlines()[-1]}"
+        )
+
     found = re.search(r"(\d+) tests collected", collected.stdout)
     assert found, f"could not count the suite: {collected.stdout[-400:]}"
     actual = int(found.group(1))
