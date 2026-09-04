@@ -65,6 +65,7 @@ Alpaca market data
 deterministic SPY/QQQ option candidate generators
        |
 bounded AI: select one existing candidate ID or abstain
+  (Qwen/Qwen2.5-72B-Instruct via Featherless AI)
        |
 exact original TradePlan object
        |
@@ -81,6 +82,11 @@ the bounded live connectivity proof is the explicit `tools/live_check.py` CLI.
 
 If the model is missing, times out, returns malformed JSON, names an unknown
 candidate, or attempts to add trade fields, the scored cycle abstains.
+
+The selector runs `Qwen/Qwen2.5-72B-Instruct` on **Featherless AI** over an
+OpenAI-compatible endpoint (`glassbox/thesis.py`). The bound is enforced by the
+output schema rather than by trust in a particular model, so the provider is
+swappable -- but Featherless is what ran the scored week.
 
 ## Safety properties
 

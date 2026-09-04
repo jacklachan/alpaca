@@ -20,7 +20,8 @@ is deliberately narrow:
 2. The candidate set is canonically ordered and hashed. The model receives only
    summarised immutable fields.
 3. The model returns **one candidate ID, or null.** That is its entire output
-   schema. Extra fields are rejected.
+   schema. Extra fields are rejected. The model is `Qwen/Qwen2.5-72B-Instruct`,
+   served through **Featherless AI** on an OpenAI-compatible endpoint.
 4. Anything else — timeout, malformed JSON, an unknown ID, an altered object, a
    missing credential — is an **abstention**, journalled with its reason.
 5. The exact original candidate object, not a reconstruction, goes to the risk

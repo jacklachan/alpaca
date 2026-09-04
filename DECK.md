@@ -214,7 +214,7 @@ order IDs are what a third party reconciles against.
 
 ## 4. Required one-page write-up
 
-Already satisfied and in the repo: `docs/WRITEUP.md`, 769 words, with sections
+Already satisfied and in the repo: `docs/WRITEUP.md`, 824 words, with sections
 titled exactly *AI logic*, *Risk gates*, and *Alpaca infrastructure*. The rule
 allows it to be a slide instead — if you would rather put it in the deck,
 slides 4, 5 and 7 already are that write-up and you can say so.

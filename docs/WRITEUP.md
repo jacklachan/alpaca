@@ -24,6 +24,11 @@ trade, or nothing: there is no field in which to say bigger, or naked, or no
 stop. A selection receipt binds prompt, model, candidate-set hash and response
 hash, so any decision can be replayed.
 
+The model itself is `Qwen/Qwen2.5-72B-Instruct`, served through **Featherless
+AI**, reached over an OpenAI-compatible endpoint (`glassbox/thesis.py`). Nothing
+about the bound depends on which model sits behind it -- the schema is the
+enforcement -- but that is the one that ran all week.
+
 ## Risk gates — deterministic, ordered, fail-closed
 
 A **13-invariant kernel** reviews the selected object: symbol allowlist, bounded
