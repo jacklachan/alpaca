@@ -142,8 +142,9 @@ account identity, the development venue proof, and a live options order -- a
 these; the account itself is the record a judge can check independently.
 
 Not claimed: the agent runs on a laptop under a watchdog, not on a deployed
-host, so no `deployment_soak` evidence exists and none is asserted. P&L is a
-mark on an open position, not a realised result.
+host, so no `deployment_soak` evidence exists and none is asserted. The account finished flat and
+entirely in cash at $100,095.01, so the final figure is realised rather
+than a mark -- but four days is not an edge and we do not claim one.
 
 The scored run is pinned to one exact commit, recorded in the release manifest
 and written into `state/agent.log` by the release gate at every start:

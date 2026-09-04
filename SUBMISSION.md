@@ -2,6 +2,14 @@
 
 Deadline **Friday 4 September, 20:30 IST** (17:00 CEST / 08:00 PDT).
 
+**Final numbers, settled:**
+
+| | |
+| --- | --- |
+| Measured day, Thu 3 Sep close | **$94,207.02, -5.79%** |
+| Final, flat and in cash | **$100,095.01, +0.10%** |
+| Scored account | `PA3XT8QFJZAQ` |
+
 The lablab form asks for the fields below. Everything marked ✅ is settled and
 can be pasted as written. Everything marked ⚠️ needs a human decision or an
 asset that does not exist yet.
@@ -79,12 +87,18 @@ ever call and enforces an exact allowlist, a mutating-verb scan and a discovery
 gate — proven against the official Alpaca MCP Server 3.4.7 with live
 credentials, with four mutating tools refused by attempting them.
 
-Result on the measured day: -5.79%, read from Alpaca's own portfolio history.
-We are not hiding it and we are not dressing it up. What we would rather be
-judged on is that the system priced its own costs in advance, wrote them into a
-chain that provably predates the outcome, refused the largest catalyst of the
-week because its payoff landed after the account was photographed, and shipped
-the tool that could prove our central claim false:
+Result. On the day we designated as measurement, Thursday 3 September, the
+account closed at $94,207.02 -- down 5.79%, read from Alpaca's own portfolio
+history. The week ended with the book flat and the account entirely in cash at
+$100,095.01, +0.10%, which is realised rather than a mark. Both numbers are
+real and they answer different questions. Neither is four days of edge, and we
+do not claim one.
+
+What we would rather be judged on is that the system priced its own costs in
+advance, wrote them into a chain that provably predates the outcome, refused
+the largest catalyst of the week because its payoff landed after the account
+was photographed, and shipped the tool that could prove our central claim
+false:
 
     python tools/verify_submission.py
 
@@ -166,7 +180,9 @@ them disagree.
 
 ## ⚠️ Video presentation
 
-Recorded 3 Sep. **Segment one is stale and must be re-recorded** —
+With Tanush, being voiced now. Five cut beat clips are in the `Videos\glassbox-beats\` folder, already zoomed and held to each beat's script length.
+
+~~Segment one is stale and must be re-recorded~~ —
 `calibration.py` was rewritten after that take and now leads with a different,
 stronger finding. The `demo.py` and `verify_submission.py` segments are
 unaffected. Script and shot list: `VIDEO.md`.

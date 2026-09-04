@@ -17,6 +17,10 @@ history records the measured close, end of Thursday 3 September 2026, at
 **$94,207.02 — down 5.79%.** That is the number, read from the broker rather
 than reconstructed from our fill log.
 
+The week ended with the book flat and the account entirely in cash at
+**$100,095.01, +0.10%** -- realised, not a mark. Both figures are real; they
+answer different questions, and neither is four days of edge.
+
 The more interesting number is from the same instant. We price options off
 Alpaca's **indicative** feed, a derived estimate rather than OPRA. At 16:00 ET
 our own honest reading of the book said **$99,642.35** and Alpaca's official

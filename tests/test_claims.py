@@ -309,8 +309,14 @@ def test_the_writeup_keeps_its_unproven_gates_visible():
     assert "deployment_soak" in text or "deployment soak" in text, (
         "the agent runs on a laptop with no soak evidence; that gap must stay visible"
     )
-    assert "not a realised result" in text or "not a realized result" in text, (
-        "P&L on an open position must not be presented as a realised result"
+    # This used to require the literal "not a realised result". True while a
+    # position was open; false the moment the book went flat and the figure
+    # became actual cash -- at which point the guard was forcing the write-up
+    # to understate what it could honestly say. Same failure as the README
+    # "pending" strings. The enduring property is the sample size, which no
+    # outcome changes: four days is not an edge.
+    assert "does not prove an edge" in text or "prove an edge" in text, (
+        "however P&L lands, the write-up must say four days does not prove an edge"
     )
 
 

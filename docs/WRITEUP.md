@@ -88,8 +88,9 @@ commit.
 each order against what actually happened.
 
 **Not claimed:** the agent runs on a laptop under a watchdog, not a deployed
-host, so no `deployment_soak` evidence exists and none is asserted. P&L is a
-mark on an open position, not a realised result. Four days does not prove an
+host, so no `deployment_soak` evidence exists and none is asserted. The account finished flat and
+entirely in cash at $100,095.01, so the final figure is realised rather
+than a mark -- but four days is not an edge and we do not claim one. Four days does not prove an
 edge, and the hash chain detects edits to the recorded history without proving
 the history was never regenerated — Alpaca's own order IDs are what a third
 party reconciles against.
