@@ -148,12 +148,17 @@ unaffected. Script and shot list: `VIDEO.md`.
 
 With the teammate. Source material and slide-by-slide content: `DECK.md`.
 
-## ⚠️ Cover image
+## ✅ Cover image
 
-Does not exist yet. Cheapest credible option is a clean terminal frame of
-`tools/demo.py` showing the four refusals, or the two-numbers block from
-`tools/calibration.py`. Do not use a stock chart image — the whole pitch is
-that we show mechanism rather than outcomes.
+`docs/cover.png`, 1200x630. Regenerate with `python tools/make_cover.py`.
+
+It is a terminal frame of two real refusals taken verbatim from `tools/demo.py`,
+not a chart. A cover has about a second to earn a click, and the agent refusing
+things is the one thing an equity curve cannot show. Every string on it is
+either a fact about the account or a line the kernel actually emits.
+
+Swap it only for something equally concrete — a stock trading graphic would
+contradict the whole submission.
 
 ## ⚠️ Demo application platform / Application URL
 

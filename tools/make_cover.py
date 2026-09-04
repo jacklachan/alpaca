@@ -14,7 +14,6 @@ about the account or a line the kernel actually emits.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
