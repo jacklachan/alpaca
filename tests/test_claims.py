@@ -296,9 +296,7 @@ def test_the_writeup_test_count_matches_the_real_suite():
         stated = re.search(r"([\d,]+)\s+automated tests", text)
         assert stated, f"{name} no longer states a test count"
         claimed = int(stated.group(1).replace(",", ""))
-        assert claimed == actual, (
-            f"{name} claims {claimed} automated tests, the suite has {actual}"
-        )
+        assert claimed == actual, f"{name} claims {claimed} automated tests, the suite has {actual}"
 
 
 def test_the_writeup_keeps_its_unproven_gates_visible():
