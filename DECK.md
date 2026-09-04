@@ -235,7 +235,7 @@ Longer version with the detail that did not fit: `docs/WRITEUP-FULL.md`.
 | Measured-day close (Alpaca's own history) | **$94,207.02 (−5.79%)** | same |
 | Kernel invariants | 13 | `tools/demo.py` |
 | Submission checks | 11, all passing | `python tools/verify_submission.py` |
-| Automated tests | 741 | `python -m pytest -q` |
+| Automated tests | 747 | `python -m pytest -q` |
 | Crash-recovery drill | 14/14 | `python tools/crash_drill.py` |
 | Journal entries | 76,000+, chain intact | `python tools/verify_chain.py` |
 | Model responses journalled | 769, every one only an id or an abstention | `verify_submission.py` |
