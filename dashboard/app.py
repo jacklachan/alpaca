@@ -25,7 +25,7 @@ from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from glassbox import config as C
@@ -354,12 +354,28 @@ def healthz() -> PlainTextResponse:
     return PlainTextResponse("ok")
 
 
+@app.head("/healthz")
+def healthz_head() -> Response:
+    return Response(status_code=200)
+
+
+@app.on_event("startup")
+def warm_journal_cache() -> None:
+    """Parse the frozen public evidence once before the first judge request."""
+    _load()
+
+
 # ----------------------------------------------------------------- the page
 
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> HTMLResponse:
     return HTMLResponse(PAGE)
+
+
+@app.head("/")
+def index_head() -> Response:
+    return Response(status_code=200)
 
 
 PAGE = r"""<!doctype html>
