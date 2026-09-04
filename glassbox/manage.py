@@ -32,6 +32,18 @@ from .state import StateCorrupt, atomic_write_json, read_json
 log = logging.getLogger("glassbox.manage")
 
 
+def _venue_closed_to_options(exc: Exception) -> bool:
+    """Is this the venue refusing an options order because it is shut?
+
+    Alpaca answers 42210000 / "options market orders are only allowed during
+    market hours". Matched on the code first because the prose is theirs to
+    reword, with a text fallback so a code change does not silently turn a
+    deferral back into a stream of failures.
+    """
+    text = str(exc).lower()
+    return "42210000" in text or ("options" in text and "only allowed during market hours" in text)
+
+
 class UnownedExposure(RuntimeError):
     """Refusing to close exposure this strategy cannot prove it owns."""
 
@@ -146,6 +158,9 @@ class PositionManager:
         # one-minute loop, the 14:30 expiry close-out could issue ~90 duplicate
         # market orders for one contract.
         self._exits_sent: set[str] = set()
+        # Symbols whose exit the venue cannot accept yet. In memory only:
+        # a restart should re-report the deferral, not inherit silence.
+        self._exit_deferred: set[str] = set()
         # Attempt counts and the uncertainty latch are persisted, not held in
         # memory. An in-memory latch is empty after any restart, and the
         # restart is exactly when the agent would resume submitting an exit
@@ -449,6 +464,7 @@ class PositionManager:
         try:
             if self.ledger is not None:
                 self._close_exact(e)
+                self._exit_deferred.discard(e.symbol)
             elif getattr(self.broker, "env", "dev") == "scored":
                 # A comment said this must never happen on the scored account;
                 # nothing enforced it. Symbol-wide close liquidates whatever the
@@ -491,6 +507,27 @@ class PositionManager:
         except Exception as exc:
             # A genuinely transient failure must stay retryable.
             self._exits_sent.discard(e.symbol)
+            if _venue_closed_to_options(exc):
+                # Not a failure. `time_exit` for the convex sleeve is
+                # MEASUREMENT_ET (16:00 ET), which is the exact minute Alpaca
+                # stops accepting options market orders -- so the exit is
+                # correct, on time, and unfillable until the next session.
+                #
+                # Retrying is right; filing it as EXIT_FAILED once a minute is
+                # not. It put 45 identical ERROR lines in the log and 45
+                # EXIT_FAILED entries in the journal for one deferred order,
+                # which reads as a broken agent to anyone auditing the run.
+                # Say it once, stay quiet, stay retryable.
+                if e.symbol not in self._exit_deferred:
+                    self._exit_deferred.add(e.symbol)
+                    self.journal.append(
+                        "manage",
+                        "EXIT_DEFERRED_VENUE_CLOSED",
+                        {"symbol": e.symbol, "reason": e.reason, "error": str(exc)},
+                    )
+                    log.info("deferring close of %s until the venue reopens: %s", e.symbol, exc)
+                return
+            self._exit_deferred.discard(e.symbol)
             self.journal.append(
                 "manage", "EXIT_FAILED", {"symbol": e.symbol, "reason": e.reason, "error": str(exc)}
             )

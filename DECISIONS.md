@@ -73,6 +73,30 @@ timestamps support reconciliation against Alpaca records.
 **Decision:** Describe the implementation as Alpaca Trading/Data APIs plus local
 CLI operations. No additional broker integration is claimed.
 
+## D11 — A closed venue is a deferral, not an exit failure
+
+**Observed live, 4 Sep 2026.** `time_exit` for the convex sleeve is
+`MEASUREMENT_ET` — 16:00 ET — which is the exact minute Alpaca stops accepting
+options market orders. The exit fired correctly and on time and could not fill.
+Every subsequent tick filed it as `EXIT_FAILED`: 45 identical error lines and 45
+journal entries for one deferred order, until the tick window closed at 17:00.
+
+**Decision:** keep retrying, because the condition genuinely clears when the
+venue reopens, but journal it once as `EXIT_DEFERRED_VENUE_CLOSED` rather than
+as a repeated failure. Detection matches Alpaca's error code first and its prose
+second, so a reworded message does not silently turn a deferral back into a
+stream of failures.
+
+**Not changed:** the exit still fires at the measurement instant. Moving it
+earlier would flatten the position *before* the account is valued, which is a
+different strategy, not a bug fix. Holding convexity into the snapshot is the
+design.
+
+**Not active during the scored run.** The fix is in the tree; the measured day
+ran on the pinned commit without it. The 45 `EXIT_FAILED` entries are in the
+journal and stay there — the record of a run is not edited because the code
+later improved.
+
 ## Current evidence boundary
 
 Local tests, type/lint/format gates, crash drills, deploy harness tests, and

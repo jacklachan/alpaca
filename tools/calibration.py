@@ -173,8 +173,10 @@ def main() -> int:
     # No lookahead: this is the last reading at or before the instant, so
     # say how stale it is rather than implying it was taken exactly then.
     early = (MEASUREMENT_UTC - _ts({"ts": frozen["ts"]})).total_seconds()
-    print(f"  journal seq       {frozen['seq']}  at {frozen['ts']}Z"
-          f"  ({early:.0f}s before the instant, no lookahead)")
+    print(
+        f"  journal seq       {frozen['seq']}  at {frozen['ts']}Z"
+        f"  ({early:.0f}s before the instant, no lookahead)"
+    )
     print(f"  equity            ${frozen['equity']:,.2f}")
     if frozen["premium_out"] is not None:
         print(f"  premium still open ${frozen['premium_out']:,.0f}")
@@ -201,7 +203,9 @@ def main() -> int:
     print(f"  our mark, indicative feed   ${frozen['equity']:,.2f}")
     print(f"  Alpaca's official close     ${official:,.2f}")
     colour = G if abs(gap) < Decimal("1000") else Y
-    print(f"  {colour}gap                         ${gap:+,.2f}  ({gap / official:+.2%} of the account){X}")
+    print(
+        f"  {colour}gap                         ${gap:+,.2f}  ({gap / official:+.2%} of the account){X}"
+    )
 
     print(f"\n{D}  This is the whole reason the measurement-aware exit exists. We")
     print("  price options off Alpaca's INDICATIVE feed, a derived estimate.")

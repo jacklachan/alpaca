@@ -836,3 +836,67 @@ def test_equity_targets_are_unaffected(mgr):
     exit_order = mgr._evaluate(position, snapshot)
     assert exit_order is not None
     assert "target hit" in exit_order.reason
+
+
+class VenueClosedBroker:
+    """Refuses options orders the way Alpaca does outside market hours."""
+
+    def __init__(self):
+        self.attempts = 0
+
+    def close_position(self, symbol):
+        self.attempts += 1
+        raise RuntimeError(
+            '{"code":42210000,"message":"options market orders are only '
+            'allowed during market hours"}'
+        )
+
+
+def test_a_closed_venue_defers_the_exit_instead_of_failing_it(tmp_path, journal):
+    """The bug this guards, observed live on 4 Sep 2026.
+
+    `time_exit` for the convex sleeve is MEASUREMENT_ET, 16:00 ET -- the exact
+    minute Alpaca stops accepting options market orders. The exit was correct
+    and on time and simply could not fill, but every tick filed it as
+    EXIT_FAILED: 45 identical error lines and 45 journal entries for one
+    deferred order. An auditor reading that run sees a broken agent.
+
+    The exit must stay retryable, so it fills when the venue reopens, and must
+    say so exactly once.
+    """
+    broker = VenueClosedBroker()
+    ks = KillSwitch(tmp_path / "kill.json", journal=journal)
+    m = PositionManager(
+        broker,
+        journal,
+        ks,
+        targets_path=tmp_path / "targets.json",
+        exit_state_path=tmp_path / "exit_state.json",
+    )
+
+    for minute in range(5):
+        m.tick(state(datetime(2026, 9, 8, 14, 30 + minute, tzinfo=C.ET), [opt()]))
+
+    events = [e["event"] for e in journal.read()]
+    assert "EXIT_FAILED" not in events, "a closed venue is not an exit failure"
+    assert events.count("EXIT_DEFERRED_VENUE_CLOSED") == 1, (
+        f"expected one deferral notice, got {events.count('EXIT_DEFERRED_VENUE_CLOSED')}"
+    )
+    # Retryable is the whole point: it has to fire again when the venue opens.
+    assert broker.attempts > 1, "the exit stopped being retried"
+
+
+def test_an_ordinary_broker_failure_is_still_a_failure(tmp_path, journal):
+    """The deferral path must not swallow real faults."""
+    ks = KillSwitch(tmp_path / "kill.json", journal=journal)
+    m = PositionManager(
+        FakeBroker(fail=True),
+        journal,
+        ks,
+        targets_path=tmp_path / "targets.json",
+        exit_state_path=tmp_path / "exit_state.json",
+    )
+    m.tick(state(datetime(2026, 9, 8, 14, 30, tzinfo=C.ET), [opt()]))
+    events = [e["event"] for e in journal.read()]
+    assert "EXIT_FAILED" in events
+    assert "EXIT_DEFERRED_VENUE_CLOSED" not in events

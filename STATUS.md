@@ -171,12 +171,22 @@ I have not widened `MAX_IV_TO_RV_RATIO`. It is a strategy parameter that trades
 But know that it is balanced on a knife edge, and that "no trades all week"
 is the failure it produces.
 
-## Honest note on P&L
+## Honest note on P&L — the measured day is done
 
-Measurement is **EOD Thursday 3 September**, which is about three sessions
-away. The agent is options-only on the scored account and will stand down
-rather than force a trade when convexity is not cheap — an empty journal entry
-saying why is a correct outcome, not a failure.
+Measurement was **EOD Thursday 3 September**. Alpaca's own portfolio history
+records that close as **$94,207.02, −5.79%**. That is the number, and it is
+read from the broker rather than reconstructed from our fill log.
 
-The payrolls print on Friday 4 Sep is **outside** the window. The code knows;
-do not let anyone re-add it.
+At the same instant our own indicative-feed reading of the book said
+$99,642.35 — $5,435.33 apart, 5.77% of the account. Both readings are honest;
+an option mark is an opinion until it is cash. `python tools/calibration.py`
+prints both and does not move, because it is frozen at that instant.
+
+The payrolls print on Friday 4 Sep is **outside** the window, and the code
+knows: `next_event()` returns None today, so the agent opens no new positions
+on the largest catalyst of the week. That is deliberate — its payoff lands
+after the account was photographed. Do not let anyone re-add it.
+
+One leg remains open, 35× QQQ 8 Sep 717 C. Its exit was scheduled for exactly
+16:00 ET, which is the moment Alpaca stops accepting options market orders, so
+it was rejected 45 times and is still pending. It will fill at Friday's open.

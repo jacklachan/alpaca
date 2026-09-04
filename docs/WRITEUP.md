@@ -77,7 +77,7 @@ every AI selection named a candidate actually offered, that no recorded model
 response carried an executable field, release-manifest integrity, and dependency
 pinning. That second check makes the central claim falsifiable — if it ever
 fails on real evidence, the model authored a trade. Behind it sit
-741 automated tests, a 14/14 crash-recovery drill, and green CI on every
+743 automated tests, a 14/14 crash-recovery drill, and green CI on every
 commit.
 `python tools/calibration.py` prints the decay the risk model forecast before
 each order against what actually happened.

@@ -228,15 +228,14 @@ Longer version with the detail that did not fit: `docs/WRITEUP-FULL.md`.
 | Fact | Value | Re-check |
 | --- | --- | --- |
 | Scored account | `PA3XT8QFJZAQ`, paper, $100,000 at activation | Alpaca dashboard |
-| Equity | **$93,661.02 (−6.34%)** — moves until 16:00 ET Thu | `python tools/calibration.py` |
-| Premium committed | $24,528 of a $25,000 cap | same |
-| Positions | 4 QQQ legs, 8 Sep expiry, one strangle in two tranches | same |
+| Premium committed, all week | $25,628 across three entries, cap $25,000 per sleeve | `python tools/calibration.py` |
+| Open at measurement | one leg, 35× QQQ 8 Sep 717 C, $7,840 premium | same |
 | Decay forecast, pre-trade | $6,797 on $25,628 committed | `python tools/calibration.py` |
 | Indicative vs official, at measurement | $99,642.35 vs $94,207.02, gap $5,435.33 | same |
 | Measured-day close (Alpaca's own history) | **$94,207.02 (−5.79%)** | same |
 | Kernel invariants | 13 | `tools/demo.py` |
 | Submission checks | 11, all passing | `python tools/verify_submission.py` |
-| Automated tests | 740 | `python -m pytest -q` |
+| Automated tests | 741 | `python -m pytest -q` |
 | Crash-recovery drill | 14/14 | `python tools/crash_drill.py` |
 | Journal entries | 76,000+, chain intact | `python tools/verify_chain.py` |
 | Model responses journalled | 769, every one only an id or an abstention | `verify_submission.py` |

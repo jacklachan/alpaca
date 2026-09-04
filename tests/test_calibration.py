@@ -53,9 +53,7 @@ def _reconciled(seq: int, ts: str, equity: str) -> dict:
 
 def _write_journal(tmp_path: Path, records: list[dict]) -> Path:
     path = tmp_path / "journal.jsonl"
-    path.write_text(
-        "".join(json.dumps(r) + "\n" for r in records), encoding="utf-8"
-    )
+    path.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
     return path
 
 
