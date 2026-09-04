@@ -100,9 +100,10 @@ claim is wrong.
 PA3XT8QFJZAQ
 ```
 
-Created for this hackathon, funded at $100,000, options-only. **Confirm it was
-created during the event** — a reused account is disqualifying, and that is a
-fact only you can vouch for.
+Created during the event, funded at $100,000, options-only — confirmed by
+Mohit on 4 Sep. The rule is that a reused account is not eligible for judging,
+so this matters more than any single score: it is the one requirement that is
+pass/fail rather than weighted.
 
 ## ✅ Public GitHub repository
 
@@ -176,7 +177,7 @@ empty field.
 ## Before you hit submit
 
 - [ ] Account ID matches the account that actually traded: `PA3XT8QFJZAQ`
-- [ ] The account was created during the event, not reused
+- [x] The account was created during the event, not reused — confirmed
 - [ ] Repo is public and `main` is pushed
 - [ ] Video re-records segment one
 - [ ] Write-up appears once, in one place, not twice with different numbers
