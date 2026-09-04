@@ -9,6 +9,13 @@ number in the narration is rounded in our favour. If a take produces a
 different number than the script says, **read the number on screen**, not the
 script.
 
+> **The take recorded on 3 Sep is stale for segment one only.** `calibration.py`
+> was rewritten after that recording: it used to compare the forecast against
+> whatever was open when you ran it, which made the headline number drift. It
+> now freezes at the measurement instant and leads with a different, stronger
+> finding. **Re-record the `calibration.py` segment.** The `demo.py` and
+> `verify_submission.py` segments are unaffected and still usable.
+
 ---
 
 ## Read this first: two of the four shots only exist on Mohit's laptop
@@ -86,23 +93,34 @@ equity curve is an outcome; it proves nothing about the agent.*
 python tools/calibration.py
 ```
 
-Let the output sit. Point the cursor at the two forecast lines, then the error.
+Let the output sit. Point the cursor at the forecast lines, then at the two
+numbers under *Two numbers for the same instant*.
 
-> Before it placed either trade, the risk model wrote down how much of the
-> premium was certain to decay before the account gets valued.
+> Before it placed a trade, the risk model wrote down how much of the premium
+> was certain to decay before the account gets valued. That went into a
+> hash-chained journal, timestamped — so it provably predates the outcome and
+> can't be fitted afterwards without breaking the chain.
 >
-> Those forecasts went into a hash-chained journal, timestamped — so they
-> provably predate the outcome they're being judged against. They can't be
-> fitted afterwards without breaking the chain.
+> But look at the bottom. At the exact instant the account was valued, our own
+> reading of the book said ninety-nine thousand six hundred and forty-two.
+> Alpaca's official close, same account, same second, said ninety-four
+> thousand two hundred and seven.
 >
-> Predicted decay: six thousand seven hundred and seventy-seven dollars.
-> Actual: six thousand three hundred and thirty-five. Off by one point eight
-> percent of premium.
+> Five thousand four hundred dollars apart. Nearly six percent of the account.
 >
-> The trade lost. The model that priced it was right. Direction is the other
-> half of a long-volatility position, and the move simply never arrived.
+> Neither number is a lie. We price options off Alpaca's indicative feed, which
+> is a derived estimate — and an option mark is an opinion until it's cash.
+>
+> That gap is the whole reason this agent would rather hold a number it can
+> defend than one that merely looks better.
 
-*The tool prints that caveat itself. Show that — it is the credibility.*
+*The tool also prints what it does NOT show — that the difference between
+forecast and outcome is not model error, because a mark contains direction as
+well as decay. Leave that on screen. It is the credibility.*
+
+**Do not say "we predicted the loss."** An earlier cut of this script did, and
+it was wrong: the forecast was about decay alone, and the account's change also
+contains direction. The tool was rewritten to stop implying otherwise.
 
 ---
 

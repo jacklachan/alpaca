@@ -8,9 +8,13 @@ every number is real and has a command next to it that re-checks it.
 entire pitch is that we are checkable, and a single unverifiable boast on a
 slide costs more than it buys.
 
-**Two numbers go stale tonight.** Equity and the calibration outcome move with
-the market until 16:00 ET Thursday (01:30 IST Friday). Re-run the commands in
-§5 before the deck is final.
+**The measured day is over and the numbers below are settled.** The account was
+valued at 16:00 ET Thursday 3 Sep, and Alpaca's own portfolio history records
+that close as **$94,207.02, −5.79%**. `tools/calibration.py` now freezes at that
+instant, so it prints the same result whenever it is run — an earlier version
+drifted with the live book and produced two different headline numbers an hour
+apart. One position remains open and will be closed at Friday's open; that
+affects Friday, not the measured day.
 
 ---
 
@@ -21,13 +25,18 @@ code finds and prices every trade. A language model's entire authority is to
 pick one of those pre-priced candidates, or decline — it cannot author a trade,
 because there is no field in the schema in which to express one.
 
-It lost money this week. The interesting part is that it said so in advance:
-before each order, the risk model wrote into a hash-chained journal exactly how
-much premium would decay before the account is valued. Predicted $6,777.
-Actual $6,335. Wrong by 1.8% of premium.
+It finished the measured day down 5.79%. Two things are worth more than that
+number.
 
-The trade lost. The model that priced it was right. Direction is the other half
-of a long-volatility position, and the move never arrived.
+Before each order, the risk model wrote into a hash-chained journal exactly how
+much premium would decay before the account is valued — timestamped, so it
+provably predates the outcome. $6,797 forecast against $25,628 committed.
+
+And at the instant the account was valued, our own honest reading of the book
+said $99,642 while Alpaca's official close said $94,207. Same account, same
+second, $5,435 apart. An option mark is an opinion until it is cash, and that
+gap is the entire reason this agent would rather hold a number it can defend
+than one that merely looks better.
 
 ---
 
@@ -42,30 +51,42 @@ Account `PA3XT8QFJZAQ`. Repo `github.com/jacklachan/alpaca`.
 Team, and the one-line thesis: *the model proposes nothing it could get wrong.*
 
 ### Slide 2 · The uncomfortable opening
-"Our agent lost money this week." Equity number, plainly.
+"Our agent lost money on the measured day." **$94,207.02, −5.79%**, taken from
+Alpaca's own portfolio history rather than from anything we computed.
 
 Do not bury this and do not spin it. Every other deck opens on an equity curve
 going up. Opening on the loss is what earns attention for slides 3 onward, and
 the criteria explicitly weigh more than P&L.
 
-### Slide 3 · …and it predicted the loss before it traded
-**The most important slide in the deck.**
+### Slide 3 · Two numbers for the same instant
+**The most important slide in the deck.** `python tools/calibration.py`
 
 ```
-seq 7276    2026-09-01T14:28:25   29.9% of premium over 2.23d   ($17,780)
-seq 44732   2026-09-02T13:30:37   19.4% of premium over 1.27d   ($7,504)
-
-predicted decay   $6,777   (26.8% of premium)
-actual change     $6,335   (25.8% of premium)
-error             $-442    (-1.8% of premium)
+Account at the measurement instant   (2026-09-03 16:00 ET)
+  our mark, indicative feed    $99,642.35
+  Alpaca's official close      $94,207.02
+  gap                          $5,435.33   (5.77% of the account)
 ```
 
-Those forecasts live in an append-only hash chain, timestamped, written before
-the orders. They provably predate the outcome and cannot be fitted afterwards
-without breaking the chain — which `tools/verify_chain.py` would report.
+We price options off Alpaca's **indicative** feed — a derived estimate, not
+OPRA. At the one instant that decides the result, our honest reading of the
+book and the broker's official close disagreed by 5.77% of the account.
 
-The point to land: *a system can price its own costs honestly and still lose.*
-That is a calibrated risk model, not an excuse.
+Neither is a lie. An option mark is an opinion until it is cash. That gap is
+the whole reason the measurement-aware exit exists, and it is the strongest
+single piece of evidence in the submission — because it is a *measured* number
+from our own journal, not an argument.
+
+The same tool also prints the pre-trade decay forecasts, read from the
+hash-chained journal where they were written before the orders. They provably
+predate the outcome and cannot be fitted afterwards without breaking the chain,
+which `tools/verify_chain.py` reports.
+
+**Say what it does not show.** The forecast was about decay. The account's
+change also contains direction, and a mark cannot be split into the two after
+the fact — so the difference is not model error. The tool says this itself, on
+screen. Do not let anyone on the team turn it into "we predicted the loss."
+That claim was in an earlier draft of this deck and it was wrong.
 
 ### Slide 4 · AI logic — one decision, one field
 Required write-up topic 1.
@@ -210,7 +231,9 @@ Longer version with the detail that did not fit: `docs/WRITEUP-FULL.md`.
 | Equity | **$93,661.02 (−6.34%)** — moves until 16:00 ET Thu | `python tools/calibration.py` |
 | Premium committed | $24,528 of a $25,000 cap | same |
 | Positions | 4 QQQ legs, 8 Sep expiry, one strangle in two tranches | same |
-| Decay predicted / actual | $6,777 / $6,335, error −1.8% of premium | same |
+| Decay forecast, pre-trade | $6,797 on $25,628 committed | `python tools/calibration.py` |
+| Indicative vs official, at measurement | $99,642.35 vs $94,207.02, gap $5,435.33 | same |
+| Measured-day close (Alpaca's own history) | **$94,207.02 (−5.79%)** | same |
 | Kernel invariants | 13 | `tools/demo.py` |
 | Submission checks | 11, all passing | `python tools/verify_submission.py` |
 | Automated tests | 740 | `python -m pytest -q` |
@@ -221,14 +244,13 @@ Longer version with the detail that did not fit: `docs/WRITEUP-FULL.md`.
 | Model | Featherless, `Qwen/Qwen2.5-72B-Instruct` | `.env` |
 | Pinned commit for the run | read it from the log, never from prose | `grep -o "release gate: commit [0-9a-f]*" state/agent.out \| tail -1` |
 
-**Positions as of Thursday morning:**
+**Positions at the measurement instant** (one leg; the strangle's other legs
+were closed earlier in the session):
 
 ```
-QQQ 715 C   14   paid $3,038   mark $3,346    +308
-QQQ 717 C   35   paid $7,840   mark $6,055  -1,785
-QQQ 698 P   14   paid $4,200   mark $2,142  -2,058
-QQQ 700 P   35   paid $9,450   mark $6,650  -2,800
-                 $24,528       $18,193      -6,335
+QQQ 8 Sep 717 C   35 lots   paid $7,840   premium still open at measurement
+$25,628 of premium was committed across the week; $17,788 of it was closed
+before the account was valued.
 ```
 
 ---
