@@ -1,4 +1,4 @@
-"""Sync generated counts in docs/WRITEUP.md to the real suite.
+"""Sync generated counts in the judge-facing write-ups to the real suite.
 
 The write-up quotes a test count to judges. tests/test_claims.py fails when
 that number drifts, which is the right guard -- but the fix should be one
@@ -13,7 +13,13 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-WRITEUP = ROOT / "docs" / "WRITEUP.md"
+# Every document that quotes a count, not just the one-pager. The long
+# write-up drifted to a stale number because only the short one was synced,
+# and a judge who opens both sees two answers to the same question.
+WRITEUPS = (
+    ROOT / "docs" / "WRITEUP.md",
+    ROOT / "docs" / "WRITEUP-FULL.md",
+)
 
 
 def suite_size() -> int:
@@ -31,13 +37,15 @@ def suite_size() -> int:
 
 def main() -> int:
     count = suite_size()
-    text = WRITEUP.read_text(encoding="utf-8")
-    updated = re.sub(r"\b[\d,]+ automated tests", f"{count} automated tests", text)
-    if updated == text:
-        print(f"docs/WRITEUP.md already states {count} automated tests")
-        return 0
-    WRITEUP.write_text(updated, encoding="utf-8")
-    print(f"docs/WRITEUP.md updated to {count} automated tests")
+    for writeup in WRITEUPS:
+        name = writeup.relative_to(ROOT).as_posix()
+        text = writeup.read_text(encoding="utf-8")
+        updated = re.sub(r"\b[\d,]+ automated tests", f"{count} automated tests", text)
+        if updated == text:
+            print(f"{name} already states {count} automated tests")
+            continue
+        writeup.write_text(updated, encoding="utf-8")
+        print(f"{name} updated to {count} automated tests")
     return 0
 
 

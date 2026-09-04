@@ -258,14 +258,15 @@ def test_the_required_one_page_writeup_exists_and_covers_all_three_topics():
 
 def test_the_writeup_test_count_matches_the_real_suite():
     """A number in the document judges read must be true, and stay true. If
-    this fails, the suite changed -- update the write-up, do not delete this."""
+    this fails, the suite changed -- update the write-ups with
+    `python tools/sync_writeup_counts.py`, do not delete this.
+
+    Both write-ups, not just the one-pager: the long version quoted 737 while
+    the short one quoted 746, because only the short one was guarded. A judge
+    who opens both gets two answers to the same question, which costs more
+    credibility than either number is worth."""
     import subprocess
     import sys
-
-    text = WRITEUP.read_text(encoding="utf-8")
-    stated = re.search(r"([\d,]+)\s+automated tests", text)
-    assert stated, "the write-up no longer states a test count"
-    claimed = int(stated.group(1).replace(",", ""))
 
     collected = subprocess.run(
         # sys.executable, not "python": a different interpreter on PATH has
@@ -290,9 +291,14 @@ def test_the_writeup_test_count_matches_the_real_suite():
     assert found, f"could not count the suite: {collected.stdout[-400:]}"
     actual = int(found.group(1))
 
-    assert claimed == actual, (
-        f"docs/WRITEUP.md claims {claimed} automated tests, the suite has {actual}"
-    )
+    for name in ("docs/WRITEUP.md", "docs/WRITEUP-FULL.md"):
+        text = (ROOT / name).read_text(encoding="utf-8")
+        stated = re.search(r"([\d,]+)\s+automated tests", text)
+        assert stated, f"{name} no longer states a test count"
+        claimed = int(stated.group(1).replace(",", ""))
+        assert claimed == actual, (
+            f"{name} claims {claimed} automated tests, the suite has {actual}"
+        )
 
 
 def test_the_writeup_keeps_its_unproven_gates_visible():

@@ -125,12 +125,15 @@ earned rather than decorative.
 
 ## ✅ Social engagement — up to 5 links
 
-Five posts are live on LinkedIn tagging lablab.ai and Alpaca. Paste the five
-URLs. `SOCIAL.md` holds what was posted and why.
+Five posts are live on LinkedIn tagging lablab.ai and Alpaca. **The five URLs
+are in the table at the top of `SOCIAL.md`** -- copy them from there rather than
+hunting through two LinkedIn profiles. The drafts below that table are the
+record of what was posted and why.
 
 ## ✅ One-page write-up
 
-`docs/WRITEUP.md` — 743-test count synced, three required sections named
+`docs/WRITEUP.md` — test count synced by `tools/sync_writeup_counts.py` and
+guarded by `tests/test_claims.py`, three required sections named
 exactly as the rules word them. The rules allow a slide instead, so if the deck
 carries it, point at the slide rather than the file. Do not submit both and let
 them disagree.

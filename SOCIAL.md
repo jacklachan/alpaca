@@ -5,6 +5,21 @@ That is the full allocation the event allows, and the submission rule reads
 "up to 5 links to posts shared on X **or** LinkedIn" -- LinkedIn alone
 satisfies it.
 
+## The five URLs — paste these into the submission form
+
+Recorded here because the drafts are worthless at submission time if nobody can
+find what they became. Tracking parameters (`utm_*`, `rcm=`) are stripped: they
+carry a member identifier belonging to whoever shared the link, and they are
+not needed for the post to open.
+
+| # | Posted by | Post | URL |
+| --- | --- | --- | --- |
+| 1 | Utkarsh | the gates that fought each other | <https://www.linkedin.com/posts/utkarsh-singh-yadav-2301412bb_github-jacklachanalpaca-activity-7500900123334492161-LgbX> |
+| 2 | Utkarsh | the refusals | <https://www.linkedin.com/posts/utkarsh-singh-yadav-2301412bb_the-interesting-part-of-an-ai-trading-agent-activity-7500900327240675329-GtbT> |
+| 3 | Utkarsh | the bug worth writing about | <https://www.linkedin.com/posts/utkarsh-singh-yadav-2301412bb_our-agent-buys-volatility-when-options-look-activity-7500900477463646208-Pb7q> |
+| 4 | Tanush | the original idea | <https://www.linkedin.com/posts/tanush-deepak-45a735404_lablab-the-1-ecosystem-for-ai-builders-activity-7500910224749285376-F5kJ> |
+| 5 | Tanush | the honest close | <https://www.linkedin.com/posts/tanush-deepak-45a735404_final-day-heres-what-wed-want-a-judge-activity-7500910538345074688-LG7I> |
+
 The drafts below are kept as the record of what was posted and why.
 
 Every number in them is real and checkable against the repository or the
@@ -27,6 +42,8 @@ and the criterion explicitly weighs quality alongside engagement.
 ---
 
 ## Post 1 — the one to publish first
+
+**Live:** <https://www.linkedin.com/posts/utkarsh-singh-yadav-2301412bb_github-jacklachanalpaca-activity-7500900123334492161-LgbX>
 
 > Our trading agent spent this morning refusing to trade.
 >
@@ -59,6 +76,8 @@ and the criterion explicitly weighs quality alongside engagement.
 
 ## Post 2 — the refusals
 
+**Live:** <https://www.linkedin.com/posts/utkarsh-singh-yadav-2301412bb_the-interesting-part-of-an-ai-trading-agent-activity-7500900327240675329-GtbT>
+
 > The interesting part of an AI trading agent isn't the model. It's what the
 > model is not allowed to do.
 >
@@ -87,6 +106,8 @@ and the criterion explicitly weighs quality alongside engagement.
 
 ## Post 3 — the bug worth writing about
 
+**Live:** <https://www.linkedin.com/posts/utkarsh-singh-yadav-2301412bb_our-agent-buys-volatility-when-options-look-activity-7500900477463646208-Pb7q>
+
 > Found a bug today that would have quietly cost us the whole competition.
 
 > Our agent buys volatility when options look cheap relative to what the
@@ -113,6 +134,8 @@ and the criterion explicitly weighs quality alongside engagement.
 ---
 
 ## Post 4 — the original idea
+
+**Live:** <https://www.linkedin.com/posts/tanush-deepak-45a735404_lablab-the-1-ecosystem-for-ai-builders-activity-7500910224749285376-F5kJ>
 
 > Most trading agents don't know when they're being measured. Ours does, and it
 > changes what it does about it.
@@ -141,6 +164,8 @@ and the criterion explicitly weighs quality alongside engagement.
 ---
 
 ## Post 5 — the honest close (publish Thursday or Friday)
+
+**Live:** <https://www.linkedin.com/posts/tanush-deepak-45a735404_final-day-heres-what-wed-want-a-judge-activity-7500910538345074688-LG7I>
 
 > Final day. Here's what we'd want a judge to check rather than take our word
 > for:
