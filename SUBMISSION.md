@@ -113,15 +113,39 @@ https://github.com/jacklachan/alpaca
 
 ## ✅ Technology & category tags
 
+These are two separate fields, and the technology field is a picker with a
+fixed vocabulary -- typing a name it does not know silently gets you nothing.
+Verified against the tags in use on the event page.
+
+**Technology tags** -- pick exactly these:
+
 ```
-Alpaca, Options Trading, Autonomous Agents, Risk Management, Python,
-Featherless AI, MCP, Qwen
+Alpaca, Featherless, Claude Code
 ```
 
-Featherless is a technology partner, and partner prizes require the partner's
-technology to be integrated in the submitted project. Ours runs the bounded
-selector on `Qwen/Qwen2.5-72B-Instruct` through Featherless, so the tag is
-earned rather than decorative.
+**Category tags** -- free-ish text, what other entries use:
+
+```
+Finance, Investment
+```
+
+Everything the old list had beyond that (`Options Trading`, `Autonomous
+Agents`, `Risk Management`, `Python`, `MCP`) is **not in the technology
+picker**. Those belong in the description, where they already are.
+
+Two names were wrong and would have failed to match:
+
+- The tag is **`Featherless`**, not "Featherless AI".
+- There is no `Qwen` or `Qwen2.5` tag. The only one offered is **`Qwen3`**,
+  and we run `Qwen/Qwen2.5-72B-Instruct` -- so do **not** tag Qwen3. Name the
+  exact model in the description instead. Qwen is not a prize partner; tagging
+  the wrong version buys nothing and costs accuracy.
+
+Featherless **is** a technology partner, and partner prizes require the
+partner's technology to be integrated in the submitted project. Ours runs the
+bounded selector on `Qwen/Qwen2.5-72B-Instruct` through Featherless, so that
+tag is earned rather than decorative. It is the one tag on this page with
+money attached.
 
 ## ✅ Social engagement — up to 5 links
 
