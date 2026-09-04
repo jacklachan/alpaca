@@ -322,6 +322,21 @@ REPRICE_STEP_PCT = Decimal("0.01")
 #: How long before measurement the mark-quality check begins.
 MEASUREMENT_FLATTEN_MINUTES = 45
 
+# How far ahead of the measurement instant a timed exit is scheduled.
+#
+# AUDIT NOTE: this was zero -- `time_exit` for the convex sleeve was
+# MEASUREMENT_ET itself, 16:00:00 ET, which is the exact minute Alpaca stops
+# accepting options market orders. An exit scheduled at the instant the venue
+# closes is not an exit; it is a deferral to the next session, and on 3 Sep
+# that is precisely what happened to a 35-lot QQQ call. The order was correct,
+# on time, and structurally unfillable.
+#
+# The point of a measurement-aware exit is to be flat *at* the snapshot, so the
+# order has to reach a venue that is still accepting it. Ten minutes is inside
+# the flatten window above, well clear of the cutoff, and still late enough
+# that the position is carried for essentially the whole session.
+TIME_EXIT_LEAD_MINUTES = 10
+
 #: A mark this wide at the snapshot is not evidence of anything. Deliberately
 #: looser than MAX_ATM_SPREAD_PCT: refusing to *enter* on a 5.5% spread is
 #: prudence, but flattening a working position needs the quote to be genuinely

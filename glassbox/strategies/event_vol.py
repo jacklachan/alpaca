@@ -18,7 +18,7 @@ The expiry choice is the interesting part. See `select_expiry`.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -289,7 +289,9 @@ class EventVolStrategy:
                 ),
                 notional_usd=premium,
                 max_loss_usd=premium,  # exact: long premium only
-                time_exit=measurement,
+                # Not `measurement` itself: that is the minute the venue stops
+                # accepting options orders. See TIME_EXIT_LEAD_MINUTES.
+                time_exit=measurement - timedelta(minutes=C.TIME_EXIT_LEAD_MINUTES),
                 thesis=(
                     f"{event.name} releases {event.when:%Y-%m-%d %H:%M} ET, "
                     f"{event.hours_until(now):.0f}h before the account is measured. "

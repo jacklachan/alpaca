@@ -213,6 +213,30 @@ def _propose(option_surface=None, journal=None):
     )
 
 
+def test_the_timed_exit_lands_before_the_venue_stops_accepting_options():
+    """An exit scheduled at the measurement instant is not an exit.
+
+    16:00:00 ET is the minute Alpaca stops accepting options market orders, so
+    a time_exit set to MEASUREMENT_ET is structurally unfillable -- it defers
+    to the next session, after the account has been photographed. That is what
+    happened to a 35-lot QQQ call on 3 Sep: correct order, correct time, no
+    fill. The whole point of a measurement-aware exit is being flat *at* the
+    snapshot, which requires reaching a venue that is still open."""
+    plans = _propose()
+    assert plans, "expected a proposal to inspect"
+    exit_at = plans[0].time_exit
+    assert exit_at is not None, "the convex sleeve must carry a timed exit"
+    assert exit_at < MEASUREMENT_ET, (
+        f"time_exit {exit_at} is not before the measurement instant "
+        f"{MEASUREMENT_ET}; an order sent then cannot fill"
+    )
+    lead = (MEASUREMENT_ET - exit_at).total_seconds() / 60
+    assert lead == C.TIME_EXIT_LEAD_MINUTES
+    # Still inside the flatten window, so it does not fire before the agent is
+    # even watching for mark quality.
+    assert lead <= C.MEASUREMENT_FLATTEN_MINUTES
+
+
 def test_proposes_a_strangle_into_the_catalyst():
     s = EventVolStrategy()
     plans = s.propose(
