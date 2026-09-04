@@ -36,6 +36,14 @@ app = FastAPI(title="Glassbox", docs_url=None, redoc_url=None)
 
 JOURNAL_PATH = os.getenv("GLASSBOX_JOURNAL_PATH", C.JOURNAL_PATH)
 
+# The hosted evidence copy is intentionally sizeable: it lets a judge inspect
+# real records instead of a fabricated sample. Reparse it only when the file
+# changes, rather than once for every JSON panel on the page. The live
+# dashboard keeps the same behaviour because the signature invalidates after
+# an append.
+_records_cache: list[dict] | None = None
+_records_signature: tuple[str, int, int] | None = None
+
 # Events that carry the story. Anything else is plumbing and stays out of the
 # default timeline so the interesting entries are not buried.
 HEADLINE = {
@@ -91,9 +99,14 @@ TONE = {
 
 
 def _load() -> list[dict]:
+    global _records_cache, _records_signature
     p = Path(JOURNAL_PATH)
     if not p.exists():
         return []
+    stat = p.stat()
+    signature = (str(p.resolve()), stat.st_mtime_ns, stat.st_size)
+    if _records_signature == signature and _records_cache is not None:
+        return _records_cache
     out = []
     for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
         if line.strip():
@@ -101,6 +114,7 @@ def _load() -> list[dict]:
                 out.append(json.loads(line))
             except json.JSONDecodeError:
                 continue  # a torn tail is expected; never 500 on it
+    _records_cache, _records_signature = out, signature
     return out
 
 

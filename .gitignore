@@ -6,6 +6,10 @@ state/
 *.db-wal
 *.db-shm
 *.jsonl
+# The public dashboard intentionally publishes this frozen, credential-free
+# evidence journal for hackathon judges. All operational journals remain ignored.
+!dashboard/evidence/
+!dashboard/evidence/journal.jsonl
 __pycache__/
 *.pyc
 .venv/

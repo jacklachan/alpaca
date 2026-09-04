@@ -6,3 +6,7 @@
 # Shell scripts must stay LF even on Windows checkouts: a CRLF shebang line
 # makes the interpreter unrunnable on the deployment host.
 *.sh text eol=lf
+
+# This is a cryptographically verifiable evidence artifact. Preserve the
+# captured bytes (including its original line endings) in the public snapshot.
+dashboard/evidence/journal.jsonl -text

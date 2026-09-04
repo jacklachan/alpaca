@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: glassbox-evidence
+    runtime: docker
+    plan: free
+    region: singapore
+    healthCheckPath: /healthz
