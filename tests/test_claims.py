@@ -88,10 +88,49 @@ def test_public_copy_does_not_claim_realized_pnl_or_a_completed_soak(doc: str):
         assert forbidden not in lowered, f"{doc} claims {forbidden!r}"
 
 
-def test_readme_keeps_the_external_gates_visible():
+def test_readme_keeps_whatever_is_still_unproven_visible():
+    """Open gates stay visible. Which gates are open is allowed to change.
+
+    This guard used to pin the literal strings "pending" and "no live paper
+    order". Both were true when written and false once the account had traded,
+    captured a CLI bundle and been run against the official MCP server -- so
+    the test spent the rest of the event forcing the README's landing section
+    to tell a reader that the three strongest pieces of evidence in the project
+    did not exist. A guard that holds a stale claim in place is worse than no
+    guard, because it looks like diligence.
+
+    What must survive is the shape: name what is still unproven, claim no soak.
+    """
     lowered = README.lower()
-    assert "pending" in lowered
-    assert "no live paper order" in lowered or "no paper order" in lowered
+    assert "deployment_soak" in lowered or "no vps soak" in lowered, (
+        "the laptop run has no soak evidence; that gap must stay visible"
+    )
+    for forbidden in ("soak complete", "soak passed", "deployed to production"):
+        assert forbidden not in lowered, f"README claims {forbidden!r}"
+
+
+@pytest.mark.parametrize(
+    "proof,phrase",
+    [
+        ("cli_proof.json", "cli proof pending"),
+        ("mcp_proof.json", "official-server run pending"),
+        ("dev_venue_proof.json", "no live paper order"),
+    ],
+)
+def test_no_public_document_calls_a_captured_proof_pending(proof: str, phrase: str):
+    """Generalises the bug the test above encoded.
+
+    Evidence gets captured; the prose describing it as outstanding does not
+    update itself, and nothing was checking. If the bundle is on disk, no
+    public document may still say it is not.
+
+    Skips where the evidence does not exist -- state/ is gitignored, so CI has
+    no bundles. This runs where the README actually gets edited.
+    """
+    if not (ROOT / "state" / proof).exists():
+        pytest.skip(f"no {proof} captured here; nothing to contradict")
+    for doc in PUBLIC_DOCS:
+        assert phrase not in _doc(doc).lower(), f"{doc} says {phrase!r} but state/{proof} exists"
 
 
 def test_scored_release_gate_is_documented_as_mandatory_and_external():

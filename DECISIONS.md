@@ -99,7 +99,21 @@ later improved.
 
 ## Current evidence boundary
 
-Local tests, type/lint/format gates, crash drills, deploy harness tests, and
-dashboard response checks are implemented. No live paper order or VPS soak has
-been performed because the required credentials/account IDs and host target
-were not supplied.
+Local tests, type/lint/format gates, crash drills, deploy harness tests and
+dashboard response checks are implemented.
+
+Since this section was first written, the external gates it described as open
+have been closed and the evidence captured against scored account
+`PA3XT8QFJZAQ`: live options orders with Alpaca's own order IDs, a read-only
+CLI proof bundle, a run against the official Alpaca MCP Server 3.4.7 with four
+mutating tools refused by attempting them, and a dev venue proof on a separate
+account.
+
+**Still open:** no VPS soak. No host target was provisioned, so the agent ran
+on a laptop under a restart watchdog and no `deployment_soak` evidence exists.
+
+This paragraph went stale for two days while the tests that were supposed to
+police our claims held it in place -- they pinned the literal sentence rather
+than the property, so they enforced the caveat after it became false. The
+guards now check that no public document calls a proof pending when the bundle
+is on disk. Understating the work is a claim error like any other.

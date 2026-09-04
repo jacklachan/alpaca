@@ -10,28 +10,52 @@ Every selected candidate still passes through a deterministic 13-invariant
 risk kernel and a restart-safe executor before the Alpaca Trading API can see
 an order.
 
+## The result, and the finding that outlived it
+
+Scored account `PA3XT8QFJZAQ`, funded at $100,000. Alpaca's own portfolio
+history records the measured close, end of Thursday 3 September 2026, at
+**$94,207.02 — down 5.79%.** That is the number, read from the broker rather
+than reconstructed from our fill log.
+
+The more interesting number is from the same instant. We price options off
+Alpaca's **indicative** feed, a derived estimate rather than OPRA. At 16:00 ET
+our own honest reading of the book said **$99,642.35** and Alpaca's official
+close said **$94,207.02** — the same account, the same second, **$5,435.33
+apart, 5.77% of the account.**
+
+Neither reading is a lie. An option mark is an opinion until it is cash. That
+gap is the entire reason this agent has a measurement-aware exit, and it is
+the one piece of evidence here that no equity curve could produce:
+
+```bash
+python tools/calibration.py
+```
+
+It is frozen at the measurement instant, so it prints the same result whenever
+you run it.
+
 ## Evidence status
 
-The implementation and local verification suite are complete. Two external
-gates are deliberately still open:
+Captured against the scored account, and re-checkable with
+`python tools/verify_submission.py` (11 checks, no credentials, no network):
 
-- **Dev venue proof pending.** No live paper order has been submitted from this
-  repository. The proof requires user-supplied dev credentials and both
-  explicit expected account IDs.
-- **VPS soak pending.** No host target was supplied, so no deployment or
-  multi-day soak has been performed.
+- **Live options orders.** A 35-lot QQQ strangle, both legs filled, plus later
+  entries and exits. Order IDs and timestamps are Alpaca's, not ours.
+- **CLI proof captured.** Read-only Alpaca CLI evidence bundle, built from an
+  allowlist that refuses any mutating token before a process starts.
+- **MCP proof captured.** Run against the official Alpaca MCP Server **3.4.7**
+  with live credentials: three authenticated read-only calls against the scored
+  account, and four mutating tools **refused** by attempting them.
+- **Dev venue proof captured** on a separate development account, kept distinct
+  from the scored one by an account-identity gate.
 
-- **CLI proof pending.** `tools/capture_alpaca_proof.py` builds and captures
-  read-only Alpaca CLI evidence and is tested against fakes, but no proof
-  bundle has been captured from a real CLI against a real account.
-- **MCP client built, official-server run pending.** `glassbox/mcp_client.py`
-  is a read-only MCP client exercised end-to-end against a real MCP server
-  subprocess over stdio in the test suite. It has not yet been run against the
-  official Alpaca MCP server with live credentials.
+Still open, and not claimed anywhere:
 
-Do not describe any gate as complete until its broker or VPS evidence is in
-the journal. The programmatic integration is `alpaca-py` against the Alpaca
-paper Trading and Data APIs.
+- **No VPS soak.** The agent ran on a laptop under a restart watchdog. No host
+  target was ever provisioned, so no `deployment_soak` evidence exists.
+
+The programmatic integration is `alpaca-py` against the Alpaca paper Trading
+and Data APIs.
 
 ## Scored data flow
 
