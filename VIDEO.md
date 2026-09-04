@@ -9,6 +9,25 @@ number in the narration is rounded in our favour. If a take produces a
 different number than the script says, **read the number on screen**, not the
 script.
 
+## The numbers, so nobody has to remember them
+
+Read these off the page; do not paraphrase from memory.
+
+| | |
+| --- | --- |
+| Measured-day close, Thu 3 Sep | **$94,207.02, -5.79%** — settled, Alpaca's own portfolio history |
+| Our reading of the same instant | **$99,642.35** — indicative feed |
+| Gap | **$5,435.33, 5.77% of the account** |
+| Scored account | `PA3XT8QFJZAQ` |
+
+**The final number is not settled yet.** One leg is still open and the agent
+closes it at Friday's open, 19:00 IST. Until that fills, equity is a mark on an
+option that has not traded — the exact thing this video argues is an opinion
+rather than cash. **Record after 19:15 IST**, or record the hook as written
+below, which depends on none of it.
+
+---
+
 > **The take recorded on 3 Sep is stale for segment one only.** `calibration.py`
 > was rewritten after that recording: it used to compare the forecast against
 > whatever was open when you ran it, which made the headline number drift. It
@@ -75,13 +94,21 @@ python tools/verify_submission.py
 **On screen:** title card — *Glassbox · autonomous options agent on Alpaca
 paper trading* — then cut to a terminal.
 
-> Our agent lost money this week.
+> At the exact instant our account was valued, we thought it was worth
+> ninety-nine thousand, six hundred and forty-two dollars.
 >
-> I'm going to show you why we think that's the most interesting submission
-> you'll watch today.
+> Alpaca said ninety-four thousand, two hundred and seven.
+>
+> Same account. Same second. Five thousand four hundred dollars apart — and
+> neither of us was lying.
+>
+> That's what this video is about.
 
-*Do not soften this. Every other video opens on an equity curve going up. An
-equity curve is an outcome; it proves nothing about the agent.*
+*This replaced "our agent lost money this week", which was true on Thursday and
+stopped being true on Friday. The hook now rests on a settled, frozen fact
+instead of a number that moves, and it is a stranger opening than any equity
+curve. Do not soften it and do not add a P&L figure here — the close carries
+that.*
 
 ---
 
@@ -225,22 +252,33 @@ HOLD, HOLD, FLATTEN, FLATTEN on screen.
 >
 > It's all in the repo. Run it yourself.
 
-**End card:** `github.com/jacklachan/alpaca` · account `PA3XT8QFJZAQ` · final
-equity `[FILL IN AFTER 16:00 ET THURSDAY]`
+Then state the result, plainly, in one line before the end card. Use the
+measured day, which is settled:
+
+> On the day we were measured, the account closed down five point seven nine
+> percent. Four days of P&L is noise either way — we'd rather be judged on the
+> machine.
+
+**End card:** `github.com/jacklachan/alpaca` · account `PA3XT8QFJZAQ` ·
+measured close `$94,207.02`
 
 ---
 
-## If P&L ends positive
+## Whatever Friday does, do not change the middle
 
-Swap the hook and nothing else.
+The last leg closes at Friday's open and the final figure could land either
+side of flat. That changes one line in the close and nothing else.
 
-> Our agent finished the week up. I'm going to spend most of this video on the
-> parts that have nothing to do with that number, because four days of P&L is
-> noise, and we'd rather be judged on the machine.
+- **Finishes down:** the close as written. Say the number.
+- **Finishes up:** add "and we finished Friday slightly above where we
+  started" after it. Do not lead with it, and do not drop the measured-day
+  figure — hiding the bad number to show the good one is the single fastest
+  way to lose the credibility the rest of the video is spending three minutes
+  building.
 
-The close already says four days proves nothing, so it still works. Do **not**
-cut the calibration segment if we finish green — it is stronger, not weaker,
-when the outcome is good, because it shows the forecast was honest either way.
+Do **not** cut the calibration segment either way. It is stronger when the
+outcome is good, not weaker, because it shows the forecast was honest
+regardless of which way the trade went.
 
 ## The 2:00 cut
 
